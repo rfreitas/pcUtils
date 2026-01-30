@@ -34,16 +34,47 @@ sliderGui.SetFont("s9 ccccccc", "Segoe UI")
 sliderGui.AddText("vLabelText w40 Center", "50")
 
 sliderGui.SetFont("s9", "Segoe UI")
-brightnessSlider := sliderGui.AddSlider("vSlider h150 w30 Range0-100 Vertical ToolTip Invert", 50)
+; Vertical slider: Default is Top=0, Bottom=100.
+; We want Top=100, so we'll invert the logic manually (100-Value).
+; Removed 'ToolTip' so it doesn't show the raw 0-100 value which would be confusing.
+brightnessSlider := sliderGui.AddSlider("vSlider h150 w30 Range0-100 Vertical AltSubmit", 50)
 brightnessSlider.OnEvent("Change", OnSliderChange)
 
 sliderVisible := false
 
+; State for throttling
+lastSent := 0
+
 OnSliderChange(ctrl, *) {
-    global cur
-    newVal := ctrl.Value
+    global cur, lastSent
+    ; Invert: Slider 0 (Top) -> Brightness 100
+    newVal := 100 - ctrl.Value
+    
+    ; Update UI immediately
     sliderGui["LabelText"].Value := newVal
-    ApplyToTV(newVal)
+    
+    ; 1. Throttle: Send updates while dragging (max once per 100ms)
+    elapsed := A_TickCount - lastSent
+    if (elapsed > 100) {
+        ApplyToTV(newVal)
+        lastSent := A_TickCount
+    }
+    
+    ; 2. Debounce: ALWAYS schedule a final update to catch the end of movement
+    ; This ensures that if the last movement didn't trigger the throttle, 
+    ; it will still be sent after a short delay.
+    SetTimer(SendToTV, -120)
+}
+
+SendToTV() {
+    global brightnessSlider, lastSent
+    val := 100 - brightnessSlider.Value
+    
+    ; Avoid double-sending if the debounce timer fires right after a throttle send
+    if (A_TickCount - lastSent > 20) { 
+        ApplyToTV(val)
+        lastSent := A_TickCount
+    }
 }
 
 ShowSlider(*) {
@@ -55,8 +86,8 @@ ShowSlider(*) {
         return
     }
     
-    ; Update slider to current value
-    brightnessSlider.Value := cur
+    ; Update slider position: Brightness 100 -> Slider 0 (Top)
+    brightnessSlider.Value := 100 - cur
     sliderGui["LabelText"].Value := cur
     
     ; Get mouse position for centering
