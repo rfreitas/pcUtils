@@ -24,15 +24,94 @@ lastSync := 0
 iconsDir := A_Temp "\lgtv_icons"
 iconsReady := false
 
+; ----- Slider GUI -----
+sliderGui := Gui("+AlwaysOnTop -Caption +Border +ToolWindow", "Backlight")
+sliderGui.BackColor := "2d2d2d"
+sliderGui.MarginX := 10
+sliderGui.MarginY := 15
+
+sliderGui.SetFont("s9 ccccccc", "Segoe UI")
+sliderGui.AddText("vLabelText w40 Center", "50")
+
+sliderGui.SetFont("s9", "Segoe UI")
+brightnessSlider := sliderGui.AddSlider("vSlider h150 w30 Range0-100 Vertical ToolTip Invert", 50)
+brightnessSlider.OnEvent("Change", OnSliderChange)
+
+sliderVisible := false
+
+OnSliderChange(ctrl, *) {
+    global cur
+    newVal := ctrl.Value
+    sliderGui["LabelText"].Value := newVal
+    ApplyToTV(newVal)
+}
+
+ShowSlider(*) {
+    global sliderVisible, cur, brightnessSlider
+    
+    if (sliderVisible) {
+        sliderGui.Hide()
+        sliderVisible := false
+        return
+    }
+    
+    ; Update slider to current value
+    brightnessSlider.Value := cur
+    sliderGui["LabelText"].Value := cur
+    
+    ; Get mouse position for centering
+    CoordMode("Mouse", "Screen")
+    MouseGetPos(&mx, &my)
+    
+    ; DPI scaling factor
+    dpiScale := A_ScreenDPI / 96
+    
+    ; GUI dimensions (scaled for DPI, converted to integer)
+    guiW := Integer(60 * dpiScale)
+    guiH := Integer(210 * dpiScale)
+    
+    ; Get taskbar height directly from taskbar window
+    try {
+        WinGetPos(, &taskbarY, , &taskbarH, "ahk_class Shell_TrayWnd")
+    } catch {
+        taskbarY := A_ScreenHeight - 48
+        taskbarH := 48
+    }
+    
+    ; Position: centered on mouse X, bottom of GUI at top of taskbar
+    xPos := mx - (guiW // 2)
+    yPos := taskbarY - guiH
+    
+    sliderGui.Show("x" xPos " y" yPos " NoActivate")
+    sliderVisible := true
+}
+
+; Close slider on Escape
+sliderGui.OnEvent("Escape", HideSlider)
+
+HideSlider(*) {
+    global sliderVisible
+    sliderGui.Hide()
+    sliderVisible := false
+}
+
 ; ----- Tray menu setup -----
 A_TrayMenu.Delete()
 valueLabel := "Backlight: (starting...)"
-A_TrayMenu.Add(valueLabel, (*) => 0)
+A_TrayMenu.Add(valueLabel, ShowSlider)
 A_TrayMenu.Add()
-A_TrayMenu.Add("Set backlight…", SetBacklightPrompt)
 A_TrayMenu.Add("Sync from TV now", (*) => SyncFromTV(true))
 A_TrayMenu.Add()
 A_TrayMenu.Add("Exit", (*) => ExitApp())
+
+; Click tray icon to show slider
+OnMessage(0x404, TrayClick)
+TrayClick(wParam, lParam, *) {
+    if (lParam = 0x202 || lParam = 0x205) {  ; Left-click or right-click release
+        if (lParam = 0x202)  ; Left-click shows slider
+            ShowSlider()
+    }
+}
 
 A_IconTip := "LGTV Backlight: starting..."
 
@@ -85,14 +164,6 @@ SyncFromTV(force := false) {
             cur := ClampVal(FirstInt(r.out), 0, 100)
             lastSync := now
         }
-    }
-}
-
-SetBacklightPrompt(*) {
-    global cur
-    ib := InputBox("Enter backlight 0–100:", "LGTV Backlight", , cur)
-    if (ib.Result = "OK") {
-        try ApplyToTV(Integer(ib.Value))
     }
 }
 
