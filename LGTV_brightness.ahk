@@ -94,24 +94,43 @@ ShowSlider(*) {
     CoordMode("Mouse", "Screen")
     MouseGetPos(&mx, &my)
     
-    ; DPI scaling factor
+    ; DPI scaling
     dpiScale := A_ScreenDPI / 96
     
-    ; GUI dimensions (scaled for DPI, converted to integer)
+    ; Recalculate robust dimensions
     guiW := Integer(60 * dpiScale)
     guiH := Integer(210 * dpiScale)
     
-    ; Get taskbar height directly from taskbar window
+    ; Detect taskbar/work area
+    MonitorGetWorkArea(, , , , &workBottom)
+    
+    ; If Auto-Hide is on, WorkArea usually extends to the bottom of the screen.
+    ; In that case, we need to enforce a safe margin so we don't draw ON TOP of the taskbar (which might hide us).
+    isAutoHide := (workBottom >= A_ScreenHeight)
+    
+    minTaskbarHeight := Integer(48 * dpiScale) ; Standard taskbar is ~48px
+    
+    ; Try to get actual taskbar window position
     try {
-        WinGetPos(, &taskbarY, , &taskbarH, "ahk_class Shell_TrayWnd")
+        WinGetPos(, &tbY, , &tbH, "ahk_class Shell_TrayWnd")
+        ; If taskbar is visible on screen, its Y will be reasonable
+        if (tbY > 0 && tbY < A_ScreenHeight) {
+            finalBottom := tbY
+        } else {
+            finalBottom := A_ScreenHeight - minTaskbarHeight
+        }
     } catch {
-        taskbarY := A_ScreenHeight - 48
-        taskbarH := 48
+        finalBottom := A_ScreenHeight - minTaskbarHeight
     }
     
-    ; Position: centered on mouse X, bottom of GUI at top of taskbar
+    ; For Auto-Hide, fallback to ensure we are at least 'minTaskbarHeight' from bottom
+    if (isAutoHide && (A_ScreenHeight - finalBottom) < minTaskbarHeight) {
+        finalBottom := A_ScreenHeight - minTaskbarHeight
+    }
+    
+    ; Position: centered on mouse X, bottom of GUI at 'finalBottom'
     xPos := mx - (guiW // 2)
-    yPos := taskbarY - guiH
+    yPos := finalBottom - guiH
     
     sliderGui.Show("x" xPos " y" yPos " NoActivate")
     sliderVisible := true
