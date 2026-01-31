@@ -5,55 +5,103 @@
 ; Mouse Gestures
 ; Right Click + Drag Left = Previous Desktop
 ; Right Click + Drag Right = Next Desktop
+; Right Click + Drag Up = Task View (Spaces)
+; Right Click + Drag Down = Show Desktop
+
+; State Tracking
+; 0 = Normal
+; 1 = Task View Open
+; 2 = Desktop Shown
+viewState := 0
 
 RButton:: {
     MouseGetPos(&startX, &startY)
-    minDrag := 50  ; Minimum pixels to count as a drag
     triggered := false
     everTriggered := false
     
-    ; Variables for stop detection
+    ; Stop detection vars
     lastMoveTime := A_TickCount
     lastX := startX
+    lastY := startY
     
     while (GetKeyState("RButton", "P")) {
-        MouseGetPos(&currentX, &currentY)
+        MouseGetPos(&currX, &currY)
         
-        ; Check if mouse is moving
-        if (Abs(currentX - lastX) > 2) {
+        ; Update stop detection if moving
+        if (Abs(currX - lastX) > 2 || Abs(currY - lastY) > 2) {
             lastMoveTime := A_TickCount
-            lastX := currentX
+            lastX := currX
+            lastY := currY
         }
         
         if (!triggered) {
-            xDiff := currentX - startX
-            
-            if (xDiff > minDrag) {
-                ; Dragged Right -> Next Desktop
-                Send "^#{Right}"
-                triggered := true
-                everTriggered := true
-            } else if (xDiff < -minDrag) {
-                ; Dragged Left -> Previous Desktop
-                Send "^#{Left}"
+            dir := GetGestureDirection(startX, startY, currX, currY)
+            if (dir) {
+                PerformGestureAction(dir)
                 triggered := true
                 everTriggered := true
             }
         } else {
-            ; Already triggered, wait for mouse to stop moving before resetting
-            if (A_TickCount - lastMoveTime > 200) { ; 200ms pause considered as "stop"
+            ; Reset tracking if mouse stopped for 200ms
+            if (A_TickCount - lastMoveTime > 200) {
                 triggered := false
-                startX := currentX
+                startX := currX
+                startY := currY
             }
         }
         
         Sleep 10
     }
     
-    if (everTriggered) {
-        KeyWait "RButton" ; Wait for release if we already triggered the action
-    } else {
-        ; No significant drag -> Normal Right Click
+    if (everTriggered)
+        KeyWait "RButton"
+    else
         Click "Right"
+}
+
+GetGestureDirection(x1, y1, x2, y2) {
+    minDrag := 50
+    dx := x2 - x1
+    dy := y2 - y1
+    
+    if (Abs(dx) > Abs(dy)) { ; Horizontal
+        if (dx > minDrag) {
+            return "Right"
+        }
+        if (dx < -minDrag) {
+            return "Left"
+        }
+    } else { ; Vertical
+        if (dy > minDrag) {
+            return "Down"
+        }
+        if (dy < -minDrag) {
+            return "Up"
+        }
+    }
+    return ""
+}
+
+PerformGestureAction(dir) {
+    global viewState
+    switch dir {
+        case "Right": Send "^#{Right}"
+        case "Left":  Send "^#{Left}"
+        case "Down":
+            if (viewState == 1) { ; In TaskView -> Close it
+                Send "#{Tab}"
+                viewState := 0
+            } else { ; Toggle Desktop
+                Send "#d"
+                viewState := (viewState == 2) ? 0 : 2
+            }
+        case "Up":
+            if (viewState == 2) { ; Desktop Shown -> Restore
+                Send "#d"
+                viewState := 0
+            } else { ; Toggle TaskView
+                Send "#{Tab}"
+                viewState := (viewState == 1) ? 0 : 1
+            }
     }
 }
