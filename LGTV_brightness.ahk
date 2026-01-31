@@ -3,117 +3,140 @@
 
 ; =======================
 ; LG TV Backlight Hotkeys
-; - No console popups
-; - Ctrl+Win+Up/Down adjusts backlight
-; - Tray tooltip + tray menu show value
-; - Tray ICON changes (auto-generated) in steps of 10 (0..100)
+; =======================
+; Purpose:
+;   - Adjust LG TV Backlight via lgwebos-cli (command line tool)
+;   - Provide a visual slider overlay
+;   - Support Hotkeys (Ctrl+Win+Up/Down)
+;   - Support Tray Icon interaction (Click to show slider)
+;   - Sync state with TV periodically
+;
+; Dependencies:
+;   - LGTV Companion CLI (LGTVcli.exe)
 ; =======================
 
-; ===== CONFIG =====
-cli := "C:\Program Files\LGTV Companion\LGTVcli.exe"
-step := 10
-minIntervalMs := 90     ; debounce key-repeat
-syncEveryMs := 15000    ; re-sync from TV occasionally
+; =======================
+; CONFIGURATION
+; =======================
+cli := "C:\Program Files\LGTV Companion\LGTVcli.exe" ; Path to CLI tool
+step := 10                  ; Step size for brightness adjustments
+minIntervalMs := 90         ; Throttle for key repeat (keyboard hotkeys)
+syncEveryMs := 15000        ; Interval to re-read actual value from TV
 
-; State
-last := 0
-cur := 50
-lastSync := 0
+; =======================
+; GLOBAL STATE
+; =======================
+last := 0                   ; Timestamp of last hotkey action
+cur := 50                   ; Current tracked brightness value (0-100)
+lastSync := 0               ; Timestamp of last sync from TV
+lastHideTime := 0           ; Timestamp when slider was last hidden (to prevent immediate reopen)
 
-; Icon cache
+; Icon cache settings
 iconsDir := A_Temp "\lgtv_icons"
 iconsReady := false
 
-; ----- Slider GUI -----
+; =======================
+; GUI SETUP (SLIDER)
+; =======================
+; Create the GUI for the brightness slider (frameless, dark theme)
 sliderGui := Gui("+AlwaysOnTop -Caption +Border +ToolWindow", "Backlight")
 sliderGui.BackColor := "2d2d2d"
 sliderGui.MarginX := 10
 sliderGui.MarginY := 15
 
+; Add value text label
 sliderGui.SetFont("s9 ccccccc", "Segoe UI")
 sliderGui.AddText("vLabelText w40 Center", "50")
 
+; Add vertical slider
 sliderGui.SetFont("s9", "Segoe UI")
-; Vertical slider: Default is Top=0, Bottom=100.
-; We want Top=100, so we'll invert the logic manually (100-Value).
-; Removed 'ToolTip' so it doesn't show the raw 0-100 value which would be confusing.
+; Note: Standard slider has 0 at top. We invert this logic (100 - Value) so Up=Brighter.
 brightnessSlider := sliderGui.AddSlider("vSlider h150 w30 Range0-100 Vertical AltSubmit", 50)
 brightnessSlider.OnEvent("Change", OnSliderChange)
 
 sliderVisible := false
+lastSent := 0 ; Timestamp for throttling slider CLI commands
 
-; State for throttling
-lastSent := 0
+; =======================
+; EVENT HANDLERS
+; =======================
 
+/**
+ * Called when the slider is moved by the user.
+ * Throttles the actual TV commands to avoid flooding the connection.
+ */
 OnSliderChange(ctrl, *) {
     global cur, lastSent
-    ; Invert: Slider 0 (Top) -> Brightness 100
+    ; Invert value: GUI Slider 0 (Top) -> Brightness 100
     newVal := 100 - ctrl.Value
     
-    ; Update UI immediately
+    ; Update text label immediately
     sliderGui["LabelText"].Value := newVal
     
-    ; 1. Throttle: Send updates while dragging (max once per 100ms)
+    ; 1. Throttle: Send updates max once per 100ms
     elapsed := A_TickCount - lastSent
     if (elapsed > 100) {
         ApplyToTV(newVal)
         lastSent := A_TickCount
     }
     
-    ; 2. Debounce: ALWAYS schedule a final update to catch the end of movement
-    ; This ensures that if the last movement didn't trigger the throttle, 
-    ; it will still be sent after a short delay.
+    ; 2. Debounce: Schedule a final update to catch the end of drag
     SetTimer(SendToTV, -120)
 }
 
+/**
+ * Delayed sender for the slider to ensure final value is sent.
+ */
 SendToTV() {
     global brightnessSlider, lastSent
     val := 100 - brightnessSlider.Value
     
-    ; Avoid double-sending if the debounce timer fires right after a throttle send
+    ; Only send if we haven't just sent it (via throttle)
     if (A_TickCount - lastSent > 20) { 
         ApplyToTV(val)
         lastSent := A_TickCount
     }
 }
 
+/**
+ * Shows the brightness slider near the mouse cursor.
+ * Positions itself intelligently above the taskbar.
+ */
 ShowSlider(*) {
-    global sliderVisible, cur, brightnessSlider
+    global sliderVisible, cur, brightnessSlider, lastHideTime
+    
+    ; Prevent reopening immediately after clicking tray icon to close
+    if (A_TickCount - lastHideTime < 400)
+        return
     
     if (sliderVisible) {
-        sliderGui.Hide()
-        sliderVisible := false
+        HideSlider()
         return
     }
     
-    ; Update slider position: Brightness 100 -> Slider 0 (Top)
+    ; Update UI to match current internal state
     brightnessSlider.Value := 100 - cur
     sliderGui["LabelText"].Value := cur
     
-    ; Get mouse position for centering
+    ; Get mouse position
     CoordMode("Mouse", "Screen")
     MouseGetPos(&mx, &my)
     
-    ; DPI scaling
+    ; Calculate dimensions with DPI scaling
     dpiScale := A_ScreenDPI / 96
-    
-    ; Recalculate robust dimensions
     guiW := Integer(60 * dpiScale)
     guiH := Integer(210 * dpiScale)
     
-    ; Detect taskbar/work area
+    ; --- Positioning Logic ---
     MonitorGetWorkArea(, , , , &workBottom)
     
-    ; If Auto-Hide is on, WorkArea usually extends to the bottom of the screen.
-    ; In that case, we need to enforce a safe margin so we don't draw ON TOP of the taskbar (which might hide us).
+    ; Determine effective screen bottom (handling auto-hide taskbars)
     isAutoHide := (workBottom >= A_ScreenHeight)
-    
-    minTaskbarHeight := Integer(48 * dpiScale) ; Standard taskbar is ~48px
-    
-    ; Try to get actual taskbar window position
+    minTaskbarHeight := Integer(48 * dpiScale) 
+
+    ; Try to detect actual taskbar position
     try {
         WinGetPos(, &tbY, , &tbH, "ahk_class Shell_TrayWnd")
-        ; If taskbar is visible on screen, its Y will be reasonable
         if (tbY > 0 && tbY < A_ScreenHeight) {
             finalBottom := tbY
         } else {
@@ -123,29 +146,35 @@ ShowSlider(*) {
         finalBottom := A_ScreenHeight - minTaskbarHeight
     }
     
-    ; For Auto-Hide, fallback to ensure we are at least 'minTaskbarHeight' from bottom
+    ; Safety margin for Auto-Hide
     if (isAutoHide && (A_ScreenHeight - finalBottom) < minTaskbarHeight) {
         finalBottom := A_ScreenHeight - minTaskbarHeight
     }
     
-    ; Position: centered on mouse X, bottom of GUI at 'finalBottom'
+    ; Final coordinates: Center on mouse X, adhere to bottom limit
     xPos := mx - (guiW // 2)
     yPos := finalBottom - guiH
     
+    ; Force AlwaysOnTop again just in case
+    sliderGui.Opt("+AlwaysOnTop")
     sliderGui.Show("x" xPos " y" yPos " NoActivate")
     sliderVisible := true
 }
 
-; Close slider on Escape
+; Close slider on Escape key
 sliderGui.OnEvent("Escape", HideSlider)
 
+/**
+ * Hides the slider window and records the timestamp.
+ */
 HideSlider(*) {
-    global sliderVisible
+    global sliderVisible, lastHideTime
     sliderGui.Hide()
     sliderVisible := false
+    lastHideTime := A_TickCount ; Record time to prevent instant re-open
 }
 
-; Close slider when clicking outside
+; Close slider when clicking outside of the GUI
 #HotIf sliderVisible
 ~LButton::
 ~RButton::
@@ -157,7 +186,9 @@ HideSlider(*) {
 }
 #HotIf
 
-; ----- Tray menu setup -----
+; =======================
+; TRAY MENU & ICON
+; =======================
 A_TrayMenu.Delete()
 valueLabel := "Backlight: (starting...)"
 A_TrayMenu.Add(valueLabel, ShowSlider)
@@ -166,29 +197,37 @@ A_TrayMenu.Add("Sync from TV now", (*) => SyncFromTV(true))
 A_TrayMenu.Add()
 A_TrayMenu.Add("Exit", (*) => ExitApp())
 
-; Click tray icon to show slider
+; Handle left/right clicks on Tray Icon
 OnMessage(0x404, TrayClick)
 TrayClick(wParam, lParam, *) {
-    if (lParam = 0x202 || lParam = 0x205) {  ; Left-click or right-click release
-        if (lParam = 0x202)  ; Left-click shows slider
+    if (lParam = 0x202 || lParam = 0x205) {  ; WM_LBUTTONUP or WM_RBUTTONUP
+        if (lParam = 0x202)  ; Left-click toggles slider
             ShowSlider()
     }
 }
 
 A_IconTip := "LGTV Backlight: starting..."
 
-; ===== HOTKEYS =====
+; =======================
+; HOTKEYS
+; =======================
 ^#Up::AdjustBacklight("up")      ; Ctrl + Win + Up
 ^#Down::AdjustBacklight("down")  ; Ctrl + Win + Down
 
-; ===== Startup sync/UI =====
-SyncFromTV(true)
+; =======================
+; INITIALIZATION
+; =======================
+SyncFromTV(true) ; Initial sync
 UpdateTray()
 
 ; =======================
-; Core logic
+; CORE LOGIC
 ; =======================
 
+/**
+ * Adjusts backlight up or down via Hotkey.
+ * @param dir "up" or "down"
+ */
 AdjustBacklight(dir) {
     global cur, step, last, minIntervalMs
 
@@ -197,7 +236,7 @@ AdjustBacklight(dir) {
         return
     last := now
 
-    ; Keep in sync occasionally, but don't GET every keypress
+    ; Opportunistic sync (lazy)
     SyncFromTV(false)
 
     if (dir = "up")
@@ -206,14 +245,26 @@ AdjustBacklight(dir) {
         ApplyToTV(cur - step)
 }
 
+/**
+ * Limits a value to a specific range.
+ */
+ClampVal(v, lo, hi) => v < lo ? lo : (v > hi ? hi : v)
+
+/**
+ * Updates internal state, tray icon, and sends command to TV.
+ */
 ApplyToTV(value) {
     global cur
     cur := ClampVal(value, 0, 100)
     UpdateTray()
-    ; SET output may be noisy JSON (e.g. "Cannot relay luna response.") — ignore it.
+    ; Send actual command
     RunCliCapture("-backlight " cur)
 }
 
+/**
+ * Reads the current backlight setting from the TV.
+ * @param force If true, ignores the time interval check.
+ */
 SyncFromTV(force := false) {
     global cur, lastSync, syncEveryMs
     now := A_TickCount
@@ -229,25 +280,27 @@ SyncFromTV(force := false) {
     }
 }
 
+/**
+ * Updates the Tray Icon and Menu Text to match current value.
+ */
 UpdateTray() {
     global cur, valueLabel
     newLabel := "Backlight: " cur
 
-    ; Rename the existing menu item label (most compatible)
+    ; Update menu item text
     try A_TrayMenu.Rename(valueLabel, newLabel)
     valueLabel := newLabel
 
-    ; Tooltip on hover
+    ; Update hover tooltip
     A_IconTip := "LGTV Backlight: " cur
 
-    ; Replace tray icon (bucketed to tens)
+    ; Update dynamic icon
     UpdateIconFromValue(cur)
 }
 
 ; =======================
-; Running LGTVcli silently
+; HELPER: CLI EXECUTION
 ; =======================
-
 RunCliCapture(args) {
     global cli
     outFile := A_Temp "\lgtv_out.txt"
@@ -269,12 +322,9 @@ FirstInt(text) {
     throw Error("Could not parse number from: " text)
 }
 
-ClampVal(v, lo, hi) => v < lo ? lo : (v > hi ? hi : v)
-
 ; =======================
-; Tray icon generation
+; HELPER: ICON GENERATION
 ; =======================
-
 EnsureIcons() {
     global iconsDir, iconsReady
     if iconsReady
@@ -283,7 +333,7 @@ EnsureIcons() {
     if !DirExist(iconsDir)
         DirCreate(iconsDir)
 
-    ; Generate 0..100 in steps of 10
+    ; Generate icons for 0, 10, 20... 100
     loop 11 {
         v := (A_Index - 1) * 10
         path := iconsDir "\b" v ".ico"
@@ -304,29 +354,30 @@ UpdateIconFromValue(val) {
     if (bucket > 100)
         bucket := 100
 
-    iconFile := iconsDir "\b" bucket ".ico"
-    if FileExist(iconFile)
-        TraySetIcon(iconFile)
+    targetPath := iconsDir "\b" bucket ".ico"
+    if FileExist(targetPath)
+        TraySetIcon(targetPath)
 }
 
-; Writes a 16x16 32-bit ICO with a simple vertical bar.
-; Transparent background, light outline, white fill.
+/**
+ * Generates a dynamic .ico file with a vertical progress bar.
+ */
 FileWriteIcoBar(path, value) {
     w := 16, h := 16
 
-    ; bar height 0..14 (leave 1px border top/bottom)
+    ; Bar height 0..14
     barH := Floor((ClampVal(value, 0, 100) / 100) * 14)
 
-    ; Build pixel buffer (BGRA), bottom-up for BMP
+    ; Pixel buffer (BGRA)
     pixels := Buffer(w * h * 4, 0)
 
-    ; Colors (BGRA)
+    ; Colors
     outlineB := 200, outlineG := 200, outlineR := 200, outlineA := 255
     barB := 255, barG := 255, barR := 255, barA := 255
 
     SetPx(buf, x, y, b, g, r, a) {
         w := 16, h := 16
-        yy := (h - 1 - y)               ; BMP bottom-up
+        yy := (h - 1 - y)
         off := (yy * w + x) * 4
         NumPut("UChar", b, buf, off + 0)
         NumPut("UChar", g, buf, off + 1)
@@ -334,7 +385,7 @@ FileWriteIcoBar(path, value) {
         NumPut("UChar", a, buf, off + 3)
     }
 
-    ; Draw outline box (x:2..13, y:1..14)
+    ; Draw Box
     for x in [2,3,4,5,6,7,8,9,10,11,12,13] {
         SetPx(pixels, x, 1,  outlineB, outlineG, outlineR, outlineA)
         SetPx(pixels, x, 14, outlineB, outlineG, outlineR, outlineA)
@@ -345,24 +396,23 @@ FileWriteIcoBar(path, value) {
         SetPx(pixels, 13, y, outlineB, outlineG, outlineR, outlineA)
     }
 
-    ; Fill bar from bottom inside box (x:3..12, y:14-barH .. 13)
+    ; Fill Bar
     if (barH > 0) {
         yStart := 14 - barH
         y := yStart
         while (y <= 13) {
             Loop 10 {
-                x := A_Index + 2 ; 3..12
+                x := A_Index + 2
                 SetPx(pixels, x, y, barB, barG, barR, barA)
             }
             y += 1
         }
     }
 
-    ; AND mask (1=transparent). 16 bits => 2 bytes, row padded to 4 bytes
+    ; Create Mask (Transparent parts)
     maskStride := 4
     mask := Buffer(maskStride * h, 0x00)
 
-    ; Set mask bit where alpha==0
     Loop h {
         y := A_Index - 1
         rowOff := y * maskStride
@@ -385,32 +435,26 @@ FileWriteIcoBar(path, value) {
     fileSize := 6 + 16 + bmpSize
 
     ico := Buffer(fileSize, 0)
-
-    ; ICONDIR
+    ; Header
     NumPut("UShort", 0, ico, 0)
     NumPut("UShort", 1, ico, 2)
     NumPut("UShort", 1, ico, 4)
-
-    ; ICONDIRENTRY
-    NumPut("UChar", 16, ico, 6)      ; width
-    NumPut("UChar", 16, ico, 7)      ; height
-    NumPut("UChar", 0,  ico, 8)
-    NumPut("UChar", 0,  ico, 9)
-    NumPut("UShort", 1, ico, 10)     ; planes
-    NumPut("UShort", 32, ico, 12)    ; bitcount
+    ; DirEntry
+    NumPut("UChar", 16, ico, 6)
+    NumPut("UChar", 16, ico, 7)
+    NumPut("UShort", 1, ico, 10)
+    NumPut("UShort", 32, ico, 12)
     NumPut("UInt",  bmpSize, ico, 14)
-    NumPut("UInt",  6 + 16, ico, 18) ; image offset
+    NumPut("UInt",  6 + 16, ico, 18)
 
     imgOff := 6 + 16
     NumPut("UInt", 40, ico, imgOff + 0)
     NumPut("Int",  16, ico, imgOff + 4)
-    NumPut("Int",  16 * 2, ico, imgOff + 8) ; height includes AND mask
+    NumPut("Int",  32, ico, imgOff + 8) ; Height * 2
     NumPut("UShort", 1, ico, imgOff + 12)
     NumPut("UShort", 32, ico, imgOff + 14)
-    NumPut("UInt", 0, ico, imgOff + 16) ; BI_RGB
     NumPut("UInt", xorSize + andSize, ico, imgOff + 20)
 
-    ; Copy XOR pixels then AND mask
     DllCall("RtlMoveMemory", "Ptr", ico.Ptr + imgOff + 40, "Ptr", pixels.Ptr, "UPtr", xorSize)
     DllCall("RtlMoveMemory", "Ptr", ico.Ptr + imgOff + 40 + xorSize, "Ptr", mask.Ptr, "UPtr", andSize)
 

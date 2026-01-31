@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+#NoTrayIcon
 
 ; Hot Corners:
 ; - Bottom Left: Toggle taskbar auto-hide
