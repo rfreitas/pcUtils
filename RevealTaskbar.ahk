@@ -1,7 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
-; Hot Corners - Top corners toggle taskbar auto-hide
+; Hot Corners - Bottom left corner toggles taskbar auto-hide
 ; Also supports Win+Shift+T as keyboard shortcut
 
 cornerSize := 5
@@ -15,7 +15,9 @@ CheckHotCorners() {
     MouseGetPos(&mouseX, &mouseY)
     screenWidth := A_ScreenWidth
     
-    inCorner := (mouseY <= cornerSize) && (mouseX <= cornerSize || mouseX >= screenWidth - cornerSize)
+    screenHeight := A_ScreenHeight
+    
+    inCorner := (mouseX <= cornerSize) && (mouseY >= screenHeight - cornerSize)
     
     if (inCorner && !wasInCorner) {
         ToggleTaskbar()
