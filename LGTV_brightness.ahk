@@ -145,6 +145,18 @@ HideSlider(*) {
     sliderVisible := false
 }
 
+; Close slider when clicking outside
+#HotIf sliderVisible
+~LButton::
+~RButton::
+{
+    MouseGetPos(,, &targetHwnd)
+    if (targetHwnd != sliderGui.Hwnd) {
+        HideSlider()
+    }
+}
+#HotIf
+
 ; ----- Tray menu setup -----
 A_TrayMenu.Delete()
 valueLabel := "Backlight: (starting...)"
