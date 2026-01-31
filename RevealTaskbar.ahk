@@ -64,6 +64,7 @@ RButton:: {
     MouseGetPos(&startX, &startY)
     minDrag := 50  ; Minimum pixels to count as a drag
     triggered := false
+    everTriggered := false
     
     ; Variables for stop detection
     lastMoveTime := A_TickCount
@@ -85,10 +86,12 @@ RButton:: {
                 ; Dragged Right -> Next Desktop
                 Send "^#{Right}"
                 triggered := true
+                everTriggered := true
             } else if (xDiff < -minDrag) {
                 ; Dragged Left -> Previous Desktop
                 Send "^#{Left}"
                 triggered := true
+                everTriggered := true
             }
         } else {
             ; Already triggered, wait for mouse to stop moving before resetting
@@ -101,7 +104,7 @@ RButton:: {
         Sleep 10
     }
     
-    if (triggered) {
+    if (everTriggered) {
         KeyWait "RButton" ; Wait for release if we already triggered the action
     } else {
         ; No significant drag -> Normal Right Click
