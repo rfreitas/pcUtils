@@ -8,12 +8,6 @@
 ; Right Click + Drag Up = Task View (Spaces)
 ; Right Click + Drag Down = Show Desktop
 
-; State Tracking
-; 0 = Normal
-; 1 = Task View Open
-; 2 = Desktop Shown
-viewState := 0
-
 RButton:: {
     MouseGetPos(&startX, &startY)
     triggered := false
@@ -83,25 +77,79 @@ GetGestureDirection(x1, y1, x2, y2) {
 }
 
 PerformGestureAction(dir) {
-    global viewState
     switch dir {
         case "Right": Send "^#{Right}"
         case "Left":  Send "^#{Left}"
         case "Down":
-            if (viewState == 1) { ; In TaskView -> Close it
+            ; Drag Down:
+            ; If Task View -> Close it
+            ; Else if Normal (Windows Visible) -> Minimize All
+            ; Else (AllMinimized or Empty) -> Do Nothing
+            if (WinActive("Task View")) {
                 Send "#{Tab}"
-                viewState := 0
-            } else { ; Toggle Desktop
-                Send "#d"
-                viewState := (viewState == 2) ? 0 : 2
+            } else {
+                state := GetDesktopState()
+                if (state == "Normal") {
+                    Send "#d"
+                }
             }
         case "Up":
-            if (viewState == 2) { ; Desktop Shown -> Restore
-                Send "#d"
-                viewState := 0
-            } else { ; Toggle TaskView
-                Send "#{Tab}"
-                viewState := (viewState == 1) ? 0 : 1
+            ; Drag Up:
+            ; If Task View -> Do Nothing
+            ; Else If AllMinimized -> Restore Windows
+            ; Else (Normal or Empty) -> Show Task View
+            if (!WinActive("Task View")) {
+                state := GetDesktopState()
+                if (state == "AllMinimized") {
+                    Send "#d"
+                } else {
+                    ; Normal or Empty
+                    Send "#{Tab}"
+                }
             }
     }
+}
+
+GetDesktopState() {
+    hasVisible := false
+    hasMinimized := false
+    
+    ids := WinGetList(,, "Program Manager") ; Exclude Program Manager
+    for id in ids {
+        ; Skip specific system classes
+        class := WinGetClass(id)
+        if (class == "Shell_TrayWnd" || class == "Windows.UI.Core.CoreWindow" || class == "WorkerW")
+            continue
+            
+        ; Style Checks
+        style := WinGetStyle(id)
+        exStyle := WinGetExStyle(id)
+        
+        ; Must have WS_VISIBLE (0x10000000)
+        if !(style & 0x10000000)
+            continue
+            
+        ; Must NOT be WS_EX_TOOLWINDOW (0x80)
+        if (exStyle & 0x80)
+            continue
+            
+        ; Skip empty titles (unless checking for non-titled apps, but usually safe to skip)
+        if (WinGetTitle(id) == "")
+            continue
+            
+        ; Check State
+        if (WinGetMinMax(id) == -1) {
+            hasMinimized := true
+        } else {
+            hasVisible := true
+            ; If we found a visible window, the state is Normal. 
+            ; We can return early if we don't care about counting.
+            return "Normal"
+        }
+    }
+    
+    if (hasMinimized)
+        return "AllMinimized"
+        
+    return "Empty"
 }
