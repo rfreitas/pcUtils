@@ -34,6 +34,9 @@ lastHideTime := 0           ; Timestamp when slider was last hidden (to prevent 
 ; Icon cache settings
 iconsDir := A_Temp "\lgtv_icons"
 iconsReady := false
+hoverLastSync := 0          ; Timestamp of last sync triggered by hover
+hoverMinInterval := 5000    ; Minimum ms between hover syncs
+
 
 ; =======================
 ; GUI SETUP (SLIDER)
@@ -90,6 +93,8 @@ OnSliderChange(ctrl, *) {
 SendToTV() {
     global brightnessSlider, lastSent
     val := 100 - brightnessSlider.Value
+
+    sliderGui["LabelText"].Value := val
     
     ; Only send if we haven't just sent it (via throttle)
     if (A_TickCount - lastSent > 20) { 
@@ -200,9 +205,23 @@ A_TrayMenu.Add("Exit", (*) => ExitApp())
 ; Handle left/right clicks on Tray Icon
 OnMessage(0x404, TrayClick)
 TrayClick(wParam, lParam, *) {
+    global hoverLastSync, hoverMinInterval
+    
+    ; WM_MOUSEMOVE = 0x200
+    if (lParam = 0x200) {
+        if (A_TickCount - hoverLastSync > hoverMinInterval) {
+            hoverLastSync := A_TickCount
+            SetTimer(SyncFromTV, -1) ; Async call to avoid blocking UI thread
+        }
+        return
+    }
+
     if (lParam = 0x202 || lParam = 0x205) {  ; WM_LBUTTONUP or WM_RBUTTONUP
-        if (lParam = 0x202)  ; Left-click toggles slider
+        if (lParam = 0x202) { ; Left-click toggles slider
             ShowSlider()
+            ; Sync immediately on click too, partially to update the slider we just showed
+            SetTimer(SyncFromTV, -10)
+        }
     }
 }
 
@@ -259,6 +278,9 @@ ApplyToTV(value) {
     UpdateTray()
     ; Send actual command
     RunCliCapture("-backlight " cur)
+    
+    ; Schedule a confirmation sync to ensure UI matches TV state eventually
+    SetTimer((*) => SyncFromTV(true), -2000)
 }
 
 /**
@@ -277,6 +299,14 @@ SyncFromTV(force := false) {
             cur := ClampVal(FirstInt(r.out), 0, 100)
             lastSync := now
         }
+    }
+    
+    UpdateTray() ; Update icon/tooltip
+    
+    ; If slider is visible and NOT being dragged, update it
+    if (sliderVisible && !GetKeyState("LButton", "P")) {
+        brightnessSlider.Value := 100 - cur
+        sliderGui["LabelText"].Value := cur
     }
 }
 
