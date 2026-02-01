@@ -102,6 +102,10 @@ PerformGestureAction(dir) {
                 state := GetDesktopState()
                 if (state == "AllMinimized") {
                     Send "#d"
+                    Sleep 150
+                    if (GetDesktopState() == "AllMinimized") {
+                         Send "#{Tab}"
+                    }
                 } else {
                     ; Normal or Empty
                     Send "#{Tab}"
