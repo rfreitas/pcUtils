@@ -91,13 +91,14 @@ OnSliderChange(ctrl, *) {
  * Delayed sender for the slider to ensure final value is sent.
  */
 SendToTV() {
-    global brightnessSlider, lastSent
+    global brightnessSlider, cur, lastSent
     val := 100 - brightnessSlider.Value
-
+    
+    ; Update label (consistent with user's manual edit)
     sliderGui["LabelText"].Value := val
     
-    ; Only send if we haven't just sent it (via throttle)
-    if (A_TickCount - lastSent > 20) { 
+    ; Only send if the current slider value differs from our known state (cur)
+    if (val != cur) { 
         ApplyToTV(val)
         lastSent := A_TickCount
     }
