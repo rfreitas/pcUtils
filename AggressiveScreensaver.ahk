@@ -43,7 +43,7 @@ if (!A_IsAdmin) {
 ; CONFIGURATION
 ; =======================
 powerCheckMs := 5000         ; Check power requests every 5 seconds
-blankThresholdSec := 10      ; Show black overlay after 60s of Agent Idle
+blankThresholdSec := 30      ; Show black overlay after 30s of Agent Idle (Min 15s)
 
 ; =======================
 ; GLOBAL STATE
@@ -55,11 +55,11 @@ lastActivityTime := A_TickCount
 lastControllerState := Map() ; Track XInput controller states
 lastJoyState := Map()        ; Track DirectInput joystick states
 agentIdleSec := 0           ; Our own idle counter
-agentIdleSec := 0           ; Our own idle counter
 lastMouseX := 0             ; Track mouse position for delta check
 lastMouseY := 0
 blackGuis := []              ; Storage for multi-monitor black overlays
 isBlanked := false
+timeoutGui := 0              ; Track the slider GUI instance
 
 ; =======================
 ; POWER REQUEST DETECTION
@@ -499,6 +499,166 @@ ShowPowerRequests(*) {
 }
 
 ; =======================
+; TIMEOUT SLIDER GUI (Vertical, Dark Theme - Matching LG Script)
+; =======================
+
+; Define 10 fixed steps (Common timeouts in seconds)
+timeoutSteps := [15, 30, 60, 120, 180, 300, 600, 900, 1200, 1800]
+
+; Create the GUI once at startup (matching LG script pattern)
+timeoutGui := Gui("+AlwaysOnTop -Caption +Border +ToolWindow", "Timeout")
+timeoutGui.BackColor := "2d2d2d"
+timeoutGui.MarginX := 10
+timeoutGui.MarginY := 15
+
+; Add value text label at top
+timeoutGui.SetFont("s9 ccccccc", "Segoe UI")
+timeoutGui.AddText("vLabelText w40 Center", "30s")
+
+; Add vertical slider (matching LG script style)
+timeoutGui.SetFont("s9", "Segoe UI")
+; Range 1-10 for our 10 steps. Vertical slider has 0 at top, so we invert.
+timeoutSlider := timeoutGui.AddSlider("vSlider h150 w30 Range1-10 Vertical AltSubmit", 8)
+timeoutSlider.OnEvent("Change", OnTimeoutSliderChange)
+
+sliderVisible := false
+lastHideTime := 0
+
+/**
+ * Format seconds to human readable time
+ */
+FormatTimeout(s) {
+    if (s < 60) {
+        return s . "s"
+    }
+    m := Floor(s / 60)
+    rem := Mod(s, 60)
+    return m . "m" . (rem > 0 ? " " . rem . "s" : "")
+}
+
+/**
+ * Called when the slider is moved by the user.
+ */
+OnTimeoutSliderChange(ctrl, *) {
+    global blankThresholdSec, timeoutSteps, timeoutGui
+    ; Invert value: GUI Slider 1 (Top) -> Step 10, GUI Slider 10 (Bottom) -> Step 1
+    stepIdx := 11 - ctrl.Value
+    blankThresholdSec := timeoutSteps[stepIdx]
+    
+    ; Update text label immediately
+    timeoutGui["LabelText"].Value := FormatTimeout(blankThresholdSec)
+    UpdateTrayTip()
+}
+
+/**
+ * Shows the timeout slider near the mouse cursor.
+ * Positions itself intelligently above the taskbar (copied from LG script).
+ */
+ShowTimeoutSlider(*) {
+    global sliderVisible, blankThresholdSec, timeoutSlider, timeoutGui, lastHideTime, timeoutSteps
+    
+    ; Prevent reopening immediately after clicking tray icon to close
+    if (A_TickCount - lastHideTime < 400)
+        return
+    
+    if (sliderVisible) {
+        HideTimeoutSlider()
+        return
+    }
+    
+    ; Find closest step for initial slider position
+    currentStep := 1
+    for i, sValue in timeoutSteps {
+        if (blankThresholdSec <= sValue) {
+            currentStep := i
+            break
+        }
+    }
+    
+    ; Update UI to match current internal state (inverted for vertical slider)
+    timeoutSlider.Value := 11 - currentStep
+    timeoutGui["LabelText"].Value := FormatTimeout(blankThresholdSec)
+    
+    ; Get mouse position
+    CoordMode("Mouse", "Screen")
+    MouseGetPos(&mx, &my)
+    
+    ; Calculate dimensions with DPI scaling
+    dpiScale := A_ScreenDPI / 96
+    guiW := Integer(60 * dpiScale)
+    guiH := Integer(210 * dpiScale)
+    
+    ; --- Positioning Logic (Copied from LG script) ---
+    MonitorGetWorkArea(, , , , &workBottom)
+    
+    ; Determine effective screen bottom (handling auto-hide taskbars)
+    isAutoHide := (workBottom >= A_ScreenHeight)
+    minTaskbarHeight := Integer(48 * dpiScale) 
+
+    ; Try to detect actual taskbar position
+    try {
+        WinGetPos(, &tbY, , &tbH, "ahk_class Shell_TrayWnd")
+        if (tbY > 0 && tbY < A_ScreenHeight) {
+            finalBottom := tbY
+        } else {
+            finalBottom := A_ScreenHeight - minTaskbarHeight
+        }
+    } catch {
+        finalBottom := A_ScreenHeight - minTaskbarHeight
+    }
+    
+    ; Safety margin for Auto-Hide
+    if (isAutoHide && (A_ScreenHeight - finalBottom) < minTaskbarHeight) {
+        finalBottom := A_ScreenHeight - minTaskbarHeight
+    }
+    
+    ; Final coordinates: Center on mouse X, adhere to bottom limit
+    xPos := mx - (guiW // 2)
+    yPos := finalBottom - guiH
+    
+    ; Force AlwaysOnTop again just in case
+    timeoutGui.Opt("+AlwaysOnTop")
+    timeoutGui.Show("x" xPos " y" yPos " NoActivate")
+    sliderVisible := true
+}
+
+; Close slider on Escape key
+timeoutGui.OnEvent("Escape", HideTimeoutSlider)
+
+/**
+ * Hides the slider window and records the timestamp.
+ */
+HideTimeoutSlider(*) {
+    global sliderVisible, lastHideTime, timeoutGui
+    timeoutGui.Hide()
+    sliderVisible := false
+    lastHideTime := A_TickCount ; Record time to prevent instant re-open
+}
+
+; Close slider when clicking outside of the GUI (matching LG script)
+#HotIf sliderVisible
+~LButton::
+~RButton::
+{
+    global timeoutGui
+    MouseGetPos(,, &targetHwnd)
+    if (targetHwnd != timeoutGui.Hwnd) {
+        HideTimeoutSlider()
+    }
+}
+#HotIf
+
+/**
+ * Handle Tray Icon Messages
+ */
+TrayIconClick(wParam, lParam, msg, hwnd) {
+    ; 0x202 = WM_LBUTTONUP
+    if (lParam == 0x202) {
+        ShowTimeoutSlider()
+    }
+}
+
+; =======================
 ; START TIMERS
 ; =======================
 
@@ -507,9 +667,13 @@ SetTimer(GetPowerRequests, powerCheckMs)  ; Check powercfg requests
 SetTimer(UpdateTrayTip, 1000)            ; Update idle timers every second
 SetTimer(UpdateAgentIdle, 100)           ; Check for input frequently
 
+; Detect Tray Icon Clicks (Left click for slider)
+OnMessage(0x404, TrayIconClick)
+
 ; Initial calls
 GetPowerRequests()
 UpdateTrayTip()
 
 ; Initial notification
 TrayTip("Power Monitor Debug", "Hover tray icon to see idle timers and blocking apps.", 1)
+
