@@ -60,6 +60,8 @@ lastMouseX := 0             ; Track mouse position for delta check
 lastMouseY := 0
 blackGuis := []              ; Storage for multi-monitor black overlays
 isBlanked := false
+lastDisplayChange := 0       ; Debounce for display change events
+displayChangeDebounce := 500 ; ms - prevents rapid rebuilds during HDR/mode switches
 
 ; =======================
 ; POWER REQUEST DETECTION
@@ -444,6 +446,25 @@ RemoveBlackOverlay() {
     isBlanked := false
 }
 
+/**
+ * Handles display change events (resolution, HDR toggle, refresh rate, monitor connect/disconnect)
+ * Rebuilds overlays if currently blanked to ensure full coverage
+ */
+OnDisplayChange(wParam, lParam, msg, hwnd) {
+    global lastDisplayChange, displayChangeDebounce, isBlanked
+    
+    ; Debounce rapid successive changes (common during HDR toggle)
+    if (A_TickCount - lastDisplayChange < displayChangeDebounce)
+        return
+    lastDisplayChange := A_TickCount
+    
+    ; Rebuild overlays if currently blanked
+    if (isBlanked) {
+        RemoveBlackOverlay()
+        ShowBlackOverlay()
+    }
+}
+
 ; =======================
 ; TRAY MENU
 ; =======================
@@ -588,6 +609,7 @@ SetTimer(UpdateAgentIdle, 100)           ; Check for input frequently
 
 ; Detect Tray Icon Clicks (Left click for slider)
 OnMessage(0x404, TrayIconClick)
+OnMessage(0x007E, OnDisplayChange)  ; WM_DISPLAYCHANGE - monitor/resolution/HDR changes
 
 ; Initial calls
 GetPowerRequests()
