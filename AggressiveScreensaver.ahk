@@ -9,13 +9,35 @@ if (!A_IsAdmin) {
     }
 }
 
-; =======================
-; Power Request Monitor
-; =======================
-; Purpose:
-;   - Monitors apps preventing Windows screensaver/sleep via Power Request API
-;   - Displays blocking apps in the system tray icon tooltip
-; =======================
+; ==============================================================================
+; Power & Idle Monitor (Agent Idle)
+; ==============================================================================
+; LOGIC OVERVIEW:
+;
+; 1. IDLE COUNTERS (The three timers):
+;    - Soft Idle (A_TimeIdle): 
+;        Resets on ANY input (Physical OR Simulated). If this resets but 
+;        Phys/Agent don't, an app is likely using a "jiggler" to trick Windows.
+;    - Phys Idle (A_TimeIdlePhysical): 
+;        Resets only on HARDWARE Keyboard/Mouse input. Ignores game controllers.
+;    - True Idle (Agent Idle): 
+;        The smart timer. It combines Keyboard, Mouse, and Controller (XInput/Joy).
+;        - Filters out mouse vibrations/jiggles (< 5 pixels).
+;        - Filters out controller stick drift (deadzones).
+;        - This reflects the user's actual physical presence.
+;
+; 2. POWER REQUESTS (Detection):
+;    - Uses 'powercfg /requests' to find apps blocking Windows sleep.
+;    - SCREEN (DISPLAY): Apps saying "Don't turn off the monitor" (e.g. VLC).
+;    - SLEEP (SYSTEM/AWAY): Apps saying "Don't let the PC sleep" (e.g. Audio).
+;
+; 3. SMART BLANKING (Force Blanking):
+;    - When 'True Idle' exceeds 'blankThresholdSec' AND no apps are blocking
+;      the SCREEN, a black multi-monitor overlay is shown.
+;    - This protects TVs/monitors from burn-in without cutting the HDMI signal.
+;    - Overlay dismisses instantly on any REAL input or if an app starts 
+;      blocking the screen.
+; ==============================================================================
 
 ; =======================
 ; CONFIGURATION
