@@ -1,5 +1,6 @@
 ﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
+#Include VerticalSlider.ahk
 
 ; =======================
 ; LG TV Backlight Hotkeys
@@ -29,7 +30,6 @@ syncEveryMs := 15000        ; Interval to re-read actual value from TV
 last := 0                   ; Timestamp of last hotkey action
 cur := 50                   ; Current tracked brightness value (0-100)
 lastSync := 0               ; Timestamp of last sync from TV
-lastHideTime := 0           ; Timestamp when slider was last hidden (to prevent immediate reopen)
 
 ; Icon cache settings
 iconsDir := A_Temp "\lgtv_icons"
@@ -39,158 +39,70 @@ hoverMinInterval := 5000    ; Minimum ms between hover syncs
 
 
 ; =======================
-; GUI SETUP (SLIDER)
+; GUI SETUP (Using VerticalSlider Module)
 ; =======================
-; Create the GUI for the brightness slider (frameless, dark theme)
-sliderGui := Gui("+AlwaysOnTop -Caption +Border +ToolWindow", "Backlight")
-sliderGui.BackColor := "2d2d2d"
-sliderGui.MarginX := 10
-sliderGui.MarginY := 15
-
-; Add value text label
-sliderGui.SetFont("s9 ccccccc", "Segoe UI")
-sliderGui.AddText("vLabelText w40 Center", "50")
-
-; Add vertical slider
-sliderGui.SetFont("s9", "Segoe UI")
-; Note: Standard slider has 0 at top. We invert this logic (100 - Value) so Up=Brighter.
-brightnessSlider := sliderGui.AddSlider("vSlider h150 w30 Range0-100 Vertical AltSubmit", 50)
-brightnessSlider.OnEvent("Change", OnSliderChange)
-
-sliderVisible := false
-lastSent := 0 ; Timestamp for throttling slider CLI commands
+; Module handles: GUI styling, positioning, click-away dismissal
+; Script handles: Value interpretation, throttling, debouncing, label formatting
+brightnessSlider := VerticalSlider({
+    title: "Backlight",
+    min: 0,
+    max: 100,
+    onChange: OnSliderChange
+})
 
 ; =======================
 ; EVENT HANDLERS
 ; =======================
 
+pendingVal := 0  ; Latest value from slider
+
 /**
  * Called when the slider is moved by the user.
- * Throttles the actual TV commands to avoid flooding the connection.
+ * Debounce-only: update label immediately, send to TV after user stops.
  */
-OnSliderChange(ctrl, *) {
-    global cur, lastSent
-    ; Invert value: GUI Slider 0 (Top) -> Brightness 100
-    newVal := 100 - ctrl.Value
+OnSliderChange(rawVal, *) {
+    global pendingVal, brightnessSlider
     
-    ; Update text label immediately
-    sliderGui["LabelText"].Value := newVal
+    ; Invert and store
+    pendingVal := 100 - rawVal
     
-    ; 1. Throttle: Send updates max once per 100ms
-    elapsed := A_TickCount - lastSent
-    if (elapsed > 100) {
-        ApplyToTV(newVal)
-        lastSent := A_TickCount
-    }
+    ; Update label immediately
+    brightnessSlider.SetLabel(pendingVal)
     
-    ; 2. Debounce: Schedule a final update to catch the end of drag
-    SetTimer(SendToTV, -120)
+    ; Debounce: send 150ms after last movement
+    SetTimer(SendFinal, -150)
 }
 
 /**
- * Delayed sender for the slider to ensure final value is sent.
+ * Send the stored pending value (fires 150ms after last movement)
  */
-SendToTV() {
-    global brightnessSlider, cur, lastSent
-    val := 100 - brightnessSlider.Value
+SendFinal() {
+    global pendingVal, cur
     
-    ; Update label (consistent with user's manual edit)
-    sliderGui["LabelText"].Value := val
-    
-    ; Only send if the current slider value differs from our known state (cur)
-    if (val != cur) { 
-        ApplyToTV(val)
-        lastSent := A_TickCount
+    ; Only send if different from known state
+    if (pendingVal != cur) {
+        ApplyToTV(pendingVal)
     }
 }
 
 /**
- * Shows the brightness slider near the mouse cursor.
- * Positions itself intelligently above the taskbar.
+ * Shows the brightness slider (delegates to module after syncing state)
  */
 ShowSlider(*) {
-    global sliderVisible, cur, brightnessSlider, lastHideTime
-    
-    ; Prevent reopening immediately after clicking tray icon to close
-    if (A_TickCount - lastHideTime < 400)
-        return
-    
-    if (sliderVisible) {
-        HideSlider()
-        return
-    }
-    
-    ; Update UI to match current internal state
-    brightnessSlider.Value := 100 - cur
-    sliderGui["LabelText"].Value := cur
-    
-    ; Get mouse position
-    CoordMode("Mouse", "Screen")
-    MouseGetPos(&mx, &my)
-    
-    ; Calculate dimensions with DPI scaling
-    dpiScale := A_ScreenDPI / 96
-    guiW := Integer(60 * dpiScale)
-    guiH := Integer(210 * dpiScale)
-    
-    ; --- Positioning Logic ---
-    MonitorGetWorkArea(, , , , &workBottom)
-    
-    ; Determine effective screen bottom (handling auto-hide taskbars)
-    isAutoHide := (workBottom >= A_ScreenHeight)
-    minTaskbarHeight := Integer(48 * dpiScale) 
-
-    ; Try to detect actual taskbar position
-    try {
-        WinGetPos(, &tbY, , &tbH, "ahk_class Shell_TrayWnd")
-        if (tbY > 0 && tbY < A_ScreenHeight) {
-            finalBottom := tbY
-        } else {
-            finalBottom := A_ScreenHeight - minTaskbarHeight
-        }
-    } catch {
-        finalBottom := A_ScreenHeight - minTaskbarHeight
-    }
-    
-    ; Safety margin for Auto-Hide
-    if (isAutoHide && (A_ScreenHeight - finalBottom) < minTaskbarHeight) {
-        finalBottom := A_ScreenHeight - minTaskbarHeight
-    }
-    
-    ; Final coordinates: Center on mouse X, adhere to bottom limit
-    xPos := mx - (guiW // 2)
-    yPos := finalBottom - guiH
-    
-    ; Force AlwaysOnTop again just in case
-    sliderGui.Opt("+AlwaysOnTop")
-    sliderGui.Show("x" xPos " y" yPos " NoActivate")
-    sliderVisible := true
+    global brightnessSlider, cur
+    ; Update slider to match current value before showing
+    brightnessSlider.SetRawValue(100 - cur)  ; Invert for display
+    brightnessSlider.SetLabel(cur)
+    brightnessSlider.Show()
 }
-
-; Close slider on Escape key
-sliderGui.OnEvent("Escape", HideSlider)
 
 /**
- * Hides the slider window and records the timestamp.
+ * Hides the brightness slider (delegates to module)
  */
 HideSlider(*) {
-    global sliderVisible, lastHideTime
-    sliderGui.Hide()
-    sliderVisible := false
-    lastHideTime := A_TickCount ; Record time to prevent instant re-open
+    global brightnessSlider
+    brightnessSlider.Hide()
 }
-
-; Close slider when clicking outside of the GUI
-#HotIf sliderVisible
-~LButton::
-~RButton::
-{
-    MouseGetPos(,, &targetHwnd)
-    if (targetHwnd != sliderGui.Hwnd) {
-        HideSlider()
-    }
-}
-#HotIf
 
 ; =======================
 ; TRAY MENU & ICON
@@ -279,9 +191,6 @@ ApplyToTV(value) {
     UpdateTray()
     ; Send actual command
     RunCliCapture("-backlight " cur)
-    
-    ; Schedule a confirmation sync to ensure UI matches TV state eventually
-    SetTimer((*) => SyncFromTV(true), -2000)
 }
 
 /**
@@ -289,7 +198,7 @@ ApplyToTV(value) {
  * @param force If true, ignores the time interval check.
  */
 SyncFromTV(force := false) {
-    global cur, lastSync, syncEveryMs
+    global cur, lastSync, syncEveryMs, brightnessSlider
     now := A_TickCount
     if (!force && (now - lastSync < syncEveryMs))
         return
@@ -305,9 +214,9 @@ SyncFromTV(force := false) {
     UpdateTray() ; Update icon/tooltip
     
     ; If slider is visible and NOT being dragged, update it
-    if (sliderVisible && !GetKeyState("LButton", "P")) {
-        brightnessSlider.Value := 100 - cur
-        sliderGui["LabelText"].Value := cur
+    if (brightnessSlider.IsVisible() && !GetKeyState("LButton", "P")) {
+        brightnessSlider.SetRawValue(100 - cur)  ; Invert for display
+        brightnessSlider.SetLabel(cur)
     }
 }
 

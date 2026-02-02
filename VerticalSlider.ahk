@@ -4,15 +4,24 @@
 ; A reusable vertical slider GUI component with dark theme,
 ; smart positioning, and click-away dismissal.
 ;
+; This is a DUMB VIEW - it handles only:
+;   - GUI creation and styling
+;   - Positioning above taskbar
+;   - Show/Hide/Click-away dismissal
+;
+; The caller handles:
+;   - Value interpretation (inversion, steps, etc.)
+;   - Throttling and debouncing
+;   - Label formatting
+;
 ; Usage:
-;   #Include VerticalSlider.ahk
 ;   mySlider := VerticalSlider({
 ;       title: "Brightness",
-;       min: 0,
-;       max: 100,
-;       value: 50,
-;       onChange: (val) => DoSomething(val)
+;       min: 0, max: 100,
+;       onChange: OnSliderChange
 ;   })
+;   mySlider.SetLabel("50")
+;   mySlider.SetRawValue(50)
 ;   mySlider.Show()
 ; =======================
 
@@ -29,17 +38,14 @@ class VerticalSlider {
     
     /**
      * Create a new VerticalSlider
-     * @param options Object with: title, min, max, value, onChange, steps (optional array)
+     * @param options Object with: title, min, max, onChange
      */
     __New(options) {
         this.config := options
         this.config.title := options.HasProp("title") ? options.title : "Value"
         this.config.min := options.HasProp("min") ? options.min : 0
         this.config.max := options.HasProp("max") ? options.max : 100
-        this.config.value := options.HasProp("value") ? options.value : 50
         this.config.onChange := options.HasProp("onChange") ? options.onChange : (*) => {}
-        this.config.steps := options.HasProp("steps") ? options.steps : []
-        this.config.inverted := options.HasProp("inverted") ? options.inverted : true
         
         this._CreateGui()
     }
@@ -56,23 +62,11 @@ class VerticalSlider {
         
         ; Add value text label at top
         this.gui.SetFont("s9 ccccccc", "Segoe UI")
-        this.label := this.gui.AddText("vLabelText w40 Center", this._FormatValue(this.config.value))
+        this.label := this.gui.AddText("vLabelText w40 Center", "")
         
         ; Add vertical slider
         this.gui.SetFont("s9", "Segoe UI")
-        
-        ; Determine range
-        if (this.config.steps.Length > 0) {
-            sliderMin := 1
-            sliderMax := this.config.steps.Length
-            sliderVal := this._ValueToSliderPos(this.config.value)
-        } else {
-            sliderMin := this.config.min
-            sliderMax := this.config.max
-            sliderVal := this.config.inverted ? (this.config.max - this.config.value) : this.config.value
-        }
-        
-        this.slider := this.gui.AddSlider("vSlider h150 w30 Range" sliderMin "-" sliderMax " Vertical AltSubmit", sliderVal)
+        this.slider := this.gui.AddSlider("vSlider h150 w30 Range" this.config.min "-" this.config.max " Vertical AltSubmit", 0)
         this.slider.OnEvent("Change", (ctrl, *) => this._OnChange(ctrl))
         
         ; Close on Escape
@@ -80,53 +74,48 @@ class VerticalSlider {
     }
     
     /**
-     * Handle slider value change
+     * Internal change handler - passes RAW value to callback
+     * The caller is responsible for interpreting the value
      */
     _OnChange(ctrl) {
-        if (this.config.steps.Length > 0) {
-            ; Discrete steps mode (inverted: top=max step, bottom=min step)
-            stepIdx := this.config.inverted ? (this.config.steps.Length + 1 - ctrl.Value) : ctrl.Value
-            newVal := this.config.steps[stepIdx]
-        } else {
-            ; Continuous mode
-            newVal := this.config.inverted ? (this.config.max - ctrl.Value) : ctrl.Value
-        }
-        
-        this.config.value := newVal
-        this.label.Value := this._FormatValue(newVal)
-        this.config.onChange.Call(newVal)
+        this.config.onChange.Call(ctrl.Value)
+    }
+    
+    ; =======================
+    ; RAW CONTROL ACCESS
+    ; =======================
+    
+    /**
+     * Get the raw slider control value (0 at top, max at bottom)
+     */
+    GetRawValue() {
+        return this.slider.Value
     }
     
     /**
-     * Convert a value to slider position (for discrete steps)
+     * Set the raw slider control value (does NOT trigger callback)
      */
-    _ValueToSliderPos(val) {
-        if (this.config.steps.Length = 0)
-            return this.config.inverted ? (this.config.max - val) : val
-        
-        ; Find closest step
-        for i, sVal in this.config.steps {
-            if (val <= sVal) {
-                return this.config.inverted ? (this.config.steps.Length + 1 - i) : i
-            }
-        }
-        return this.config.inverted ? 1 : this.config.steps.Length
+    SetRawValue(val) {
+        this.slider.Value := val
     }
     
     /**
-     * Format value for display
+     * Set the label text directly
      */
-    _FormatValue(val) {
-        ; If steps are durations (seconds), format as time
-        if (this.config.steps.Length > 0 && this.config.steps[1] >= 15) {
-            if (val < 60)
-                return val . "s"
-            m := Floor(val / 60)
-            rem := Mod(val, 60)
-            return m . "m" . (rem > 0 ? " " . rem . "s" : "")
-        }
-        return String(val)
+    SetLabel(text) {
+        this.label.Value := text
     }
+    
+    /**
+     * Get the label text
+     */
+    GetLabel() {
+        return this.label.Value
+    }
+    
+    ; =======================
+    ; VISIBILITY CONTROL
+    ; =======================
     
     /**
      * Show the slider at the current mouse position
@@ -140,10 +129,6 @@ class VerticalSlider {
             this.Hide()
             return
         }
-        
-        ; Update slider position to match current value
-        this.slider.Value := this._ValueToSliderPos(this.config.value)
-        this.label.Value := this._FormatValue(this.config.value)
         
         ; Get mouse position
         CoordMode("Mouse", "Screen")
@@ -204,26 +189,17 @@ class VerticalSlider {
     }
     
     /**
-     * Set the value programmatically
-     */
-    SetValue(val) {
-        this.config.value := val
-        this.slider.Value := this._ValueToSliderPos(val)
-        this.label.Value := this._FormatValue(val)
-    }
-    
-    /**
-     * Get the current value
-     */
-    GetValue() {
-        return this.config.value
-    }
-    
-    /**
      * Check if visible
      */
     IsVisible() {
         return this.visible
+    }
+    
+    /**
+     * Get the GUI's Hwnd (for external comparisons)
+     */
+    GetHwnd() {
+        return this.gui.Hwnd
     }
     
     ; Static property for active instance (for click-away detection)

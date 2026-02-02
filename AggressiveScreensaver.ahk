@@ -505,31 +505,75 @@ ShowPowerRequests(*) {
 ; Define 10 fixed steps (Common timeouts in seconds)
 timeoutSteps := [15, 30, 60, 120, 180, 300, 600, 900, 1200, 1800]
 
-; Create the slider using the reusable module
+; Create the slider using the dumb view module
+; Range 1-10 for our 10 steps. We invert: raw 1 (top) = highest step, raw 10 (bottom) = lowest step
 timeoutSlider := VerticalSlider({
     title: "Timeout",
-    steps: timeoutSteps,
-    value: blankThresholdSec,
-    onChange: OnTimeoutChange
+    min: 1,
+    max: 10,
+    onChange: OnTimeoutSliderChange
 })
 
+; Initialize slider position
+timeoutSlider.SetRawValue(FindStepIndex(blankThresholdSec))
+timeoutSlider.SetLabel(FormatTimeout(blankThresholdSec))
+
 /**
- * Called when the timeout slider value changes
+ * Find the step index for a given timeout value (inverted for display)
  */
-OnTimeoutChange(val, *) {
-    global blankThresholdSec
-    blankThresholdSec := val
+FindStepIndex(sec) {
+    global timeoutSteps
+    for i, sVal in timeoutSteps {
+        if (sec <= sVal)
+            return 11 - i  ; Invert: step 1 -> raw 10 (bottom), step 10 -> raw 1 (top)
+    }
+    return 1  ; Default to top (longest timeout)
+}
+
+/**
+ * Format seconds to human readable time
+ */
+FormatTimeout(s) {
+    if (s < 60)
+        return s . "s"
+    m := Floor(s / 60)
+    rem := Mod(s, 60)
+    return m . "m" . (rem > 0 ? " " . rem . "s" : "")
+}
+
+/**
+ * Called when the timeout slider value changes (receives raw 1-10)
+ */
+OnTimeoutSliderChange(rawVal, *) {
+    global blankThresholdSec, timeoutSteps, timeoutSlider
+    
+    ; Invert: raw 1 (top) -> step 10, raw 10 (bottom) -> step 1
+    stepIdx := 11 - rawVal
+    blankThresholdSec := timeoutSteps[stepIdx]
+    
+    ; Update label with formatted timeout
+    timeoutSlider.SetLabel(FormatTimeout(blankThresholdSec))
     UpdateTrayTip()
+}
+
+/**
+ * Show the timeout slider
+ */
+ShowTimeoutSlider(*) {
+    global timeoutSlider, blankThresholdSec
+    ; Update slider to match current value before showing
+    timeoutSlider.SetRawValue(FindStepIndex(blankThresholdSec))
+    timeoutSlider.SetLabel(FormatTimeout(blankThresholdSec))
+    timeoutSlider.Show()
 }
 
 /**
  * Handle Tray Icon Messages
  */
 TrayIconClick(wParam, lParam, msg, hwnd) {
-    global timeoutSlider
     ; 0x202 = WM_LBUTTONUP
     if (lParam == 0x202) {
-        timeoutSlider.Show()
+        ShowTimeoutSlider()
     }
 }
 
