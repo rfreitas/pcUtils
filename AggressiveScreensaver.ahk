@@ -399,11 +399,16 @@ ShowPowerRequests(*) {
     adminStatus := A_IsAdmin ? "YES" : "NO"
     output := RunWaitOutput("powercfg /requests")
     
-    MsgBox("Running as Admin: " adminStatus "`n"
-         . "Screen Blocked: " (blockingScreenApps != "" ? blockingScreenApps : "None") "`n"
-         . "Sleep Blocked: " (blockingSleepApps != "" ? blockingSleepApps : "None") "`n`n"
-         . "Raw powercfg output:`n" (output != "" ? output : "(empty)"),
-         "Power Requests Debug")
+    text := "Running as Admin: " adminStatus "`r`n"
+         . "Screen Blocked: " (blockingScreenApps != "" ? blockingScreenApps : "None") "`r`n"
+         . "Sleep Blocked: " (blockingSleepApps != "" ? blockingSleepApps : "None") "`r`n`r`n"
+         . "Raw powercfg output:`r`n" (output != "" ? output : "(empty)")
+
+    g := Gui(, "Power Requests Debug")
+    g.SetFont("s9", "Consolas") ; Use monospace for better readability
+    g.Add("Edit", "r20 w600 ReadOnly", text)
+    g.Add("Button", "w80 Default", "Close").OnEvent("Click", (*) => g.Destroy())
+    g.Show()
 }
 
 ; =======================
