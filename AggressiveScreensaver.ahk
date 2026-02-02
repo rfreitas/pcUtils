@@ -21,6 +21,7 @@ if (!A_IsAdmin) {
 ; CONFIGURATION
 ; =======================
 powerCheckMs := 5000         ; Check power requests every 5 seconds
+blankThresholdSec := 10      ; Show black overlay after 60s of Agent Idle
 
 ; =======================
 ; GLOBAL STATE
@@ -35,6 +36,8 @@ agentIdleSec := 0           ; Our own idle counter
 agentIdleSec := 0           ; Our own idle counter
 lastMouseX := 0             ; Track mouse position for delta check
 lastMouseY := 0
+blackGuis := []              ; Storage for multi-monitor black overlays
+isBlanked := false
 
 ; =======================
 ; POWER REQUEST DETECTION
@@ -103,11 +106,22 @@ GetPowerRequests() {
                 rest := Trim(match[2])
                 
                 ; Extract filename from path
+                ; Clean up entry name based on type
                 entry := rest
-                if (InStr(rest, "\")) {
+                
+                if (tag = "DRIVER") {
+                    ; For drivers, take the name before the Hardware ID (parentheses)
+                    if (pos := InStr(rest, "("))
+                        entry := Trim(SubStr(rest, 1, pos - 1))
+                } else if (InStr(rest, "\")) {
+                    ; For processes/files, take the filename
                     parts := StrSplit(rest, "\")
                     entry := parts[parts.Length]
                 }
+                
+                ; Remove extension (.exe) for cleaner look
+                entry := StrReplace(entry, ".exe", "")
+                
                 if (StrLen(entry) > 15) {
                     entry := SubStr(entry, 1, 12) "..."
                 }
@@ -316,7 +330,7 @@ HasJoystickActivity() {
  * Custom idle check that filters out 'jiggles' and small mouse moves
  */
 UpdateAgentIdle() {
-    global lastActivityTime, agentIdleSec, lastMouseX, lastMouseY
+    global lastActivityTime, agentIdleSec, lastMouseX, lastMouseY, blockingScreenApps
     
     ; Setup hooks on first run to ensure A_TimeIdlePhysical works
     static hooksInstalled := false
@@ -355,6 +369,57 @@ UpdateAgentIdle() {
     }
     
     agentIdleSec := Round((A_TickCount - lastActivityTime) / 1000)
+    
+    ; --- BLANKING LOGIC ---
+    if (agentIdleSec >= blankThresholdSec && blockingScreenApps == "") {
+        if (!isBlanked)
+            ShowBlackOverlay()
+    } else {
+        if (isBlanked)
+            RemoveBlackOverlay()
+    }
+}
+
+/**
+ * Shows a black full-screen window on all monitors
+ */
+ShowBlackOverlay() {
+    global blackGuis, isBlanked
+    if (isBlanked)
+        return
+        
+    Loop MonitorGetCount() {
+        MonitorGet(A_Index, &L, &T, &R, &B)
+        
+        ; Create a black window for each monitor
+        g := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x00000020") ; E0x20 is click-through
+        g.BackColor := "Black"
+        g.Show("x" L " y" T " w" (R-L) " h" (B-T) " NoActivate")
+        blackGuis.Push(g)
+    }
+    
+    ; Ensure cursor is hidden if wanted, but click-through usually handles it
+    ; For a TV, we might want to hide the cursor
+    DllCall("ShowCursor", "Int", 0)
+    
+    isBlanked := true
+}
+
+/**
+ * Removes the black full-screen windows
+ */
+RemoveBlackOverlay() {
+    global blackGuis, isBlanked
+    if (!isBlanked)
+        return
+        
+    for g in blackGuis {
+        g.Destroy()
+    }
+    blackGuis := []
+    
+    DllCall("ShowCursor", "Int", 1)
+    isBlanked := false
 }
 
 ; =======================
@@ -377,7 +442,7 @@ UpdateTrayTip() {
     idleSec := Round(A_TimeIdle / 1000)
     physIdleSec := Round(A_TimeIdlePhysical / 1000)
     
-    tip := "True Idle: " agentIdleSec "s`n"
+    tip := "True Idle: " agentIdleSec "s (Goal: " blankThresholdSec "s)`n"
     tip .= "Phys Idle: " physIdleSec "s`n"
     tip .= "Soft Idle: " idleSec "s`n`n"
     
