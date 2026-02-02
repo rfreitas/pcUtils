@@ -1,0 +1,428 @@
+#Requires AutoHotkey v2.0
+#SingleInstance Force
+
+; Request admin elevation for powercfg access
+if (!A_IsAdmin) {
+    try {
+        Run('*RunAs "' A_AhkPath '" /restart "' A_ScriptFullPath '"')
+        ExitApp()
+    }
+}
+
+; =======================
+; Power Request Monitor
+; =======================
+; Purpose:
+;   - Monitors apps preventing Windows screensaver/sleep via Power Request API
+;   - Displays blocking apps in the system tray icon tooltip
+; =======================
+
+; =======================
+; CONFIGURATION
+; =======================
+powerCheckMs := 5000         ; Check power requests every 5 seconds
+
+; =======================
+; GLOBAL STATE
+; =======================
+blockingScreenApps := ""     ; Apps preventing screensaver (DISPLAY)
+blockingSleepApps := ""      ; Apps preventing sleep (SYSTEM/AWAYMODE)
+lastActivityTime := A_TickCount
+lastActivityTime := A_TickCount
+lastControllerState := Map() ; Track XInput controller states
+lastJoyState := Map()        ; Track DirectInput joystick states
+agentIdleSec := 0           ; Our own idle counter
+agentIdleSec := 0           ; Our own idle counter
+lastMouseX := 0             ; Track mouse position for delta check
+lastMouseY := 0
+
+; =======================
+; POWER REQUEST DETECTION
+; =======================
+
+/**
+ * Runs a command and captures output
+ */
+RunWaitOutput(cmd) {
+    tmpFile := A_Temp "\ahk_power_monitor.txt"
+    try {
+        ; Use RunWait with 'Hide' to prevent window flashing
+        RunWait(A_ComSpec ' /c ' cmd ' > "' tmpFile '"', , "Hide")
+        
+        output := ""
+        if FileExist(tmpFile) {
+            output := FileRead(tmpFile)
+            FileDelete(tmpFile)
+        }
+        return Trim(output)
+    } catch {
+        return ""
+    }
+}
+
+/**
+ * Gets list of apps preventing Windows screensaver via Power Request API
+ * Requires admin privileges
+ */
+GetPowerRequests() {
+    global blockingScreenApps, blockingSleepApps
+    
+    if (!A_IsAdmin) {
+        blockingScreenApps := "(needs admin)"
+        blockingSleepApps := ""
+        return
+    }
+    
+    output := RunWaitOutput("powercfg /requests")
+    
+    ; Parse the output to find apps with active requests
+    screenApps := []
+    sleepApps := []
+    currentSection := ""
+    
+    for line in StrSplit(output, "`n", "`r") {
+        line := Trim(line)
+        if (line = "") {
+            continue
+        }
+        
+        ; Detect section headers
+        if (SubStr(line, -1) = ":") {
+            currentSection := SubStr(line, 1, -1)
+            continue
+        }
+        
+        if (line = "None.") {
+            continue
+        }
+        
+        ; Check entries starting with [
+        if (SubStr(line, 1, 1) = "[") {
+            if (RegExMatch(line, "^\[(\w+)\]\s*(.*)$", &match)) {
+                tag := match[1]
+                rest := Trim(match[2])
+                
+                ; Extract filename from path
+                entry := rest
+                if (InStr(rest, "\")) {
+                    parts := StrSplit(rest, "\")
+                    entry := parts[parts.Length]
+                }
+                if (StrLen(entry) > 20) {
+                    entry := SubStr(entry, 1, 17) "..."
+                }
+                
+                entryText := entry " [" tag "]"
+                
+                if (currentSection = "DISPLAY") {
+                    screenApps.Push(entryText)
+                } else if (currentSection = "SYSTEM" || currentSection = "AWAYMODE") {
+                    sleepApps.Push(entryText)
+                }
+            }
+        }
+    }
+    
+    ; helper function to build string
+    BuildList(arr) {
+        if (arr.Length = 0) {
+            return ""
+        }
+        str := ""
+        for i, app in arr {
+            if (i > 3) {
+                str .= " +" (arr.Length - 3) " more"
+                break
+            }
+            str .= app (i < arr.Length && i < 3 ? ", " : "")
+        }
+        return str
+    }
+    
+    blockingScreenApps := BuildList(screenApps)
+    blockingSleepApps := BuildList(sleepApps)
+    
+    UpdateTrayTip()
+}
+/**
+ * Gets XInput controller state
+ */
+GetXInputState(controllerIndex) {
+    static xinputDll := ""
+    static funcPtr := 0
+    
+    if (xinputDll = "") {
+        for dllName in ["xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll"] {
+            try {
+                xinputDll := DllCall("LoadLibrary", "Str", dllName, "Ptr")
+                if (xinputDll) {
+                    funcPtr := DllCall("GetProcAddress", "Ptr", xinputDll, "AStr", "XInputGetState", "Ptr")
+                    if (funcPtr) {
+                        break
+                    }
+                }
+            }
+        }
+    }
+    
+    if (!funcPtr) {
+        return Map()
+    }
+    
+    stateBuffer := Buffer(16, 0)
+    if (DllCall(funcPtr, "UInt", controllerIndex, "Ptr", stateBuffer, "UInt") != 0) {
+        return Map()
+    }
+    
+    state := Map()
+    state["packet"] := NumGet(stateBuffer, 0, "UInt")
+    state["buttons"] := NumGet(stateBuffer, 4, "UShort")
+    state["leftTrigger"] := NumGet(stateBuffer, 6, "UChar")
+    state["rightTrigger"] := NumGet(stateBuffer, 7, "UChar")
+    state["thumbLX"] := NumGet(stateBuffer, 8, "Short")
+    state["thumbLY"] := NumGet(stateBuffer, 10, "Short")
+    state["thumbRX"] := NumGet(stateBuffer, 12, "Short")
+    state["thumbRY"] := NumGet(stateBuffer, 14, "Short")
+    return state
+}
+
+/**
+ * Checks for meaningful controller activity
+ */
+HasControllerActivity() {
+    global lastControllerState
+    deadzone := 8000
+    triggerThreshold := 30
+    
+    Loop 4 {
+        idx := A_Index - 1
+        state := GetXInputState(idx)
+        
+        if (state.Count = 0) {
+            continue
+        }
+        
+        keyName := "controller" idx
+        if (!lastControllerState.Has(keyName)) {
+            lastControllerState[keyName] := state
+            continue
+        }
+        
+        oldState := lastControllerState[keyName]
+        if (state["packet"] != oldState["packet"]) {
+            hasInput := false
+            
+            if (state["buttons"] != 0) {
+                hasInput := true
+            }
+            if (state["leftTrigger"] > triggerThreshold || state["rightTrigger"] > triggerThreshold) {
+                hasInput := true
+            }
+            if (Abs(state["thumbLX"]) > deadzone || Abs(state["thumbLY"]) > deadzone) {
+                hasInput := true
+            }
+            if (Abs(state["thumbRX"]) > deadzone || Abs(state["thumbRY"]) > deadzone) {
+                hasInput := true
+            }
+            
+            lastControllerState[keyName] := state
+            
+            if (hasInput) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+/**
+ * Checks for generic Joystick activity (DirectInput)
+ * e.g. DualSense, older gamepads
+ */
+HasJoystickActivity() {
+    global lastJoyState
+    joyDeadzone := 10 ; 0-100 scale for axes
+    
+    Loop 4 { ; Check first 4 joysticks
+        joyID := A_Index
+        joyName := joyID "Joy"
+        
+        ; Verify connection by checking name/info
+        if (GetKeyState(joyName "Name") == "")
+            continue
+            
+        ; Build current state map
+        currentState := Map()
+        
+        ; Check Axes (X, Y, Z, R, U, V)
+        hasInput := false
+        axisList := ["X", "Y", "Z", "R", "U", "V"]
+        for axis in axisList {
+            val := GetKeyState(joyName axis)
+            if (!IsNumber(val)) {
+                val := 50
+            }
+            currentState[axis] := val
+            
+            ; Check simple deviation from center (approx 50)
+            ; This is a rough activity check
+            if (Abs(val - 50) > joyDeadzone) {
+                 ; We don't mark 'hasInput' just for being off-center (drift)
+                 ; We only check for CHANGE below
+            }
+        }
+        
+        ; Check POV (Hat switch)
+        currentState["POV"] := GetKeyState(joyName "POV")
+        
+        ; Check Buttons 1-32 (Bitmap would be faster but AHK native is simple loop)
+        ; To save perf, we'll just check if the state matches previous
+        buttonMask := 0
+        Loop 32 {
+            if (GetKeyState(joyName A_Index))
+                buttonMask |= (1 << (A_Index - 1))
+        }
+        currentState["Buttons"] := buttonMask
+        
+        ; Compare with valid last state
+        if (!lastJoyState.Has(joyID)) {
+             lastJoyState[joyID] := currentState
+             continue
+        }
+        
+        oldJoy := lastJoyState[joyID]
+        
+        ; Detect Changes
+        if (currentState["Buttons"] != oldJoy["Buttons"]) 
+            hasInput := true
+        if (currentState["POV"] != oldJoy["POV"])
+            hasInput := true
+            
+        ; Detect Axis Movement (Change > 2)
+        for axis in axisList {
+            if (Abs(currentState[axis] - oldJoy[axis]) > 2)
+                hasInput := true
+        }
+        
+        lastJoyState[joyID] := currentState
+        
+        if (hasInput)
+            return true
+    }
+    return false
+}
+
+/**
+ * Custom idle check that filters out 'jiggles' and small mouse moves
+ */
+UpdateAgentIdle() {
+    global lastActivityTime, agentIdleSec, lastMouseX, lastMouseY
+    
+    ; Setup hooks on first run to ensure A_TimeIdlePhysical works
+    static hooksInstalled := false
+    if (!hooksInstalled) {
+        InstallKeybdHook()
+        InstallMouseHook()
+        MouseGetPos(&x, &y)
+        lastMouseX := x
+        lastMouseY := y
+        hooksInstalled := true
+    }
+    
+    ; Check Mouse Delta
+    MouseGetPos(&currX, &currY)
+    dist := Sqrt((currX - lastMouseX)**2 + (currY - lastMouseY)**2)
+    
+    ; Only reset if moved more than 5 pixels (ignore jiggles/vibration)
+    if (dist > 5) {
+        lastActivityTime := A_TickCount
+        lastMouseX := currX
+        lastMouseY := currY
+    }
+    
+    ; Check Keyboard (using idle timer but only if it's very low, implies keypress)
+    ; (A_TimeIdlePhysical resets on mouse too, so we rely on delta for mouse)
+    if (A_TimeIdlePhysical < 50) {
+        ; If mouse didn't move much but idle is low, it must be a keypress or click
+        if (dist <= 5) {
+             lastActivityTime := A_TickCount
+        }
+    }
+    
+    ; Reset timer on controller activity (XInput or Joystick)
+    if (HasControllerActivity() || HasJoystickActivity()) {
+        lastActivityTime := A_TickCount
+    }
+    
+    agentIdleSec := Round((A_TickCount - lastActivityTime) / 1000)
+}
+
+; =======================
+; TRAY MENU
+; =======================
+A_TrayMenu.Delete()
+A_TrayMenu.Add("Power Request Monitor", (*) => {})
+A_TrayMenu.Add()
+A_TrayMenu.Add("Show Details (Debug)", ShowPowerRequests)
+A_TrayMenu.Add()
+A_TrayMenu.Add("Exit", (*) => ExitApp())
+
+/**
+ * Updates the tray icon tooltip with current power requests
+ */
+UpdateTrayTip() {
+    global blockingScreenApps, blockingSleepApps
+    
+    ; Get idle timers
+    idleSec := Round(A_TimeIdle / 1000)
+    physIdleSec := Round(A_TimeIdlePhysical / 1000)
+    
+    tip := "--- Idle Status ---`n"
+    tip .= "Agent Idle (True): " agentIdleSec "s`n"
+    tip .= "Physical Idle: " physIdleSec "s`n"
+    tip .= "Software Idle: " idleSec "s`n`n"
+    
+    tip .= "--- Blocking Apps ---`n"
+    if (blockingScreenApps != "") {
+        tip .= "SCREEN: " blockingScreenApps "`n"
+    } else {
+        tip .= "SCREEN: None`n"
+    }
+        
+    if (blockingSleepApps != "") {
+        tip .= "PC SLEEP: " blockingSleepApps
+    } else {
+        tip .= "PC SLEEP: None"
+    }
+        
+    A_IconTip := tip
+}
+
+ShowPowerRequests(*) {
+    global blockingScreenApps, blockingSleepApps
+    
+    adminStatus := A_IsAdmin ? "YES" : "NO"
+    output := RunWaitOutput("powercfg /requests")
+    
+    MsgBox("Running as Admin: " adminStatus "`n"
+         . "Screen Blocked: " (blockingScreenApps != "" ? blockingScreenApps : "None") "`n"
+         . "Sleep Blocked: " (blockingSleepApps != "" ? blockingSleepApps : "None") "`n`n"
+         . "Raw powercfg output:`n" (output != "" ? output : "(empty)"),
+         "Power Requests Debug")
+}
+
+; =======================
+; START TIMERS
+; =======================
+
+; Set update timers
+SetTimer(GetPowerRequests, powerCheckMs)  ; Check powercfg requests
+SetTimer(UpdateTrayTip, 1000)            ; Update idle timers every second
+SetTimer(UpdateAgentIdle, 100)           ; Check for input frequently
+
+; Initial calls
+GetPowerRequests()
+UpdateTrayTip()
+
+; Initial notification
+TrayTip("Power Monitor Debug", "Hover tray icon to see idle timers and blocking apps.", 1)
