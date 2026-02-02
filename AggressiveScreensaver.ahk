@@ -108,8 +108,8 @@ GetPowerRequests() {
                     parts := StrSplit(rest, "\")
                     entry := parts[parts.Length]
                 }
-                if (StrLen(entry) > 20) {
-                    entry := SubStr(entry, 1, 17) "..."
+                if (StrLen(entry) > 15) {
+                    entry := SubStr(entry, 1, 12) "..."
                 }
                 
                 entryText := entry " [" tag "]"
@@ -130,11 +130,11 @@ GetPowerRequests() {
         }
         str := ""
         for i, app in arr {
-            if (i > 3) {
-                str .= " +" (arr.Length - 3) " more"
+            if (i > 2) {
+                str .= " +" (arr.Length - 2) " more"
                 break
             }
-            str .= app (i < arr.Length && i < 3 ? ", " : "")
+            str .= app (i < arr.Length && i < 2 ? ", " : "")
         }
         return str
     }
@@ -377,23 +377,18 @@ UpdateTrayTip() {
     idleSec := Round(A_TimeIdle / 1000)
     physIdleSec := Round(A_TimeIdlePhysical / 1000)
     
-    tip := "--- Idle Status ---`n"
-    tip .= "Agent Idle (True): " agentIdleSec "s`n"
-    tip .= "Physical Idle: " physIdleSec "s`n"
-    tip .= "Software Idle: " idleSec "s`n`n"
+    tip := "True Idle: " agentIdleSec "s`n"
+    tip .= "Phys Idle: " physIdleSec "s`n"
+    tip .= "Soft Idle: " idleSec "s`n`n"
     
-    tip .= "--- Blocking Apps ---`n"
-    if (blockingScreenApps != "") {
-        tip .= "SCREEN: " blockingScreenApps "`n"
-    } else {
-        tip .= "SCREEN: None`n"
+    FormatBlocking(label, apps) {
+        if (apps != "")
+            return label ": " apps
+        return label ": None"
     }
-        
-    if (blockingSleepApps != "") {
-        tip .= "PC SLEEP: " blockingSleepApps
-    } else {
-        tip .= "PC SLEEP: None"
-    }
+    
+    tip .= FormatBlocking("SCREEN", blockingScreenApps) "`n"
+    tip .= FormatBlocking("SLEEP", blockingSleepApps) "`n"
         
     A_IconTip := tip
 }
