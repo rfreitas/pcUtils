@@ -63,10 +63,29 @@ if (!A_IsAdmin) {
 ; ==============================================================================
 
 ; =======================
-; CONFIGURATION
+; CONFIGURATION & PERSISTENCE
 ; =======================
+IniFile := A_ScriptDir "\AggressiveScreensaver.ini"
 powerCheckMs := 5000         ; Check power requests every 5 seconds
-blankThresholdSec := 30      ; Show black overlay after 30s of Agent Idle (Min 15s)
+
+; Load settings with fallback to default (30s)
+blankThresholdSec := Number(IniRead(IniFile, "Settings", "BlankThreshold", 30))
+
+/**
+ * Persists current settings to INI file with 500ms debounce
+ */
+SaveSettings() {
+    SetTimer(DoSave, -500)
+    DoSave() {
+        global blankThresholdSec, IniFile
+        try {
+            IniWrite(blankThresholdSec, IniFile, "Settings", "BlankThreshold")
+            LogMsg("Settings saved: " blankThresholdSec "s")
+        } catch as e {
+            LogMsg("SaveSettings Error: " e.Message)
+        }
+    }
+}
 
 ; =======================
 ; GLOBAL STATE
@@ -640,6 +659,9 @@ OnTimeoutSliderChange(rawVal, *) {
     ; Update label with formatted timeout
     timeoutSlider.SetLabel(FormatTimeout(blankThresholdSec))
     UpdateTrayTip()
+
+    ; Save the new setting (debounced)
+    SaveSettings()
 }
 
 /**
