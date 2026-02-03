@@ -2,6 +2,23 @@
 #SingleInstance Force
 #Include VerticalSlider.ahk
 
+; =======================
+; ERROR LOGGING
+; =======================
+LogFile := A_ScriptDir "\AggressiveScreensaver.log"
+LogMsg(msg) {
+    try FileAppend(FormatTime(, "yyyy-MM-dd HH:mm:ss") ": " msg "`n", LogFile)
+}
+
+; Set up error handler
+OnError(HandleError)
+HandleError(exception, mode) {
+    LogMsg("UNHANDLED ERROR: " exception.Message "`n    File: " exception.File "`n    Line: " exception.Line "`n    Extra: " exception.Extra "`n    Stack: " exception.Stack)
+    return 0 ; Show default error message as well
+}
+
+LogMsg("Script starting... (Admin: " A_IsAdmin ")")
+
 ; Set custom tray icon
 if FileExist(A_ScriptDir "\AggressiveScreensaver.png")
     TraySetIcon(A_ScriptDir "\AggressiveScreensaver.png")
@@ -57,7 +74,6 @@ blankThresholdSec := 30      ; Show black overlay after 30s of Agent Idle (Min 1
 blockingScreenApps := ""     ; Apps preventing screensaver (DISPLAY)
 blockingSleepApps := ""      ; Apps preventing sleep (SYSTEM/AWAYMODE)
 lastActivityTime := A_TickCount
-lastActivityTime := A_TickCount
 lastControllerState := Map() ; Track XInput controller states
 lastJoyState := Map()        ; Track DirectInput joystick states
 agentIdleSec := 0           ; Our own idle counter
@@ -79,6 +95,9 @@ RunWaitOutput(cmd) {
     tmpFile := A_Temp "\ahk_power_monitor.txt"
     try {
         ; Use RunWait with 'Hide' to prevent window flashing
+        if (FileExist(tmpFile))
+            FileDelete(tmpFile)
+            
         RunWait(A_ComSpec ' /c ' cmd ' > "' tmpFile '"', , "Hide")
         
         output := ""
@@ -87,7 +106,8 @@ RunWaitOutput(cmd) {
             FileDelete(tmpFile)
         }
         return Trim(output)
-    } catch {
+    } catch as e {
+        LogMsg("RunWaitOutput Error: " e.Message " (Cmd: " cmd ")")
         return ""
     }
 }
@@ -417,6 +437,7 @@ ShowBlackOverlay() {
     if (isBlanked)
         return
         
+    LogMsg("Entering blanking mode...")
     Loop MonitorGetCount() {
         MonitorGet(A_Index, &L, &T, &R, &B)
         
@@ -442,6 +463,7 @@ RemoveBlackOverlay() {
     if (!isBlanked)
         return
         
+    LogMsg("Leaving blanking mode.")
     for g in blackGuis {
         g.Destroy()
     }
