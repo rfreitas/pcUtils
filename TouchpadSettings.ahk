@@ -28,6 +28,18 @@ try {
 }
 
 try {
+    CurrentAAPDisabled_User := RegRead(Target_Key_AAP, "AAPDisabled")
+} catch {
+    CurrentAAPDisabled_User := 0
+}
+
+try {
+    CurrentAAPDisabled_HKLM := RegRead(Target_Key_AAP_HKLM, "AAPDisabled")
+} catch {
+    CurrentAAPDisabled_HKLM := 0
+}
+
+try {
     CurrentM1 := RegRead(Key_Mouse, "MouseThreshold1")
     CurrentM2 := RegRead(Key_Mouse, "MouseThreshold2")
 } catch {
@@ -36,11 +48,13 @@ try {
 }
 
 ; GUI Creation
-MyGui := Gui(, "Microsoft Keyboard Fix")
-MyGui.SetFont("s10", "Segoe UI")
+AdminStatus := A_IsAdmin ? " [ADMIN]" : ""
+MyGui := Gui("+OwnDialogs", "Microsoft Keyboard Fix" . AdminStatus)
+MyGui.BackColor := "2d2d2d"
+MyGui.SetFont("s9 cWhite", "Segoe UI")
 
 ; --- Accidental Activation Prevention (AAP) ---
-MyGui.Add("GroupBox", "w340 h140", "1. Fix 'Touchpad Disabled While Typing'")
+MyGui.Add("GroupBox", "w340 h170 cWhite", "1. Fix 'Touchpad Disabled While Typing'")
 MyGui.Add("Text", "xp+20 yp+30", "Typing Delay (AAP):")
 
 ; 0=Always On, 1=Short, 2=Medium, 3=Long
@@ -51,41 +65,44 @@ if (ChoiceIndex > 4 || ChoiceIndex < 1)
 
 MyGui.Add("DropDownList", "vAAP Choose" . ChoiceIndex . " w280", AAP_Choices)
 
-; Small Gray Text for AAP
-MyGui.SetFont("s8 cGray") 
-MyGui.Add("Text", "xp yp+40 w300", "Set this to 'Always On' to stop the trackpad from freezing when you press a key.")
-MyGui.SetFont("s10 cDefault") ; Reset to default color/size
+ForceUser_Checked := (CurrentAAPDisabled_User == 1) ? "Checked" : ""
+MyGui.Add("Checkbox", "vForceUser " . ForceUser_Checked . " xm+20 y+40", "Force 'AAPDisabled' (User Profile)")
 
-MyGui.Add("Checkbox", "vForceDisableAAP Checked xm+20 y+40", "Force 'AAPDisabled' (More aggressive fix)")
+ForceHKLM_Checked := (CurrentAAPDisabled_HKLM == 1) ? "Checked" : ""
+MyGui.Add("Checkbox", "vForceHKLM " . ForceHKLM_Checked . " xm+20 y+25", "Force 'AAPDisabled' (System-Wide - Admin)")
+
 MyGui.SetFont("s8 cGray")
-MyGui.Add("Text", "xp yp+20 w300", "Try this if the dropdown above doesn't work. Might require Admin.")
-MyGui.SetFont("s10 cDefault")
+MyGui.Add("Text", "xp yp+20 w300", "Try these if the dropdown above doesn't work.")
+MyGui.SetFont("s9 cWhite") ; Reset to default
 
 ; --- Mouse Thresholds (Deadzone) ---
-MyGui.Add("GroupBox", "xm y+30 w340 h160", "2. Fix 'Cursor Deadzone / Lab'")
+MyGui.Add("GroupBox", "xm y+30 w340 h160 cWhite", "2. Fix 'Cursor Deadzone / Lag'")
 MyGui.Add("Text", "xp+20 yp+30", "Mouse Threshold 1:")
-MyGui.Add("Edit", "vM1 w100", CurrentM1)
+MyGui.Add("Edit", "vM1 w100 cBlack", CurrentM1)
 
 ; Small Gray Text for M1
 MyGui.SetFont("s8 cGray")
 MyGui.Add("Text", "xp+120 yp", "(Default: 6)")
-MyGui.SetFont("s10 cDefault")
+MyGui.SetFont("s9 cWhite")
 
 MyGui.Add("Text", "xm+20 y+20", "Mouse Threshold 2:")
-MyGui.Add("Edit", "vM2 w100", CurrentM2)
+MyGui.Add("Edit", "vM2 w100 cBlack", CurrentM2)
 
 ; Small Gray Text for M2
 MyGui.SetFont("s8 cGray")
 MyGui.Add("Text", "xp+120 yp", "(Default: 10)")
 
 ; Small Gray Text for Note
-MyGui.Add("Text", "xm+20 y+35 w300", "Set BOTH to 0 to remove the 'sticky' cursor start-up behavior.")
-MyGui.SetFont("s10 cDefault")
+MyGui.Add("Text", "xm+20 y+35 w300", "Set BOTH to 0 to remove 'sticky' cursor behavior.")
+MyGui.SetFont("s9 cWhite")
 
-; --- Apply Button ---
-ApplyBtn := MyGui.Add("Button", "xm y+20 w340 h50", "Apply Settings to Registry")
-ApplyBtn.SetFont("bold s11")
+; --- Apply & Close Buttons ---
+ApplyBtn := MyGui.Add("Button", "xm y+20 w240 h40", "Apply Settings")
+ApplyBtn.SetFont("bold s10")
 ApplyBtn.OnEvent("Click", ApplySettings)
+
+CloseBtn := MyGui.Add("Button", "x+10 yp w90 h40", "Close")
+CloseBtn.OnEvent("Click", (*) => MyGui.Destroy())
 
 MyGui.Show()
 
@@ -105,26 +122,28 @@ ApplySettings(*) {
         ; Write AAP (DWORD)
         RegWrite(NewAAP, "REG_DWORD", Target_Key_AAP, "AAPThreshold")
         
-        ; Write AAPDisabled if checked
-        if (Saved.ForceDisableAAP) {
-             try {
-                RegWrite(1, "REG_DWORD", Target_Key_AAP, "AAPDisabled") ; HKCU
-             } catch {
-                ; Ignore error
-             }
+        ; User Profile AAPDisabled
+        try {
+            RegWrite(Saved.ForceUser ? 1 : 0, "REG_DWORD", Target_Key_AAP, "AAPDisabled")
+        } catch {
+            ; Ignore
+        }
 
-             try {
-                RegWrite(1, "REG_DWORD", Target_Key_AAP_HKLM, "AAPDisabled") ; HKLM
-             } catch {
-                MsgBox("Could not write to HKLM (System-wide) settings.`n`nTry running this script as Administrator for the 'Force Disable' fix to fully work.", "Admin Rights Needed", "Icon!")
-             }
-        } else {
-             ; Reset if unchecked (optional, or leave as is)
-             try { 
-                RegWrite(0, "REG_DWORD", Target_Key_AAP, "AAPDisabled") 
-             } catch {
-                ; Ignore
-             }
+        ; System-Wide AAPDisabled
+        try {
+            CurrentHKLM := RegRead(Target_Key_AAP_HKLM, "AAPDisabled")
+        } catch {
+            CurrentHKLM := -1
+        }
+        
+        NewHKLM := Saved.ForceHKLM ? 1 : 0
+        
+        if (NewHKLM != CurrentHKLM) {
+            try {
+                RegWrite(NewHKLM, "REG_DWORD", Target_Key_AAP_HKLM, "AAPDisabled")
+            } catch {
+                MsgBox("Could not update System-Wide (HKLM) settings.`n`nRun as Administrator to apply this change.", "Admin Rights Needed", "Icon!")
+            }
         }
 
         ; Write Thresholds (String/SZ)
