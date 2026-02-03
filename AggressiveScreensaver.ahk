@@ -487,8 +487,12 @@ ShowBlackOverlay() {
  * Removes the black full-screen windows
  */
 RemoveBlackOverlay() {
-    global blackGuis, isBlanked
+    global blackGuis, isBlanked, lastActivityTime
     
+    ; Reset activity timer whenever we force cleanup
+    ; This prevents immediate re-blanking after wake/resolution change
+    lastActivityTime := A_TickCount
+
     ; If we have windows OR the flag is set, we must clean up
     if (blackGuis.Length == 0 && !isBlanked)
         return
@@ -503,15 +507,21 @@ RemoveBlackOverlay() {
 }
 
 /**
+ * Handles display change events (resolution, HDR toggle, refresh rate, monitor connect/disconnect)
+ * SAFETY: Always unblank on display change to prevent "stuck" overlays or race conditions.
+ */
+OnDisplayChange(wParam, lParam, msg, hwnd) {
+    LogMsg("Display change detected. Forcing cleanup.")
+    RemoveBlackOverlay()
+}
+
+/**
  * Handles power events (Sleep, Wake, Hibernation)
  */
 OnPowerMessage(wParam, lParam, msg, hwnd) {
     ; PBT_APMRESUMESUSPEND = 7, PBT_APMRESUMEAUTOMATIC = 18
     if (wParam = 7 || wParam = 18) {
         LogMsg("System wake detected. Forcing cleanup.")
-        
-        ; Force activity reset immediately
-        global lastActivityTime := A_TickCount
         
         ; Repeatedly attempt cleanup to catch any delayed GUI creations during wake
         RemoveBlackOverlay()
@@ -664,6 +674,7 @@ SetTimer(UpdateAgentIdle, 100)           ; Check for input frequently
 
 ; Detect Tray Icon Clicks (Left click for slider)
 OnMessage(0x404, TrayIconClick)
+OnMessage(0x007E, OnDisplayChange)  ; WM_DISPLAYCHANGE - monitor/resolution/HDR changes
 OnMessage(0x0218, OnPowerMessage)   ; WM_POWERBROADCAST - sleep/wake events
 
 ; Initial calls
