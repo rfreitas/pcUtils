@@ -2,6 +2,11 @@
 #SingleInstance Force
 #Include VerticalSlider.ahk
 
+; Set custom tray icon
+if FileExist(A_ScriptDir "\AggressiveScreensaver.png")
+    TraySetIcon(A_ScriptDir "\AggressiveScreensaver.png")
+
+
 ; Request admin elevation for powercfg access
 if (!A_IsAdmin) {
     try {
