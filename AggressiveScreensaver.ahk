@@ -430,6 +430,20 @@ UpdateAgentIdle() {
 }
 
 /**
+ * Internal helper to destroy all active black overlay windows
+ */
+DestroyBlackGuis() {
+    global blackGuis
+    for g in blackGuis {
+        try {
+            if (IsObject(g))
+                g.Destroy()
+        }
+    }
+    blackGuis := []
+}
+
+/**
  * Shows a black full-screen window on all monitors
  */
 ShowBlackOverlay() {
@@ -438,21 +452,35 @@ ShowBlackOverlay() {
         return
         
     LogMsg("Entering blanking mode...")
-    Loop MonitorGetCount() {
-        MonitorGet(A_Index, &L, &T, &R, &B)
+    
+    ; Clean up any orphaned GUIs before starting to prevent leaks
+    DestroyBlackGuis()
+
+    try {
+        count := MonitorGetCount()
+        Loop count {
+            try {
+                MonitorGet(A_Index, &L, &T, &R, &B)
+                
+                ; Create a black window for each monitor
+                g := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x00000020") ; E0x20 is click-through
+                g.BackColor := "Black"
+                g.Show("x" L " y" T " w" (R-L) " h" (B-T) " NoActivate")
+                blackGuis.Push(g)
+            } catch as e {
+                LogMsg("Error creating overlay for monitor " A_Index ": " e.Message)
+            }
+        }
         
-        ; Create a black window for each monitor
-        g := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x00000020") ; E0x20 is click-through
-        g.BackColor := "Black"
-        g.Show("x" L " y" T " w" (R-L) " h" (B-T) " NoActivate")
-        blackGuis.Push(g)
+        ; Only enter blanked state if we actually managed to create windows
+        if (blackGuis.Length > 0) {
+            DllCall("ShowCursor", "Int", 0)
+            isBlanked := true
+        }
+    } catch as e {
+        LogMsg("ShowBlackOverlay Critical Error: " e.Message)
+        RemoveBlackOverlay() ; Defensive cleanup
     }
-    
-    ; Ensure cursor is hidden if wanted, but click-through usually handles it
-    ; For a TV, we might want to hide the cursor
-    DllCall("ShowCursor", "Int", 0)
-    
-    isBlanked := true
 }
 
 /**
@@ -460,17 +488,20 @@ ShowBlackOverlay() {
  */
 RemoveBlackOverlay() {
     global blackGuis, isBlanked
-    if (!isBlanked)
+    
+    ; Robustness: If blackGuis is not empty, we MUST clear it regardless of the isBlanked flag
+    if (!isBlanked && blackGuis.Length == 0)
         return
         
-    LogMsg("Leaving blanking mode.")
-    for g in blackGuis {
-        g.Destroy()
-    }
-    blackGuis := []
+    LogMsg("Leaving blanking mode. (Count: " blackGuis.Length ")")
     
-    DllCall("ShowCursor", "Int", 1)
-    isBlanked := false
+    DestroyBlackGuis()
+    
+    ; Only restore cursor if we were successfully in a blanked state
+    if (isBlanked) {
+        DllCall("ShowCursor", "Int", 1)
+        isBlanked := false
+    }
 }
 
 /**
