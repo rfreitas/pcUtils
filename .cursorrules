@@ -1,0 +1,50 @@
+# AutoHotkey v2 Workspace Instructions
+
+This workspace contains various AutoHotkey v2 scripts for system automation and UI enhancements.
+
+## 1. Core Architecture
+- **Version:** Strictly **AutoHotkey v2.0+**. Use `#Requires AutoHotkey v2.0`.
+- **Modules:** Reusable components (like `VerticalSlider.ahk`) are implemented as Classes.
+- **Pattern:** Follow the **Dumb View** pattern for UI modules. The module handles GUI creation and styling; the calling script handles logic, throttling, and value interpretation. This ensures UI consistency (e.g., dark theme) while allowing scripts to handle specific hardware quirks.
+- **Elevation:** Scripts requiring system access (e.g., `AggressiveScreensaver.ahk`) should use the `*RunAs` pattern to self-elevate.
+
+## 2. Essential Workflows
+
+### Script Validation
+**ALWAYS** validate syntax before running.
+```powershell
+& "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" /Validate "path\to\script.ahk"
+```
+
+### Robust Reloading
+To reload a script, especially elevated ones, kill the specific instance by command line first:
+```powershell
+Get-CimInstance Win32_Process -Filter "name = 'AutoHotkey64.exe'" | Where-Object { $_.CommandLine -like "*ScriptName.ahk*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; & "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" "path\to\script.ahk"
+```
+
+## 3. Coding Patterns
+
+### Error Handling & Logging
+- Use a global `OnError` handler and a `LogMsg` function.
+- Log files should be named `[ScriptName].log` in `A_ScriptDir`.
+```autohotkey
+LogFile := A_ScriptDir "\MyScript.log"
+LogMsg(msg) => try FileAppend(FormatTime(, "yyyy-MM-dd HH:mm:ss") ": " msg "`n", LogFile)
+OnError((exc, mode) => (LogMsg("ERROR: " exc.Message), 0))
+```
+
+### UI & Theming
+- Use **Dark Theme** (`BackColor := "2d2d2d"`) for GUIs.
+- Use `Segoe UI` font, size 9.
+- Use `-Caption +AlwaysOnTop +Border +ToolWindow` for overlay-style GUIs.
+
+### External Integration
+- Use `RunWaitOutput` pattern (redirecting to a temp file) to capture CLI results from tools like `powercfg` or `LGTVcli.exe`.
+
+### Smart Idle Tracking
+- For "Always-on" monitoring, distinguish between `A_TimeIdlePhysical` (Hardware) and `A_TimeIdle` (Software/Simulated). 
+- Use deadzones for game controllers and pixel-deltas for mouse movement to filter out sensor noise/vibrations.
+
+## 4. Automation & Deployment
+- **Startup:** Offer to create startup shortcuts in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` for long-running scripts.
+- **Tasks:** Use PowerShell (`New-ScheduledTask`) for scripts that need to survive reboots or run with "Highest" privileges without UAC prompts every time.
