@@ -489,37 +489,34 @@ ShowBlackOverlay() {
 RemoveBlackOverlay() {
     global blackGuis, isBlanked
     
-    ; Robustness: If blackGuis is not empty, we MUST clear it regardless of the isBlanked flag
-    if (!isBlanked && blackGuis.Length == 0)
+    ; If we have windows OR the flag is set, we must clean up
+    if (blackGuis.Length == 0 && !isBlanked)
         return
         
     LogMsg("Leaving blanking mode. (Count: " blackGuis.Length ")")
     
     DestroyBlackGuis()
     
-    ; Only restore cursor if we were successfully in a blanked state
-    if (isBlanked) {
-        DllCall("ShowCursor", "Int", 1)
-        isBlanked := false
-    }
+    ; Restore cursor
+    DllCall("ShowCursor", "Int", 1)
+    isBlanked := false
 }
 
 /**
- * Handles display change events (resolution, HDR toggle, refresh rate, monitor connect/disconnect)
- * Rebuilds overlays if currently blanked to ensure full coverage
+ * Handles power events (Sleep, Wake, Hibernation)
  */
-OnDisplayChange(wParam, lParam, msg, hwnd) {
-    global lastDisplayChange, displayChangeDebounce, isBlanked
-    
-    ; Debounce rapid successive changes (common during HDR toggle)
-    if (A_TickCount - lastDisplayChange < displayChangeDebounce)
-        return
-    lastDisplayChange := A_TickCount
-    
-    ; Rebuild overlays if currently blanked
-    if (isBlanked) {
+OnPowerMessage(wParam, lParam, msg, hwnd) {
+    ; PBT_APMRESUMESUSPEND = 7, PBT_APMRESUMEAUTOMATIC = 18
+    if (wParam = 7 || wParam = 18) {
+        LogMsg("System wake detected. Forcing cleanup.")
+        
+        ; Force activity reset immediately
+        global lastActivityTime := A_TickCount
+        
+        ; Repeatedly attempt cleanup to catch any delayed GUI creations during wake
         RemoveBlackOverlay()
-        ShowBlackOverlay()
+        SetTimer(RemoveBlackOverlay, -500)  ; Try again in 500ms
+        SetTimer(RemoveBlackOverlay, -2000) ; Try again in 2s
     }
 }
 
@@ -667,7 +664,7 @@ SetTimer(UpdateAgentIdle, 100)           ; Check for input frequently
 
 ; Detect Tray Icon Clicks (Left click for slider)
 OnMessage(0x404, TrayIconClick)
-OnMessage(0x007E, OnDisplayChange)  ; WM_DISPLAYCHANGE - monitor/resolution/HDR changes
+OnMessage(0x0218, OnPowerMessage)   ; WM_POWERBROADCAST - sleep/wake events
 
 ; Initial calls
 GetPowerRequests()
