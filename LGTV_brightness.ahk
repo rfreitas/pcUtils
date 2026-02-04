@@ -23,6 +23,9 @@ cli := "C:\Program Files\LGTV Companion\LGTVcli.exe" ; Path to CLI tool
 step := 10                  ; Step size for brightness adjustments
 minIntervalMs := 90         ; Throttle for key repeat (keyboard hotkeys)
 syncEveryMs := 15000        ; Interval to re-read actual value from TV
+iniFile := A_ScriptDir "\LGTV_brightness.ini"
+autoBrightness := IniRead(iniFile, "Settings", "AutoBrightness", 1) ; Default to 1 (true)
+
 
 ; =======================
 ; GLOBAL STATE
@@ -30,6 +33,7 @@ syncEveryMs := 15000        ; Interval to re-read actual value from TV
 last := 0                   ; Timestamp of last hotkey action
 cur := 50                   ; Current tracked brightness value (0-100)
 lastSync := 0               ; Timestamp of last sync from TV
+lastRefreshRate := 0        ; Previous refresh rate for ratio calculation
 
 ; Icon cache settings
 iconsDir := A_Temp "\lgtv_icons"
@@ -111,7 +115,11 @@ A_TrayMenu.Delete()
 valueLabel := "Backlight: (starting...)"
 A_TrayMenu.Add(valueLabel, ShowSlider)
 A_TrayMenu.Add()
+A_TrayMenu.Add("Auto-Brightness (Refresh Rate)", ToggleAutoBrightness)
+if (autoBrightness)
+    A_TrayMenu.Check("Auto-Brightness (Refresh Rate)")
 A_TrayMenu.Add("Sync from TV now", (*) => SyncFromTV(true))
+
 A_TrayMenu.Add()
 A_TrayMenu.Add("Exit", (*) => ExitApp())
 
@@ -150,6 +158,8 @@ A_IconTip := "LGTV Backlight: starting..."
 ; INITIALIZATION
 ; =======================
 SyncFromTV(true) ; Initial sync
+CheckRefreshRate() ; Initialize refresh rate
+OnMessage(0x007E, OnDisplayChange) ; Listen for display changes (WM_DISPLAYCHANGE)
 UpdateTray()
 
 ; =======================
@@ -297,6 +307,56 @@ UpdateIconFromValue(val) {
     targetPath := iconsDir "\b" bucket ".ico"
     if FileExist(targetPath)
         TraySetIcon(targetPath)
+}
+
+; =======================
+; AUTO BRIGHTNESS (REFRESH RATE)
+; =======================
+ToggleAutoBrightness(*) {
+    global autoBrightness, iniFile
+    autoBrightness := !autoBrightness
+    if (autoBrightness) {
+        A_TrayMenu.Check("Auto-Brightness (Refresh Rate)")
+        CheckRefreshRate() ; Run immediately if enabled
+    } else {
+        A_TrayMenu.Uncheck("Auto-Brightness (Refresh Rate)")
+    }
+    IniWrite(autoBrightness, iniFile, "Settings", "AutoBrightness")
+}
+
+OnDisplayChange(wParam, lParam, msg, hwnd) {
+    ; Debounce slightly to allow display settings to settle
+    SetTimer(CheckRefreshRate, -2000)
+}
+
+CheckRefreshRate() {
+    global lastRefreshRate, cur, autoBrightness
+
+    if (!autoBrightness)
+        return
+    
+    currentRate := GetRefreshRate()
+    if (currentRate > 0 && lastRefreshRate > 0 && currentRate != lastRefreshRate) {
+        ratio := lastRefreshRate / currentRate
+        newVal := Round(cur * ratio)
+        ApplyToTV(newVal)
+        lastRefreshRate := currentRate
+    } else if (lastRefreshRate == 0 && currentRate > 0) {
+        lastRefreshRate := currentRate
+    }
+}
+
+GetRefreshRate() {
+    DEVMODE := Buffer(220, 0)
+    NumPut("Short", 220, DEVMODE, 68) ; dmSize
+    
+    ; EnumDisplaySettingsW(LPCWSTR lpszDeviceName, DWORD iModeNum, DEVMODEW *lpDevMode)
+    ; iModeNum: -1 = ENUM_CURRENT_SETTINGS
+    if DllCall("EnumDisplaySettingsW", "Ptr", 0, "Int", -1, "Ptr", DEVMODE) {
+        ; dmDisplayFrequency is at offset 184
+        return NumGet(DEVMODE, 184, "UInt")
+    }
+    return 0
 }
 
 /**
