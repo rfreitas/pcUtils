@@ -482,7 +482,7 @@ ShowBlackOverlay() {
                 MonitorGet(A_Index, &L, &T, &R, &B)
                 
                 ; Create a black window for each monitor
-                g := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x00000020") ; E0x20 is click-through
+                g := Gui("+AlwaysOnTop -Caption +ToolWindow") ; Removed E0x20 (click-through) to block mouse
                 g.BackColor := "Black"
                 g.Show("x" L " y" T " w" (R-L) " h" (B-T) " NoActivate")
                 blackGuis.Push(g)
