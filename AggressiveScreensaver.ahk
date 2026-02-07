@@ -92,6 +92,8 @@ SaveSettings() {
 ; =======================
 blockingScreenApps := ""     ; Apps preventing screensaver (DISPLAY)
 blockingSleepApps := ""      ; Apps preventing sleep (SYSTEM/AWAYMODE)
+blacklistedApps := Map()     ; Set of apps to ignore for blocking
+historyApps := Map()         ; History of all blocking apps
 lastActivityTime := A_TickCount
 lastControllerState := Map() ; Track XInput controller states
 lastJoyState := Map()        ; Track DirectInput joystick states
@@ -136,7 +138,7 @@ RunWaitOutput(cmd) {
  * Requires admin privileges
  */
 GetPowerRequests() {
-    global blockingScreenApps, blockingSleepApps
+    global blockingScreenApps, blockingSleepApps, historyApps, blacklistedApps, IniFile
     
     if (!A_IsAdmin) {
         blockingScreenApps := "(needs admin)"
@@ -176,28 +178,40 @@ GetPowerRequests() {
                 ; Extract filename from path
                 ; Clean up entry name based on type
                 entry := rest
+                filename := rest
                 
                 if (tag = "DRIVER") {
                     ; For drivers, take the name before the Hardware ID (parentheses)
-                    if (pos := InStr(rest, "("))
+                    if (pos := InStr(rest, "(")) {
                         entry := Trim(SubStr(rest, 1, pos - 1))
+                        filename := entry
+                    }
                 } else if (InStr(rest, "\")) {
                     ; For processes/files, take the filename
                     parts := StrSplit(rest, "\")
                     entry := parts[parts.Length]
+                    filename := entry
                 }
                 
-                ; Remove extension (.exe) for cleaner look
-                entry := StrReplace(entry, ".exe", "")
+                ; Remove extension (.exe) for cleaner look in display
+                displayEntry := StrReplace(entry, ".exe", "")
                 
-                if (StrLen(entry) > 15) {
-                    entry := SubStr(entry, 1, 12) "..."
+                if (StrLen(displayEntry) > 15) {
+                    displayEntry := SubStr(displayEntry, 1, 12) "..."
                 }
                 
-                entryText := entry " [" tag "]"
+                entryText := displayEntry " [" tag "]"
                 
                 if (currentSection = "DISPLAY") {
-                    screenApps.Push(entryText)
+                    ; Only track history and blacklist for DISPLAY
+                    if (!historyApps.Has(filename)) {
+                        historyApps[filename] := true
+                        try IniWrite("1", IniFile, "History", filename)
+                    }
+                    
+                    if (!blacklistedApps.Has(filename)) {
+                        screenApps.Push(entryText)
+                    }
                 } else if (currentSection = "SYSTEM" || currentSection = "AWAYMODE") {
                     sleepApps.Push(entryText)
                 }
@@ -555,6 +569,7 @@ OnPowerMessage(wParam, lParam, msg, hwnd) {
 A_TrayMenu.Delete()
 A_TrayMenu.Add("Power Request Monitor", (*) => {})
 A_TrayMenu.Add()
+A_TrayMenu.Add("Blacklist Apps...", ShowBlacklistGui)
 A_TrayMenu.Add("Show Details (Debug)", ShowPowerRequests)
 A_TrayMenu.Add()
 A_TrayMenu.Add("Exit", (*) => ExitApp())
@@ -705,3 +720,92 @@ UpdateTrayTip()
 
 ; Initial notification
 TrayTip("Power Monitor Debug", "Hover tray icon to see idle timers and blocking apps.", 1)
+
+; =======================
+; BLACKLIST & HISTORY LOADING
+; =======================
+
+; Load blacklist and history from INI
+LoadHistoryAndBlacklist() {
+    global blacklistedApps, historyApps, IniFile
+    try {
+        ; Load History
+        histSection := IniRead(IniFile, "History", , "")
+        Loop Parse, histSection, "`n", "`r" {
+            if (pos := InStr(A_LoopField, "=")) {
+                key := SubStr(A_LoopField, 1, pos - 1)
+                historyApps[key] := true
+            }
+        }
+        
+        ; Load Blacklist
+        blSection := IniRead(IniFile, "Blacklist", , "")
+        Loop Parse, blSection, "`n", "`r" {
+            if (pos := InStr(A_LoopField, "=")) {
+                key := SubStr(A_LoopField, 1, pos - 1)
+                blacklistedApps[key] := true
+            }
+        }
+    }
+}
+LoadHistoryAndBlacklist()
+
+/**
+ * Shows the blacklist configuration GUI
+ */
+ShowBlacklistGui(*) {
+    global historyApps, blacklistedApps, IniFile
+    
+    g := Gui(, "Blacklist Apps (Check to Ignore)")
+    g.SetFont("s9", "Segoe UI")
+    g.Add("Text", "w400", "Checked apps will be IGNORED by this script.`n(They won't stop the black screen overlay)")
+    
+    ; Sort apps alphabetically
+    sortedApps := []
+    for appName, _ in historyApps {
+        sortedApps.Push(appName)
+    }
+    
+    str := ""
+    for appName in sortedApps
+        str .= appName "`n"
+    str := Sort(str)
+    sortedApps := StrSplit(Trim(str, "`n"), "`n")
+    
+    if (sortedApps.Length == 0 || (sortedApps.Length == 1 && sortedApps[1] == "")) {
+        g.Add("Text",, "No blocking apps detected yet.")
+    } else {
+        for appName in sortedApps {
+            if (appName == "")
+                continue
+            isBlacklisted := blacklistedApps.Has(appName) ? 1 : 0
+            cb := g.Add("Checkbox", "w400 Checked" isBlacklisted, appName)
+            cb.OnEvent("Click", ToggleBlacklist)
+        }
+    }
+    
+    g.Add("Button", "w80 Default", "Close").OnEvent("Click", (*) => g.Destroy())
+    g.Show()
+}
+
+/**
+ * Toggles the blacklist state of an app
+ */
+ToggleBlacklist(ctrl, *) {
+    global blacklistedApps, IniFile
+    appName := ctrl.Text
+    isChecked := ctrl.Value
+    
+    if (isChecked) {
+        blacklistedApps[appName] := true
+        try IniWrite("1", IniFile, "Blacklist", appName)
+    } else {
+        if (blacklistedApps.Has(appName)) {
+            blacklistedApps.Delete(appName)
+            try IniDelete(IniFile, "Blacklist", appName)
+        }
+    }
+    
+    ; Force a refresh of power requests so the status updates immediately
+    SetTimer(GetPowerRequests, -10)
+}
