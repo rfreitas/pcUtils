@@ -25,7 +25,7 @@ if FileExist(A_ScriptDir "\AggressiveScreensaver.png")
 
 
 ; Request admin elevation for powercfg access
-if (!A_IsAdmin) {
+if (A_LineFile == A_ScriptFullPath && !A_IsAdmin) {
     try {
         Run('*RunAs "' A_AhkPath '" /restart "' A_ScriptFullPath '"')
         ExitApp()
@@ -149,73 +149,27 @@ GetPowerRequests() {
     }
     
     output := RunWaitOutput("powercfg /requests")
+    parsed := ParsePowercfgOutput(output)
     
-    ; Parse the output to find apps with active requests
+    ; Process SCREEN (DISPLAY) results
     screenApps := []
-    sleepApps := []
-    currentSection := ""
-    
-    for line in StrSplit(output, "`n", "`r") {
-        ; Detect section headers: must start at column 1 and end with :
-        ; This prevents indented description lines like "  Reason:" from being caught as headers
-        if (RegExMatch(line, "^([A-Z]+):$", &match)) {
-            currentSection := match[1]
-            continue
-        }
-
-        line := Trim(line)
-        if (line = "" || line = "None.") {
-            continue
+    for app in parsed.screen {
+        ; Track history
+        if (!historyApps.Has(app.filename)) {
+            historyApps[app.filename] := true
+            try IniWrite("1", IniFile, "History", app.filename)
         }
         
-        ; Check entries starting with [
-        if (SubStr(line, 1, 1) = "[") {
-            if (RegExMatch(line, "^\[([^\]]+)\]\s*(.*)$", &match)) {
-                tag := match[1]
-                rest := Trim(match[2])
-                
-                ; Extract filename from path
-                ; Clean up entry name based on type
-                entry := rest
-                filename := rest
-                
-                if (tag = "DRIVER") {
-                    ; For drivers, take the name before the Hardware ID (parentheses)
-                    if (pos := InStr(rest, "(")) {
-                        entry := Trim(SubStr(rest, 1, pos - 1))
-                        filename := entry
-                    }
-                } else if (InStr(rest, "\")) {
-                    ; For processes/files, take the filename
-                    parts := StrSplit(rest, "\")
-                    entry := parts[parts.Length]
-                    filename := entry
-                }
-                
-                ; Remove extension (.exe) for cleaner look in display
-                displayEntry := RegExReplace(entry, "i)\.exe$", "")
-                
-                if (StrLen(displayEntry) > 15) {
-                    displayEntry := SubStr(displayEntry, 1, 12) "..."
-                }
-                
-                entryText := displayEntry " [" tag "]"
-                
-                if (currentSection = "DISPLAY") {
-                    ; Only track history and blacklist for DISPLAY
-                    if (!historyApps.Has(filename)) {
-                        historyApps[filename] := true
-                        try IniWrite("1", IniFile, "History", filename)
-                    }
-                    
-                    if (!blacklistedApps.Has(filename)) {
-                        screenApps.Push(entryText)
-                    }
-                } else if (currentSection = "SYSTEM" || currentSection = "AWAYMODE") {
-                    sleepApps.Push(entryText)
-                }
-            }
+        ; Filter by blacklist
+        if (!blacklistedApps.Has(app.filename)) {
+            screenApps.Push(app.text)
         }
+    }
+    
+    ; Process SLEEP (SYSTEM/AWAY) results
+    sleepApps := []
+    for app in parsed.sleep {
+        sleepApps.Push(app.text)
     }
     
     ; helper function to build string
@@ -238,6 +192,68 @@ GetPowerRequests() {
     blockingSleepApps := BuildList(sleepApps)
     
     UpdateTrayTip()
+}
+
+/**
+ * Pure parsing function for powercfg output
+ * Returns {screen: [{text, filename}, ...], sleep: [...]}
+ */
+ParsePowercfgOutput(output) {
+    screenApps := []
+    sleepApps := []
+    currentSection := ""
+    
+    for line in StrSplit(output, "`n", "`r") {
+        ; Detect section headers: must start at column 1 and end with :
+        if (RegExMatch(line, "^([A-Z]+):$", &match)) {
+            currentSection := match[1]
+            continue
+        }
+
+        line := Trim(line)
+        if (line = "" || line = "None.") {
+            continue
+        }
+        
+        ; Check entries starting with [
+        if (SubStr(line, 1, 1) = "[") {
+            if (RegExMatch(line, "^\[([^\]]+)\]\s*(.*)$", &match)) {
+                tag := match[1]
+                rest := Trim(match[2])
+                
+                ; Extract filename from path
+                entry := rest
+                filename := rest
+                
+                if (tag = "DRIVER") {
+                    if (pos := InStr(rest, "(")) {
+                        entry := Trim(SubStr(rest, 1, pos - 1))
+                        filename := entry
+                    }
+                } else if (InStr(rest, "\")) {
+                    parts := StrSplit(rest, "\")
+                    entry := parts[parts.Length]
+                    filename := entry
+                }
+                
+                ; Remove extension (.exe) for cleaner look in display
+                displayEntry := RegExReplace(entry, "i)\.exe$", "")
+                
+                if (StrLen(displayEntry) > 15) {
+                    displayEntry := SubStr(displayEntry, 1, 12) "..."
+                }
+                
+                appData := {text: displayEntry " [" tag "]", filename: filename}
+                
+                if (currentSection = "DISPLAY") {
+                    screenApps.Push(appData)
+                } else if (currentSection = "SYSTEM" || currentSection = "AWAYMODE") {
+                    sleepApps.Push(appData)
+                }
+            }
+        }
+    }
+    return {screen: screenApps, sleep: sleepApps}
 }
 /**
  * Gets XInput controller state
@@ -562,16 +578,18 @@ OnPowerMessage(wParam, lParam, msg, hwnd) {
     }
 }
 
-; =======================
-; TRAY MENU
-; =======================
-A_TrayMenu.Delete()
-A_TrayMenu.Add("Power Request Monitor", (*) => {})
-A_TrayMenu.Add()
-A_TrayMenu.Add("Blacklist Apps...", ShowBlacklistGui)
-A_TrayMenu.Add("Show Details (Debug)", ShowPowerRequests)
-A_TrayMenu.Add()
-A_TrayMenu.Add("Exit", (*) => ExitApp())
+if (A_LineFile == A_ScriptFullPath) {
+    ; =======================
+    ; TRAY MENU
+    ; =======================
+    A_TrayMenu.Delete()
+    A_TrayMenu.Add("Power Request Monitor", (*) => {})
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("Blacklist Apps...", ShowBlacklistGui)
+    A_TrayMenu.Add("Show Details (Debug)", ShowPowerRequests)
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("Exit", (*) => ExitApp())
+}
 
 /**
  * Updates the tray icon tooltip with current power requests
@@ -713,12 +731,14 @@ OnMessage(0x404, TrayIconClick)
 OnMessage(0x007E, OnDisplayChange)  ; WM_DISPLAYCHANGE - monitor/resolution/HDR changes
 OnMessage(0x0218, OnPowerMessage)   ; WM_POWERBROADCAST - sleep/wake events
 
-; Initial calls
-GetPowerRequests()
-UpdateTrayTip()
+if (A_LineFile == A_ScriptFullPath) {
+    ; Initial calls
+    GetPowerRequests()
+    UpdateTrayTip()
 
-; Initial notification
-TrayTip("Power Monitor Debug", "Hover tray icon to see idle timers and blocking apps.", 1)
+    ; Initial notification
+    TrayTip("Power Monitor Debug", "Hover tray icon to see idle timers and blocking apps.", 1)
+}
 
 ; =======================
 ; BLACKLIST & HISTORY LOADING
@@ -747,7 +767,10 @@ LoadHistoryAndBlacklist() {
         }
     }
 }
-LoadHistoryAndBlacklist()
+
+if (A_LineFile == A_ScriptFullPath) {
+    LoadHistoryAndBlacklist()
+}
 
 /**
  * Shows the blacklist configuration GUI

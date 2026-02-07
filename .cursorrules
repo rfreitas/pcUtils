@@ -29,3 +29,64 @@ Get-CimInstance Win32_Process -Filter "name = 'AutoHotkey64.exe'" | Where-Object
 ## Automation & Deployment
 - **Startup:** Offer to create startup shortcuts in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` for long-running scripts.
 - **Tasks:** Use PowerShell (`New-ScheduledTask`) for scripts that need to survive reboots or run with "Highest" privileges without UAC prompts every time.
+
+## Testing Strategy
+
+### Pure Functions
+- Extract business logic (parsing, calculations, transformations) separate from side effects (file I/O, system calls, UI)
+- Pure functions take input and return data structures only
+- Pure functions are trivially testable with mock data
+- Example: `ParsePowercfgOutput(output)` takes a string, returns `{screen: [...], sleep: [...]}`
+
+### Mock Data, Not System Calls
+- Never call system commands in tests (e.g., `powercfg /requests`) - they require admin, specific system state, and are slow
+- Create representative mock data strings that match the real output format
+- Mock data should include edge cases: indented lines, malformed entries, empty sections, etc.
+
+### Guard Initialization Code
+- Wrap tray menus, timers, event handlers, and other initialization code in:
+  ```autohotkey
+  if (A_LineFile == A_ScriptFullPath) {
+      ; Initialization code here
+  }
+  ```
+- This prevents side effects when other scripts `#Include` the main script for testing
+
+### Test Output to Stdout
+- Use `FileAppend(msg, "*")` to write directly to stdout (not disk files)
+- Never use `MsgBox()` - creates GUI dialogs invisible to automated systems
+- Standard test helper pattern:
+  ```autohotkey
+  Log(msg) {
+      FileAppend(msg "`n", "*")
+  }
+  Test(name, condition) {
+      if (condition) {
+          Log("✓ " name)
+      } else {
+          Log("✗ " name)
+      }
+  }
+  ```
+
+### Test File Naming & Structure
+- Name test files `test_[function].ahk` (e.g., `test_parsing.ahk`)
+- `#Include` the main script to access functions
+- Define mock data at the top
+- Run unit tests and exit with `ExitApp()`
+- Should be runnable without admin elevation
+
+### Testing Workflow
+1. Validate syntax with `/Validate` flag
+2. Only run if validation passes (exit code 0)
+3. One assertion per `Test()` call for clarity
+4. Test both happy path and edge cases
+5. Validate array lengths, specific values, section boundaries
+
+### Case-Insensitive Comparisons
+- For Maps that track apps or settings across different sources:
+  ```autohotkey
+  appMap := Map()
+  appMap.CaseSense := "Off"
+  ```
+- Windows reports app names inconsistently; normalize with case-insensitive matching
