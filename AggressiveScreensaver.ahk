@@ -93,7 +93,9 @@ SaveSettings() {
 blockingScreenApps := ""     ; Apps preventing screensaver (DISPLAY)
 blockingSleepApps := ""      ; Apps preventing sleep (SYSTEM/AWAYMODE)
 blacklistedApps := Map()     ; Set of apps to ignore for blocking
+blacklistedApps.CaseSense := "Off"
 historyApps := Map()         ; History of all blocking apps
+historyApps.CaseSense := "Off"
 lastActivityTime := A_TickCount
 lastControllerState := Map() ; Track XInput controller states
 lastJoyState := Map()        ; Track DirectInput joystick states
@@ -154,24 +156,21 @@ GetPowerRequests() {
     currentSection := ""
     
     for line in StrSplit(output, "`n", "`r") {
+        ; Detect section headers: must start at column 1 and end with :
+        ; This prevents indented description lines like "  Reason:" from being caught as headers
+        if (RegExMatch(line, "^([A-Z]+):$", &match)) {
+            currentSection := match[1]
+            continue
+        }
+
         line := Trim(line)
-        if (line = "") {
-            continue
-        }
-        
-        ; Detect section headers
-        if (SubStr(line, -1) = ":") {
-            currentSection := SubStr(line, 1, -1)
-            continue
-        }
-        
-        if (line = "None.") {
+        if (line = "" || line = "None.") {
             continue
         }
         
         ; Check entries starting with [
         if (SubStr(line, 1, 1) = "[") {
-            if (RegExMatch(line, "^\[(\w+)\]\s*(.*)$", &match)) {
+            if (RegExMatch(line, "^\[([^\]]+)\]\s*(.*)$", &match)) {
                 tag := match[1]
                 rest := Trim(match[2])
                 
@@ -194,7 +193,7 @@ GetPowerRequests() {
                 }
                 
                 ; Remove extension (.exe) for cleaner look in display
-                displayEntry := StrReplace(entry, ".exe", "")
+                displayEntry := RegExReplace(entry, "i)\.exe$", "")
                 
                 if (StrLen(displayEntry) > 15) {
                     displayEntry := SubStr(displayEntry, 1, 12) "..."
