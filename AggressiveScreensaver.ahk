@@ -17,6 +17,13 @@ HandleError(exception, mode) {
     return 0 ; Show default error message as well
 }
 
+; Set up exit handler
+OnExit(HandleExit)
+HandleExit(ExitReason, ExitCode) {
+    LogMsg("Script exiting. Reason: " ExitReason " (Code: " ExitCode ")")
+    return 0
+}
+
 LogMsg("Script starting... (Admin: " A_IsAdmin ")")
 
 ; Set custom tray icon
