@@ -113,6 +113,7 @@ blackGuis := []              ; Storage for multi-monitor black overlays
 isBlanked := false
 lastDisplayChange := 0       ; Debounce for display change events
 displayChangeDebounce := 500 ; ms - prevents rapid rebuilds during HDR/mode switches
+lastPowerCheckTime := 0      ; Timestamp of last successful powercfg check
 
 ; =======================
 ; POWER REQUEST DETECTION
@@ -121,13 +122,13 @@ displayChangeDebounce := 500 ; ms - prevents rapid rebuilds during HDR/mode swit
 /**
  * Runs a command and captures output
  */
+/**
+ * Runs a command and captures output
+ */
 RunWaitOutput(cmd) {
-    tmpFile := A_Temp "\ahk_power_monitor.txt"
+    ; Use unique filename to prevent collisions between Timer and Debug Thread
+    tmpFile := A_Temp "\ahk_pm_" A_TickCount "_" Random(1, 9999) ".txt"
     try {
-        ; Use RunWait with 'Hide' to prevent window flashing
-        if (FileExist(tmpFile))
-            FileDelete(tmpFile)
-            
         RunWait(A_ComSpec ' /c ' cmd ' > "' tmpFile '"', , "Hide")
         
         output := ""
@@ -138,6 +139,8 @@ RunWaitOutput(cmd) {
         return Trim(output)
     } catch as e {
         LogMsg("RunWaitOutput Error: " e.Message " (Cmd: " cmd ")")
+        if (FileExist(tmpFile))
+            try FileDelete(tmpFile)
         return ""
     }
 }
@@ -147,7 +150,7 @@ RunWaitOutput(cmd) {
  * Requires admin privileges
  */
 GetPowerRequests() {
-    global blockingScreenApps, blockingSleepApps, historyApps, blacklistedApps, IniFile
+    global blockingScreenApps, blockingSleepApps, historyApps, blacklistedApps, IniFile, lastPowerCheckTime
     
     if (!A_IsAdmin) {
         blockingScreenApps := "(needs admin)"
@@ -198,6 +201,7 @@ GetPowerRequests() {
     blockingScreenApps := BuildList(screenApps)
     blockingSleepApps := BuildList(sleepApps)
     
+    lastPowerCheckTime := A_TickCount
     UpdateTrayTip()
 }
 
@@ -625,12 +629,18 @@ UpdateTrayTip() {
 }
 
 ShowPowerRequests(*) {
-    global blockingScreenApps, blockingSleepApps
+    global blockingScreenApps, blockingSleepApps, lastPowerCheckTime
     
     adminStatus := A_IsAdmin ? "YES" : "NO"
     output := RunWaitOutput("powercfg /requests")
     
+    ; Calculate time since last auto-check
+    timeSinceLast := "Never"
+    if (lastPowerCheckTime > 0)
+        timeSinceLast := Round((A_TickCount - lastPowerCheckTime) / 1000) "s ago"
+
     text := "Running as Admin: " adminStatus "`r`n"
+         . "Last Auto-Check: " timeSinceLast "`r`n"
          . "Screen Blocked: " (blockingScreenApps != "" ? blockingScreenApps : "None") "`r`n"
          . "Sleep Blocked: " (blockingSleepApps != "" ? blockingSleepApps : "None") "`r`n`r`n"
          . "Raw powercfg output:`r`n" (output != "" ? output : "(empty)")
