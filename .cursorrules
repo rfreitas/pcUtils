@@ -13,7 +13,7 @@ Start-Process -FilePath "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" -Argum
 ### Robust Reloading
 To reload a script, especially elevated ones, kill the specific instance by command line first:
 ```powershell
-Get-CimInstance Win32_Process -Filter "name = 'AutoHotkey64.exe'" | Where-Object { $_.CommandLine -like "*ScriptName.ahk*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; & "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" "path\to\script.ahk"
+Get-CimInstance Win32_Process -Filter "name like 'AutoHotkey%'" | Where-Object { $_.CommandLine -like "*ScriptName.ahk*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; & "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" "path\to\script.ahk"
 ```
 
 ## Coding Patterns
