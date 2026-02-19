@@ -23,6 +23,18 @@ LogException(e, severe := false) {
     LogMsg(prefix ": " e.Message " (" e.What ")")
 }
 
+/**
+ * Safe wrapper around DllCall. Returns 0 and logs on failure.
+ */
+SafeDllCall(fn, args*) {
+    try {
+        return DllCall(fn, args*)
+    } catch as e {
+        LogException(e)
+        return 0
+    }
+}
+
 ; Set up exit handler
 OnExit(HandleExit)
 HandleExit(ExitReason, ExitCode) {
@@ -134,9 +146,7 @@ RunWaitOutput(cmd) {
     ; Use unique filename to prevent collisions between Timer and Debug Thread
     tmpFile := A_Temp "\ahk_pm_" A_TickCount "_" Random(1, 9999) ".txt"
     try {
-        LogMsg("Checking Power Requests... (Cmd: " cmd ")")
         RunWait(A_ComSpec ' /c ' cmd ' > "' tmpFile '"', , "Hide")
-        LogMsg("Power Requests checked.")
 
         output := ""
         if FileExist(tmpFile) {
@@ -282,16 +292,11 @@ GetXInputState(controllerIndex) {
 
     if (xinputDll = "") {
         for dllName in ["xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll"] {
-            try {
-                xinputDll := DllCall("LoadLibrary", "Str", dllName, "Ptr")
-                if (xinputDll) {
-                    funcPtr := DllCall("GetProcAddress", "Ptr", xinputDll, "AStr", "XInputGetState", "Ptr")
-                    if (funcPtr) {
-                        break
-                    }
-                }
-            } catch as e {
-                LogException(e)
+            xinputDll := SafeDllCall("LoadLibrary", "Str", dllName, "Ptr")
+            if (xinputDll) {
+                funcPtr := SafeDllCall("GetProcAddress", "Ptr", xinputDll, "AStr", "XInputGetState", "Ptr")
+                if (funcPtr)
+                    break
             }
         }
     }
@@ -301,12 +306,7 @@ GetXInputState(controllerIndex) {
     }
 
     stateBuffer := Buffer(16, 0)
-    try {
-        if (DllCall(funcPtr, "UInt", controllerIndex, "Ptr", stateBuffer, "UInt") != 0) {
-            return Map()
-        }
-    } catch as e {
-        LogException(e)
+    if (SafeDllCall(funcPtr, "UInt", controllerIndex, "Ptr", stateBuffer, "UInt") != 0) {
         return Map()
     }
 
