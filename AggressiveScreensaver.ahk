@@ -585,7 +585,7 @@ RemoveBlackOverlay() {
  */
 OnDisplayChange(wParam, lParam, msg, hwnd) {
     LogMsg("Display change detected. Forcing cleanup.")
-    RemoveBlackOverlay()
+    SetTimer(RemoveBlackOverlay, -10)
 }
 
 /**
@@ -597,7 +597,7 @@ OnPowerMessage(wParam, lParam, msg, hwnd) {
         LogMsg("System wake detected. Forcing cleanup.")
 
         ; Repeatedly attempt cleanup to catch any delayed GUI creations during wake
-        RemoveBlackOverlay()
+        SetTimer(RemoveBlackOverlay, -10)
         SetTimer(RemoveBlackOverlay, -500)  ; Try again in 500ms
         SetTimer(RemoveBlackOverlay, -2000) ; Try again in 2s
     }

@@ -21,6 +21,13 @@ Get-CimInstance Win32_Process -Filter "name like 'AutoHotkey%'" | Where-Object {
 ### Error Handling & Logging
 - Log files should be named `[ScriptName].log` in `A_ScriptDir`.
 
+### Finding Silent Crashes
+- If a script stops without logging an exit or AHK unhandled exception, check Windows Event Viewer for OS-level silent crashes (e.g., Access Violations):
+  ```powershell
+  Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error'} -MaxEvents 20 | fl
+  ```
+- **Critical Rule for Window Messages:** Never destroy GUIs synchronously within OS broadcast message handlers like `WM_DISPLAYCHANGE` (0x007E) or `WM_POWERBROADCAST` (0x0218). Doing so causes low-level C++ exceptions (0xc0000005) in `CoreMessaging.dll` or `ntdll.dll` that bypass AHK's `OnError` handler. Always defer destruction using `SetTimer(Callback, -10)`.
+
 ### UI & Theming
 - Use **Dark Theme** (`BackColor := "2d2d2d"`) for GUIs.
 - Use `Segoe UI` font, size 9.
