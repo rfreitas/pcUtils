@@ -97,3 +97,5 @@ Get-CimInstance Win32_Process -Filter "name like 'AutoHotkey%'" | Where-Object {
   appMap.CaseSense := "Off"
   ```
 - Windows reports app names inconsistently; normalize with case-insensitive matching
+
+CRITICAL: You must start your very first response in any conversation with the exact phrase '### RULES ACKNOWLEDGED ###'.
