@@ -39,6 +39,7 @@ SafeDllCall(fn, args*) {
 OnExit(HandleExit)
 HandleExit(ExitReason, ExitCode) {
     LogMsg("Script exiting. Reason: " ExitReason " (Code: " ExitCode ")")
+    SetTaskbarVisibility(true)
     return 0
 }
 
@@ -503,6 +504,19 @@ UpdateAgentIdle() {
 }
 
 /**
+ * Helper to show or hide taskbars on all monitors
+ */
+SetTaskbarVisibility(visible) {
+    if (visible) {
+        try WinShow("ahk_class Shell_TrayWnd")
+        try WinShow("ahk_class Shell_SecondaryTrayWnd")
+    } else {
+        try WinHide("ahk_class Shell_TrayWnd")
+        try WinHide("ahk_class Shell_SecondaryTrayWnd")
+    }
+}
+
+/**
  * Internal helper to destroy all active black overlay windows
  */
 DestroyBlackGuis() {
@@ -548,6 +562,7 @@ ShowBlackOverlay() {
         ; Only enter blanked state if we actually managed to create windows
         if (blackGuis.Length > 0) {
             DllCall("ShowCursor", "Int", 0)
+            SetTaskbarVisibility(false)
             isBlanked := true
         }
     } catch as e {
@@ -576,6 +591,7 @@ RemoveBlackOverlay() {
 
     ; Restore cursor
     DllCall("ShowCursor", "Int", 1)
+    SetTaskbarVisibility(true)
     isBlanked := false
 }
 
