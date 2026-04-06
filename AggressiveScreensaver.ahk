@@ -290,15 +290,22 @@ ParsePowercfgOutput(output) {
 GetXInputState(controllerIndex) {
     static xinputDll := ""
     static funcPtr := 0
+    static stateBuffer := Buffer(16, 0)
 
     if (xinputDll = "") {
         for dllName in ["xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll"] {
-            xinputDll := SafeDllCall("LoadLibrary", "Str", dllName, "Ptr")
-            if (xinputDll) {
-                funcPtr := SafeDllCall("GetProcAddress", "Ptr", xinputDll, "AStr", "XInputGetState", "Ptr")
-                if (funcPtr)
+            tempDll := SafeDllCall("LoadLibrary", "Str", dllName, "Ptr")
+            if (tempDll) {
+                funcPtr := SafeDllCall("GetProcAddress", "Ptr", tempDll, "AStr", "XInputGetState", "Ptr")
+                if (funcPtr) {
+                    xinputDll := tempDll
                     break
+                }
+                SafeDllCall("FreeLibrary", "Ptr", tempDll)
             }
+        }
+        if (xinputDll = "") {
+            xinputDll := "Failed" ; Prevent infinite retries
         }
     }
 
@@ -306,7 +313,6 @@ GetXInputState(controllerIndex) {
         return Map()
     }
 
-    stateBuffer := Buffer(16, 0)
     if (SafeDllCall(funcPtr, "UInt", controllerIndex, "Ptr", stateBuffer, "UInt") != 0) {
         return Map()
     }
@@ -378,15 +384,25 @@ HasControllerActivity() {
  */
 HasJoystickActivity() {
     global lastJoyState
+    static connectedJoysticks := []
+    static lastDetectionTime := 0
     joyDeadzone := 10 ; 0-100 scale for axes
 
-    loop 4 { ; Check first 4 joysticks
-        joyID := A_Index
-        joyName := joyID "Joy"
+    ; Throttle heavy detection of new joysticks to once every 5 seconds
+    if (A_TickCount - lastDetectionTime > 5000) {
+        lastDetectionTime := A_TickCount
+        connectedJoysticks := []
+        loop 4 {
+            if (GetKeyState(A_Index "JoyName") != "")
+                connectedJoysticks.Push(A_Index)
+        }
+    }
 
-        ; Verify connection by checking name/info
-        if (GetKeyState(joyName "Name") == "")
-            continue
+    if (connectedJoysticks.Length == 0)
+        return false
+
+    for joyID in connectedJoysticks {
+        joyName := joyID "Joy"
 
         ; Build current state map
         currentState := Map()
@@ -400,20 +416,12 @@ HasJoystickActivity() {
                 val := 50
             }
             currentState[axis] := val
-
-            ; Check simple deviation from center (approx 50)
-            ; This is a rough activity check
-            if (Abs(val - 50) > joyDeadzone) {
-                ; We don't mark 'hasInput' just for being off-center (drift)
-                ; We only check for CHANGE below
-            }
         }
 
         ; Check POV (Hat switch)
         currentState["POV"] := GetKeyState(joyName "POV")
 
-        ; Check Buttons 1-32 (Bitmap would be faster but AHK native is simple loop)
-        ; To save perf, we'll just check if the state matches previous
+        ; Check Buttons 1-32
         buttonMask := 0
         loop 32 {
             if (GetKeyState(joyName A_Index))
