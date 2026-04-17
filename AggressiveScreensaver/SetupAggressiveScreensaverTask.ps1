@@ -1,7 +1,7 @@
 $TaskName = "AggressiveScreensaver_AutoStart"
 $AhkPath = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
-$ScriptPath = "c:\Users\ricfr\Documents\AutoHotkey\AggressiveScreensaver.ahk"
-$WorkDir = "c:\Users\ricfr\Documents\AutoHotkey"
+$ScriptPath = "c:\Users\ricfr\Documents\AutoHotkey\AggressiveScreensaver\AggressiveScreensaver.ahk"
+$WorkDir = "c:\Users\ricfr\Documents\AutoHotkey\AggressiveScreensaver"
 
 Write-Host "Setting up Scheduled Task: $TaskName"
 Write-Host "AHK Path: $AhkPath"
