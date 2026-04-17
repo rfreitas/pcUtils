@@ -35,11 +35,21 @@ SafeDllCall(fn, args*) {
     }
 }
 
+/**
+ * Safe wrapper around GetKeyState to prevent unhandled exceptions during device disconnects.
+ */
+SafeGetKeyState(KeyName, Mode := "") {
+    try return GetKeyState(KeyName, Mode)
+    catch
+        return ""
+}
+
 ; Set up exit handler
 OnExit(HandleExit)
 HandleExit(ExitReason, ExitCode) {
     LogMsg("Script exiting. Reason: " ExitReason " (Code: " ExitCode ")")
-    SetTaskbarVisibility(true)
+    if (ExitReason != "Shutdown" && ExitReason != "Logoff")
+        SetTaskbarVisibility(true)
     return 0
 }
 
@@ -392,8 +402,8 @@ HasJoystickActivity() {
     if (A_TickCount - lastDetectionTime > 5000) {
         lastDetectionTime := A_TickCount
         connectedJoysticks := []
-        loop 4 {
-            if (GetKeyState(A_Index "JoyName") != "")
+        loop 16 {
+            if (SafeGetKeyState(A_Index "JoyName") != "")
                 connectedJoysticks.Push(A_Index)
         }
     }
@@ -411,7 +421,7 @@ HasJoystickActivity() {
         hasInput := false
         axisList := ["X", "Y", "Z", "R", "U", "V"]
         for axis in axisList {
-            val := GetKeyState(joyName axis)
+            val := SafeGetKeyState(joyName axis)
             if (!IsNumber(val)) {
                 val := 50
             }
@@ -419,12 +429,12 @@ HasJoystickActivity() {
         }
 
         ; Check POV (Hat switch)
-        currentState["POV"] := GetKeyState(joyName "POV")
+        currentState["POV"] := SafeGetKeyState(joyName "POV")
 
         ; Check Buttons 1-32
         buttonMask := 0
         loop 32 {
-            if (GetKeyState(joyName A_Index))
+            if (SafeGetKeyState(joyName A_Index))
                 buttonMask |= (1 << (A_Index - 1))
         }
         currentState["Buttons"] := buttonMask
