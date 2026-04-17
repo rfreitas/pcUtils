@@ -13,6 +13,7 @@ if (A_LineFile == A_ScriptFullPath) {
 
     A_TrayMenu.Add()
     A_TrayMenu.Add("Taskbar Always Visible", ToggleAlwaysVisible)
+    A_TrayMenu.Default := "Taskbar Always Visible"
     UpdateTrayCheckmark()
 
     SetTimer(CheckHotCorners, 50)
@@ -60,9 +61,7 @@ CheckHotCorners() {
     inBottomRight := (mouseX >= screenWidth - cornerSize) && (mouseY >= screenHeight - cornerSize)
 
     if (!wasInCorner) {
-        if (inBottomLeft) {
-            ToggleTaskbarVisibility()
-        } else if (inBottomRight) {
+        if (inBottomLeft || inBottomRight) {
             ShowTaskbar()
         }
     }
