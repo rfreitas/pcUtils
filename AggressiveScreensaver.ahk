@@ -44,6 +44,13 @@ SafeGetKeyState(KeyName, Mode := "") {
         return ""
 }
 
+global GetKeyStateFn := SafeGetKeyState
+global GetTimeMsFn := GetTimeMs
+
+GetTimeMs() {
+    return A_TickCount
+}
+
 ; Set up exit handler
 OnExit(HandleExit)
 HandleExit(ExitReason, ExitCode) {
@@ -392,18 +399,25 @@ HasControllerActivity() {
  * Checks for generic Joystick activity (DirectInput)
  * e.g. DualSense, older gamepads
  */
-HasJoystickActivity() {
+HasJoystickActivity(reset := false) {
     global lastJoyState
     static connectedJoysticks := []
     static lastDetectionTime := 0
     joyDeadzone := 10 ; 0-100 scale for axes
 
+    if (reset) {
+        lastJoyState := Map()
+        connectedJoysticks := []
+        lastDetectionTime := 0
+        return false
+    }
+
     ; Throttle heavy detection of new joysticks to once every 5 seconds
-    if (A_TickCount - lastDetectionTime > 5000) {
-        lastDetectionTime := A_TickCount
+    if (GetTimeMsFn() - lastDetectionTime > 5000) {
+        lastDetectionTime := GetTimeMsFn()
         connectedJoysticks := []
         loop 16 {
-            if (SafeGetKeyState(A_Index "JoyName") != "")
+            if (GetKeyStateFn(A_Index "JoyName") != "")
                 connectedJoysticks.Push(A_Index)
         }
     }
@@ -421,7 +435,7 @@ HasJoystickActivity() {
         hasInput := false
         axisList := ["X", "Y", "Z", "R", "U", "V"]
         for axis in axisList {
-            val := SafeGetKeyState(joyName axis)
+            val := GetKeyStateFn(joyName axis)
             if (!IsNumber(val)) {
                 val := 50
             }
@@ -429,12 +443,12 @@ HasJoystickActivity() {
         }
 
         ; Check POV (Hat switch)
-        currentState["POV"] := SafeGetKeyState(joyName "POV")
+        currentState["POV"] := GetKeyStateFn(joyName "POV")
 
         ; Check Buttons 1-32
         buttonMask := 0
         loop 32 {
-            if (SafeGetKeyState(joyName A_Index))
+            if (GetKeyStateFn(joyName A_Index))
                 buttonMask |= (1 << (A_Index - 1))
         }
         currentState["Buttons"] := buttonMask
