@@ -3,12 +3,6 @@ param (
     [string]$ScriptPath
 )
 
-# Convert relative path to absolute path before any process elevation
-if (-not [System.IO.Path]::IsPathRooted($ScriptPath)) {
-    $ScriptPath = "$((Resolve-Path $ScriptPath -ErrorAction Stop).Path)"
-}
-
-
 $scriptName = Split-Path $ScriptPath -Leaf
 $closeScript = Join-Path $PSScriptRoot "CloseAhkProgram.ps1"
 $openScript = Join-Path $PSScriptRoot "OpenAhkProgram.ps1"
