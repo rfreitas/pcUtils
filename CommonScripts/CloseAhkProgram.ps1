@@ -9,7 +9,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin) {
     Write-Host "Administrator privileges required to close $ScriptName."
     Write-Host "Prompting for elevation..."
-    Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`" -ScriptName `"$ScriptName`"" -Verb RunAs -Wait
+    Start-Process powershell -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ScriptName `"$ScriptName`"" -Verb RunAs -Wait
     exit
 }
 
@@ -27,5 +27,3 @@ if ($ahkProcesses) {
 } else {
     Write-Host "No running instances of '$ScriptName' found."
 }
-
-Start-Sleep -Seconds 3

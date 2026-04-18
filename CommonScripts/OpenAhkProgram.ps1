@@ -12,9 +12,9 @@ if (Test-Path $AhkPath) {
         Write-Host "Started successfully."
     } else {
         Write-Warning "Could not find AutoHotkey script at: $ScriptPath"
+        exit 1
     }
 } else {
     Write-Warning "Could not find AutoHotkey executable at: $AhkPath"
+    exit 1
 }
-
-Start-Sleep -Seconds 2

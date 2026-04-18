@@ -21,10 +21,14 @@ Write-Host "=============================================="
 & $closeScript -ScriptName $scriptName
 
 # 2. Wait explicitly to prevent race conditions 
-Start-Sleep -Seconds 1
+Start-Sleep -Milliseconds 500
 
 # 3. Open it up freshly
 & $openScript -ScriptPath $ScriptPath
 
-Start-Sleep -Seconds 2
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Reload stopped due to an error during the Open phase."
+    exit $LASTEXITCODE
+}
+
 Write-Host "Reload complete successfully for $scriptName."
