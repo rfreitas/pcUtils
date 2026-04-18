@@ -3,15 +3,11 @@ param (
     [string]$ScriptPath
 )
 
-# Elevate Reload wrapper early so both Close and Open operations happen in Admin scope
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-if (-not $isAdmin) {
-    Write-Host "Administrator privileges may be required to cleanly terminate $ScriptPath."
-    Write-Host "Prompting for elevation..."
-    Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`" -ScriptPath `"$ScriptPath`"" -Verb RunAs
-    exit
+# Convert relative path to absolute path before any process elevation
+if (-not [System.IO.Path]::IsPathRooted($ScriptPath)) {
+    $ScriptPath = "$((Resolve-Path $ScriptPath -ErrorAction Stop).Path)"
 }
+
 
 $scriptName = Split-Path $ScriptPath -Leaf
 $closeScript = Join-Path $PSScriptRoot "CloseAhkProgram.ps1"
