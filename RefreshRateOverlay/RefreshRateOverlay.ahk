@@ -38,6 +38,11 @@ if (A_LineFile == A_ScriptFullPath) {
     ; Start tracking foreground apps
     SetTimer(TrackForegroundApp, 500)
     
+    ; Tray menu setup
+    A_TrayMenu.Insert("1&", "Toggle Overlay", (*) => ToggleOverlay())
+    A_TrayMenu.Default := "Toggle Overlay"
+    A_TrayMenu.ClickCount := 1
+    
     ; Hotkey to toggle the overlay
     Hotkey("#+r", (*) => ToggleOverlay())
 }
@@ -51,14 +56,7 @@ TrackForegroundApp() {
     if (GuiInstance && WinActive("ahk_id " GuiInstance.Hwnd))
         return
 
-    processName := ""
-    try {
-        processName := WinGetProcessName("A")
-    } catch {
-        return
-    }
-    
-    ; Ignore the Windows Shell Experience Host or standard AHK windows if needed
+    processName := GetActiveApplication()
     if (processName == "")
         return
         
@@ -81,11 +79,24 @@ ApplyProfile(processName) {
     }
 }
 
+GetActiveApplication() {
+    try {
+        procName := WinGetProcessName("A")
+        winClass := WinGetClass("A")
+        ; Ignore taskbar and background UI components to preserve true context
+        if (procName == "" || winClass == "Shell_TrayWnd" || winClass == "Shell_SecondaryTrayWnd" || winClass == "NotifyIconOverflowWindow")
+            return ""
+        return procName
+    } catch {
+        return ""
+    }
+}
+
 ; --- UI Functions ---
 
 ToggleOverlay() {
     global GuiInstance, DDL_Rates, Check_Remember, Text_ActiveApp, AvailableRates
-    global DefaultRefreshRate, INI_FILE, CurrentRefreshRate
+    global DefaultRefreshRate, INI_FILE, CurrentRefreshRate, LastForegroundProcess
     
     if (GuiInstance) {
         GuiInstance.Destroy()
@@ -93,11 +104,9 @@ ToggleOverlay() {
         return
     }
     
-    activeApp := ""
-    try {
-        activeApp := WinGetProcessName("A")
-    } catch {
-        activeApp := "Desktop"
+    activeApp := GetActiveApplication()
+    if (activeApp == "") {
+        activeApp := LastForegroundProcess ? LastForegroundProcess : "Desktop"
     }
     
     GuiInstance := Gui("+AlwaysOnTop -Caption +ToolWindow +Border")
