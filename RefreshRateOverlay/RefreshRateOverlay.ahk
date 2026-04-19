@@ -2,6 +2,7 @@
 #SingleInstance Force
 
 #Include "%A_ScriptDir%\TrayIconRenderer.ahk"
+#Include "%A_ScriptDir%\..\CommonScripts\HDRControl.ahk"
 
 ; Globals
 global INI_FILE := A_ScriptDir "\RefreshSettings.ini"
@@ -11,10 +12,28 @@ global AvailableRates := []
 global GuiInstance := ""
 global DDL_Rates := ""
 global Check_Remember := ""
+global Check_HDR := ""
 global Text_ActiveApp := ""
 global LastForegroundProcess := ""
+global DefaultHDR := 0
+global IsHDRSupported := false
+global IgnoreDisplayChangeUntil := 0
 
 if (A_LineFile == A_ScriptFullPath) {
+    ; Check HDR support
+    GetPrimaryHDRState(&supp, &en)
+    IsHDRSupported := supp
+    
+    ; Try read default HDR from INI
+    if (IsHDRSupported) {
+        try {
+            DefaultHDR := IniRead(INI_FILE, "Settings", "DefaultHDR")
+        } catch {
+            DefaultHDR := en
+            IniWrite(DefaultHDR, INI_FILE, "Settings", "DefaultHDR")
+        }
+    }
+
     ; Initialize script
     AvailableRates := GetAvailableRefreshRatesForCurrentRes()
     
@@ -34,6 +53,8 @@ if (A_LineFile == A_ScriptFullPath) {
     
     ; Apply default once on startup in case we are on desktop
     SetMonitorRefreshRate(DefaultRefreshRate)
+    if (IsHDRSupported)
+        SetHDRState(DefaultHDR)
     
     ; Start tracking foreground apps
     SetTimer(TrackForegroundApp, 500)
@@ -45,6 +66,45 @@ if (A_LineFile == A_ScriptFullPath) {
     
     ; Hotkey to toggle the overlay
     Hotkey("#+r", (*) => ToggleOverlay())
+    
+    ; Listen for manual display changes outside the app
+    OnMessage(0x007E, OnDisplayChange)
+}
+
+OnDisplayChange(wParam, lParam, msg, hwnd) {
+    SetTimer(SyncSettingsWithSystem, -500)
+}
+
+SyncSettingsWithSystem() {
+    global LastForegroundProcess, DefaultRefreshRate, DefaultHDR, IsHDRSupported, INI_FILE, CurrentRefreshRate, IgnoreDisplayChangeUntil
+    
+    if (A_TickCount < IgnoreDisplayChangeUntil)
+        return
+        
+    CurrentRefreshRate := GetCurrentRefreshRate()
+    UpdateTrayIcon(CurrentRefreshRate)
+    
+    currHdr := 0
+    if (IsHDRSupported) {
+        GetPrimaryHDRState(&supp, &currHdr)
+    }
+
+    ; Only update the fallback default if we are currently outside any app profile
+    try {
+        IniRead(INI_FILE, "Profiles", LastForegroundProcess)
+        ; We are in a profile. If we want to support updating profiles via Win+Alt+B, we could write here.
+        ; But to be safe, let's only sync defaults.
+    } catch {
+        ; No profile = we are using default desktop settings
+        if (DefaultRefreshRate != CurrentRefreshRate) {
+            DefaultRefreshRate := CurrentRefreshRate
+            IniWrite(DefaultRefreshRate, INI_FILE, "Settings", "DefaultRefreshRate")
+        }
+        if (IsHDRSupported && DefaultHDR != currHdr) {
+            DefaultHDR := currHdr
+            IniWrite(DefaultHDR, INI_FILE, "Settings", "DefaultHDR")
+        }
+    }
 }
 
 ; --- Core Functions ---
@@ -67,7 +127,7 @@ TrackForegroundApp() {
 }
 
 ApplyProfile(processName) {
-    global DefaultRefreshRate
+    global DefaultRefreshRate, DefaultHDR, IsHDRSupported
     
     ; Does this app have a profile?
     try {
@@ -76,6 +136,15 @@ ApplyProfile(processName) {
     } catch {
         ; If no profile, revert to the Default Refresh Rate
         SetMonitorRefreshRate(DefaultRefreshRate)
+    }
+
+    if (IsHDRSupported) {
+        try {
+            profileHDR := IniRead(INI_FILE, "HDRProfiles", processName)
+            SetHDRState(profileHDR)
+        } catch {
+            SetHDRState(DefaultHDR)
+        }
     }
 }
 
@@ -95,12 +164,12 @@ GetActiveApplication() {
 ; --- UI Functions ---
 
 ToggleOverlay() {
-    global GuiInstance, DDL_Rates, Check_Remember, Text_ActiveApp, AvailableRates
-    global DefaultRefreshRate, INI_FILE, CurrentRefreshRate, LastForegroundProcess
+    global GuiInstance, DDL_Rates, Check_Remember, Text_ActiveApp, AvailableRates, Check_HDR
+    global DefaultRefreshRate, INI_FILE, CurrentRefreshRate, LastForegroundProcess, IsHDRSupported, DefaultHDR
     
     if (GuiInstance) {
-        GuiInstance.Destroy()
-        GuiInstance := ""
+        ; Defer destruction to avoid CoreMessaging crash during broadcast messages
+        SetTimer(DestroyGui, -10)
         return
     }
     
@@ -119,6 +188,32 @@ ToggleOverlay() {
     GuiInstance.SetFont("s10 cWhite") ; Restore
     Text_ActiveApp := activeApp
     
+    ; Sync reality before showing UI
+    CurrentRefreshRate := GetCurrentRefreshRate()
+    UpdateTrayIcon(CurrentRefreshRate)
+    
+    currHdr := DefaultHDR
+    if (IsHDRSupported) {
+        GetPrimaryHDRState(&supp, &currHdr)
+    }
+
+    ; If we are not in a profile, ensure our internal default variables match reality
+    ; (In case they changed it manually in Windows Settings)
+    hasProfile := false
+    try {
+        IniRead(INI_FILE, "Profiles", activeApp)
+        hasProfile := true
+    } catch {
+        if (DefaultRefreshRate != CurrentRefreshRate) {
+            DefaultRefreshRate := CurrentRefreshRate
+            IniWrite(DefaultRefreshRate, INI_FILE, "Settings", "DefaultRefreshRate")
+        }
+        if (IsHDRSupported && DefaultHDR != currHdr) {
+            DefaultHDR := currHdr
+            IniWrite(DefaultHDR, INI_FILE, "Settings", "DefaultHDR")
+        }
+    }
+
     ; Build DropDown Options
     opts := []
     for r in AvailableRates {
@@ -135,11 +230,24 @@ ToggleOverlay() {
     }
     
     DDL_Rates := GuiInstance.Add("DropDownList", "w250 Choose" preSelectId, opts)
-    Check_Remember := GuiInstance.Add("CheckBox", "w250", "Save for " activeApp)
     
-    ; Check if profile exists
-    try {
-        IniRead(INI_FILE, "Profiles", activeApp)
+    if (IsHDRSupported) {
+        Check_HDR := GuiInstance.Add("CheckBox", "w250", "Enable HDR")
+        if (hasProfile) {
+            try {
+                profHdr := IniRead(INI_FILE, "HDRProfiles", activeApp)
+                Check_HDR.Value := profHdr
+            } catch {
+                Check_HDR.Value := currHdr
+            }
+        } else {
+            ; If no profile, show exactly what the hardware is doing right now
+            Check_HDR.Value := currHdr
+        }
+    }
+
+    Check_Remember := GuiInstance.Add("CheckBox", "w250", "Save for " activeApp)
+    if (hasProfile) {
         Check_Remember.Value := 1
     }
 
@@ -152,31 +260,54 @@ ToggleOverlay() {
 }
 
 ApplyBtn_Click(*) {
-    global GuiInstance, DDL_Rates, Check_Remember, Text_ActiveApp, INI_FILE, DefaultRefreshRate
+    global GuiInstance, DDL_Rates, Check_Remember, Text_ActiveApp, INI_FILE, DefaultRefreshRate, DefaultHDR, Check_HDR, IsHDRSupported
     
     selRate := StrReplace(DDL_Rates.Text, " Hz", "")
     
     if (Check_Remember.Value == 1) {
         IniWrite(selRate, INI_FILE, "Profiles", Text_ActiveApp)
+        if (IsHDRSupported)
+            IniWrite(Check_HDR.Value, INI_FILE, "HDRProfiles", Text_ActiveApp)
     } else {
         ; Remove profile if they unchecked it
         try {
             IniDelete(INI_FILE, "Profiles", Text_ActiveApp)
         }
+        if (IsHDRSupported) {
+            try {
+                IniDelete(INI_FILE, "HDRProfiles", Text_ActiveApp)
+            }
+        }
         ; Update the default refresh rate since it's no longer app-specific
         DefaultRefreshRate := selRate
         IniWrite(selRate, INI_FILE, "Settings", "DefaultRefreshRate")
+        
+        if (IsHDRSupported) {
+            DefaultHDR := Check_HDR.Value
+            IniWrite(DefaultHDR, INI_FILE, "Settings", "DefaultHDR")
+        }
     }
     
     SetMonitorRefreshRate(selRate)
+    if (IsHDRSupported)
+        SetHDRState(Check_HDR.Value)
     
     GuiInstance.Destroy()
     GuiInstance := ""
 }
 
 CancelBtn_Click(*) {
+    ; Defer destruction to avoid CoreMessaging crash during broadcast messages
+    SetTimer(DestroyGui, -10)
+}
+
+DestroyGui() {
     global GuiInstance
-    GuiInstance.Destroy()
+    try {
+        GuiInstance.Destroy()
+    } catch {
+        ; Silently ignore if already destroyed
+    }
     GuiInstance := ""
 }
 
@@ -248,7 +379,7 @@ GetCurrentRefreshRate() {
 }
 
 SetMonitorRefreshRate(rate) {
-    global CurrentRefreshRate
+    global CurrentRefreshRate, IgnoreDisplayChangeUntil
     
     ; Don't trigger display mode switch if we are already securely at that rate
     if (CurrentRefreshRate == rate)
@@ -261,6 +392,7 @@ SetMonitorRefreshRate(rate) {
     if DllCall("EnumDisplaySettingsW", "Ptr", 0, "Int", -1, "Ptr", devMode) {
         NumPut("UInt", rate, devMode, 184)
         
+        IgnoreDisplayChangeUntil := A_TickCount + 2000
         ; ChangeDisplaySettingsW. 0 means change dynamically in current session
         res := DllCall("ChangeDisplaySettingsW", "Ptr", devMode, "UInt", 0)
         
