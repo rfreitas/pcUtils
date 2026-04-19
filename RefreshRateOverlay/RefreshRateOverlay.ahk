@@ -233,17 +233,7 @@ ToggleOverlay() {
     
     if (IsHDRSupported) {
         Check_HDR := GuiInstance.Add("CheckBox", "w250", "Enable HDR")
-        if (hasProfile) {
-            try {
-                profHdr := IniRead(INI_FILE, "HDRProfiles", activeApp)
-                Check_HDR.Value := profHdr
-            } catch {
-                Check_HDR.Value := currHdr
-            }
-        } else {
-            ; If no profile, show exactly what the hardware is doing right now
-            Check_HDR.Value := currHdr
-        }
+        Check_HDR.Value := currHdr
     }
 
     Check_Remember := GuiInstance.Add("CheckBox", "w250", "Save for " activeApp)
