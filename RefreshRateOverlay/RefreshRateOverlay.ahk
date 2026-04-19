@@ -142,9 +142,6 @@ ToggleOverlay() {
         IniRead(INI_FILE, "Profiles", activeApp)
         Check_Remember.Value := 1
     }
-    
-    ; Set Default Button
-    GuiInstance.Add("Button", "w250", "Set as Desktop Default").OnEvent("Click", SetDefaultBtn_Click)
 
     btnGroup := GuiInstance.Add("Text", "w250 Center") ; Spacer
     GuiInstance.Add("Button", "w120 x10 y+10 BackgroundBlue Default", "Apply").OnEvent("Click", ApplyBtn_Click)
@@ -154,22 +151,8 @@ ToggleOverlay() {
     GuiInstance.Show("NoActivate")
 }
 
-SetDefaultBtn_Click(*) {
-    global GuiInstance, DDL_Rates, DefaultRefreshRate, INI_FILE, Text_ActiveApp
-    
-    selRate := StrReplace(DDL_Rates.Text, " Hz", "")
-    DefaultRefreshRate := selRate
-    IniWrite(selRate, INI_FILE, "Settings", "DefaultRefreshRate")
-    
-    ; Apply instantly
-    SetMonitorRefreshRate(selRate)
-    
-    GuiInstance.Destroy()
-    GuiInstance := ""
-}
-
 ApplyBtn_Click(*) {
-    global GuiInstance, DDL_Rates, Check_Remember, Text_ActiveApp, INI_FILE
+    global GuiInstance, DDL_Rates, Check_Remember, Text_ActiveApp, INI_FILE, DefaultRefreshRate
     
     selRate := StrReplace(DDL_Rates.Text, " Hz", "")
     
@@ -180,6 +163,9 @@ ApplyBtn_Click(*) {
         try {
             IniDelete(INI_FILE, "Profiles", Text_ActiveApp)
         }
+        ; Update the default refresh rate since it's no longer app-specific
+        DefaultRefreshRate := selRate
+        IniWrite(selRate, INI_FILE, "Settings", "DefaultRefreshRate")
     }
     
     SetMonitorRefreshRate(selRate)
