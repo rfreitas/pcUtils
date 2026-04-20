@@ -85,6 +85,7 @@ SyncSettingsWithSystem() {
     UpdateTrayIcon(CurrentRefreshRate)
     
     currHdr := 0
+    local supp := 0
     if (IsHDRSupported) {
         GetPrimaryHDRState(&supp, &currHdr)
     }
@@ -193,6 +194,7 @@ ToggleOverlay() {
     UpdateTrayIcon(CurrentRefreshRate)
     
     currHdr := DefaultHDR
+    local supp := 0
     if (IsHDRSupported) {
         GetPrimaryHDRState(&supp, &currHdr)
     }
