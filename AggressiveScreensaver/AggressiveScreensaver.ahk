@@ -644,12 +644,16 @@ OnPowerMessage(wParam, lParam, msg, hwnd) {
     if (wParam = 7 || wParam = 18) {
         LogMsg("System wake detected. Forcing cleanup.")
 
-        ; Repeatedly attempt cleanup to catch any delayed GUI creations during wake
+        ; Use distinct wrappers so each gets its own timer slot — calling SetTimer
+        ; with the same function multiple times just replaces the single timer for that
+        ; function, meaning only the last delay would ever fire.
         SetTimer(RemoveBlackOverlay, -10)
-        SetTimer(RemoveBlackOverlay, -500)  ; Try again in 500ms
-        SetTimer(RemoveBlackOverlay, -2000) ; Try again in 2s
+        SetTimer(_WakeCleanup500, -500)
+        SetTimer(_WakeCleanup2000, -2000)
     }
 }
+_WakeCleanup500(*)  => RemoveBlackOverlay()
+_WakeCleanup2000(*) => RemoveBlackOverlay()
 
 if (A_LineFile == A_ScriptFullPath) {
     ; =======================

@@ -12,6 +12,10 @@
         "/^powershell -ExecutionPolicy Bypass -File \"\\.\\\\CommonScripts\\\\ReloadAhkProgram\\.ps1\" -ScriptPath \"\\.\\\\LGTV_brightness\\.ahk\"$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^powershell -ExecutionPolicy Bypass -File \"\\.\\\\CommonScripts\\\\Invoke-Ahk\\.ps1\" -Timeout 2000 \"\\.\\\\AggressiveScreensaver\\\\AggressiveScreensaver\\.ahk\"; Write-Host \"Exit: \\$LASTEXITCODE\"$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }
