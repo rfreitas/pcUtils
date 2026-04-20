@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if ((Test-Path '.agents/skills') -and -not (Test-Path '.claude/skills')) { if (-not (Test-Path '.claude')) { New-Item -ItemType Directory -Path '.claude' | Out-Null }; New-Item -ItemType Junction -Path '.claude/skills' -Target (Resolve-Path '.agents/skills') | Out-Null }",
+            "shell": "powershell"
+          }
+        ]
+      }
+    ]
+  }
+}
