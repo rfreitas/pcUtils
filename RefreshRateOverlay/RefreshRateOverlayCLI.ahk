@@ -27,6 +27,7 @@ CLI_GetActiveApp() {
 
 ; Mirrors ToggleOverlay() state computation without showing UI.
 ComputeOverlayState(activeApp) {
+    local state, hdrSupp, hdrEnabled, defaultHDR, defaultRate, hasProfile
     state := Map()
     state["ActiveApp"] := activeApp
 
@@ -80,6 +81,7 @@ ComputeOverlayState(activeApp) {
 }
 
 PrintState(state) {
+    local key, val
     for key, val in state
         FileAppend(key ": " val "`n", "*")
 }

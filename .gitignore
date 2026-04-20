@@ -3,3 +3,7 @@ AggressiveScreensaver.ini
 test_output.txt
 .claude/commands
 RefreshRateOverlay/RefreshSettings.ini
+CommonScripts/AhkRunner/bin/
+CommonScripts/AhkRunner/obj/
+CommonScripts/AhkRunner/AhkRunner.Tests/bin/
+CommonScripts/AhkRunner/AhkRunner.Tests/obj/

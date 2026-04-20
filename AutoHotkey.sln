@@ -1,0 +1,29 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "CommonScripts", "CommonScripts", "{3634BACD-18BB-8CE3-5486-EFF28EECE0AD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AhkRunner", "CommonScripts\AhkRunner\AhkRunner.csproj", "{D5A71750-FCAC-531B-1A06-8F9009739D6F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D5A71750-FCAC-531B-1A06-8F9009739D6F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D5A71750-FCAC-531B-1A06-8F9009739D6F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D5A71750-FCAC-531B-1A06-8F9009739D6F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D5A71750-FCAC-531B-1A06-8F9009739D6F}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D5A71750-FCAC-531B-1A06-8F9009739D6F} = {3634BACD-18BB-8CE3-5486-EFF28EECE0AD}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6197C718-E979-418E-9B75-07915BAA880C}
+	EndGlobalSection
+EndGlobal
