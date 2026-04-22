@@ -6,7 +6,7 @@ param(
 $appName    = Split-Path $AppFolder -Leaf
 $debugRun   = Join-Path $PSScriptRoot "DebugRunAhk.ps1"
 $runTests   = Join-Path $PSScriptRoot "RunTests.ps1"
-$mainScript = Join-Path $AppFolder "$appName.ahk"
+$mainScript = Join-Path $AppFolder "index.ahk"
 $testsDir   = Join-Path $AppFolder "tests"
 
 Write-Host ""

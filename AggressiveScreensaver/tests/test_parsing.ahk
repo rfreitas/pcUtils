@@ -1,6 +1,6 @@
 #Requires AutoHotkey v2.0
 ; We include the main script to access its functions
-#Include ..\AggressiveScreensaver.ahk
+#Include ..\index.ahk
 
 ; ========================================
 ; Test Harness - Using OutputDebug for safe console output

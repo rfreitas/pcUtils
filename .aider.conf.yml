@@ -1,0 +1,35 @@
+# Aider configuration for AutoHotkey v2 workspace
+# Docs: https://aider.chat/docs/config/aider_conf.html
+
+##########
+# Model (uncomment one and set your API key in env)
+##########
+# model: claude-sonnet-4-5          # export ANTHROPIC_API_KEY=...
+# model: gpt-4o                     # export OPENAI_API_KEY=...
+# model: gemini/gemini-2.0-flash    # export GEMINI_API_KEY=...
+
+##########
+# Testing — runs after every aider edit when auto-test: true
+##########
+test-cmd: '"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" "AggressiveScreensaver\tests\run_all_tests.ahk"'
+
+# Set to true to auto-run tests after each edit and let aider fix failures
+auto-test: false
+
+##########
+# Always include coding rules as read-only context
+##########
+read:
+  - .github/copilot-instructions.md
+
+##########
+# Git
+##########
+auto-commits: true
+dirty-commits: true
+commit-prompt: "feat: {}"
+
+##########
+# Performance
+##########
+cache-prompts: true

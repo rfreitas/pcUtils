@@ -1,7 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Off
 
-#Include "%A_ScriptDir%\..\Modules\HDRControl.ahk"
+#Include "%A_ScriptDir%\..\Modules\HDRControl\index.ahk"
 
 global INI_FILE := A_ScriptDir "\RefreshSettings.ini"
 

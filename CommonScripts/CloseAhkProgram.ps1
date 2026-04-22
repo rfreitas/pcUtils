@@ -1,29 +1,29 @@
 param (
     [Parameter(Mandatory=$true)]
-    [string]$ScriptName
+    [string]$ScriptPath
 )
 
 # Check if running as Admin to close elevated processes; if not, prompt to elevate
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    Write-Host "Administrator privileges required to close $ScriptName."
+    Write-Host "Administrator privileges required to close $ScriptPath."
     Write-Host "Prompting for elevation..."
-    Start-Process powershell -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ScriptName `"$ScriptName`"" -Verb RunAs -Wait
+    Start-Process powershell -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ScriptPath `"$ScriptPath`"" -Verb RunAs -Wait
     exit
 }
 
-Write-Host "Looking for AutoHotkey processes running '$ScriptName'..."
+Write-Host "Looking for AutoHotkey processes running '$ScriptPath'..."
 
 # Check the CommandLine of processes to exclusively find the one running our script
-$ahkProcesses = Get-CimInstance Win32_Process -Filter "Name like 'AutoHotkey%'" | Where-Object { $_.CommandLine -match [regex]::Escape($ScriptName) }
+$ahkProcesses = Get-CimInstance Win32_Process -Filter "Name like 'AutoHotkey%'" | Where-Object { $_.CommandLine -match [regex]::Escape($ScriptPath) }
 
 if ($ahkProcesses) {
     foreach ($proc in $ahkProcesses) {
         Write-Host "Force closing process ID $($proc.ProcessId)..."
         Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
     }
-    Write-Host "Successfully closed $($ahkProcesses.Count) process(es) running '$ScriptName'."
+    Write-Host "Successfully closed $($ahkProcesses.Count) process(es) running '$ScriptPath'."
 } else {
-    Write-Host "No running instances of '$ScriptName' found."
+    Write-Host "No running instances of '$ScriptPath' found."
 }

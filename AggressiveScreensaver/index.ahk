@@ -1,6 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-#Include ..\Modules\VerticalSlider.ahk
+#Include ..\Modules\VerticalSlider\index.ahk
 
 ; =======================
 ; ERROR LOGGING

@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+A_IconTip := "RevealTaskbar"
 CoordMode "Mouse", "Screen"
 
 ; Hot Corners:

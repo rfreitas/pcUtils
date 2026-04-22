@@ -1,5 +1,5 @@
 #Requires AutoHotkey v2.0
-#Include ..\AggressiveScreensaver.ahk
+#Include ..\index.ahk
 
 ; ========================================
 ; Test Harness

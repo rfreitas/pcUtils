@@ -4,7 +4,7 @@
 ; Usage: AutoHotkey64.exe test_hdrcontrol.ahk
 ; Exit codes: 0 = all pass, 1 = any fail
 
-#Include "HDRControl.ahk"
+#Include "..\index.ahk"
 
 ; Utility functions
 Log(msg) {

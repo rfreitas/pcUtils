@@ -1,24 +1,29 @@
-# Self-elevate once so all child scripts skip individual UAC prompts
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs -Wait
-    exit
-}
-
-$rootDir = Split-Path $PSScriptRoot -Parent
-$reloadScript = Join-Path $PSScriptRoot "ReloadAhkProgram.ps1"
+$rootDir    = Split-Path $PSScriptRoot -Parent
+$closeScript = Join-Path $PSScriptRoot "CloseAhkApps.ps1"
+$openScript  = Join-Path $PSScriptRoot "OpenAhkProgram.ps1"
 
 $scripts = @(
-    "AggressiveScreensaver\AggressiveScreensaver.ahk",
-    "LGTV_brightness.ahk",
-    "RevealTaskbar.ahk",
-    "RefreshRateOverlay\RefreshRateOverlay.ahk"
+    "AggressiveScreensaver\index.ahk",
+    "LGTV_brightness\index.ahk",
+    "RevealTaskbar\index.ahk",
+    "RefreshRateOverlay\index.ahk"
 )
 
-foreach ($script in $scripts) {
-    $fullPath = Join-Path $rootDir $script
-    Write-Host ""
-    & $reloadScript -ScriptPath $fullPath
+$fullPaths = $scripts | ForEach-Object { Join-Path $rootDir $_ }
+
+# Step 1: Close all in one elevated call
+Write-Host "Closing all AHK apps..."
+& $closeScript -ScriptPaths $fullPaths
+
+# Step 2: Wait for processes to fully exit
+Start-Sleep -Milliseconds 500
+
+# Step 3: Open each without elevation
+Write-Host ""
+foreach ($fullPath in $fullPaths) {
+    $appName = Split-Path (Split-Path $fullPath -Parent) -Leaf
+    Write-Host "Starting $appName..."
+    & $openScript -ScriptPath $fullPath
 }
 
 Write-Host ""

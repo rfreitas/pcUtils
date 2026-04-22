@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+A_IconTip := "TouchpadSettings"
 
 ; Defines Registry Keys
 Key_AAP_Root := "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad"

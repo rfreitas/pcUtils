@@ -1,8 +1,9 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+A_IconTip := "RefreshRateOverlay"
 
 #Include "%A_ScriptDir%\TrayIconRenderer.ahk"
-#Include "%A_ScriptDir%\..\Modules\HDRControl.ahk"
+#Include "%A_ScriptDir%\..\Modules\HDRControl\index.ahk"
 
 ; Globals
 global INI_FILE := A_ScriptDir "\RefreshSettings.ini"

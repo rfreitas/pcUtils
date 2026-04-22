@@ -1,5 +1,9 @@
 ﻿AggressiveScreensaver.log
 AggressiveScreensaver.ini
+
+# Aider
+.aider*
+!.aider.conf.yml
 test_output.txt
 .claude/skills
 RefreshRateOverlay/RefreshSettings.ini
