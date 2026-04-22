@@ -1,5 +1,5 @@
 $rootDir    = Split-Path $PSScriptRoot -Parent
-$closeScript = Join-Path $PSScriptRoot "CloseAhkApps.ps1"
+$closeScript = Join-Path $PSScriptRoot "CloseAhkProgram.ps1"
 $openScript  = Join-Path $PSScriptRoot "OpenAhkProgram.ps1"
 
 $scripts = @(
@@ -18,13 +18,9 @@ Write-Host "Closing all AHK apps..."
 # Step 2: Wait for processes to fully exit
 Start-Sleep -Milliseconds 500
 
-# Step 3: Open each without elevation
+# Step 3: Open all
 Write-Host ""
-foreach ($fullPath in $fullPaths) {
-    $appName = Split-Path (Split-Path $fullPath -Parent) -Leaf
-    Write-Host "Starting $appName..."
-    & $openScript -ScriptPath $fullPath
-}
+& $openScript -ScriptPaths $fullPaths
 
 Write-Host ""
 Write-Host "=============================================="

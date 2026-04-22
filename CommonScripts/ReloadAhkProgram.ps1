@@ -12,13 +12,13 @@ Write-Host " RELOADING SYSTEM: $scriptName"
 Write-Host "=============================================="
 
 # 1. Close existing process
-& $closeScript -ScriptPath $ScriptPath
+& $closeScript -ScriptPaths @($ScriptPath)
 
 # 2. Wait explicitly to prevent race conditions 
 Start-Sleep -Milliseconds 500
 
 # 3. Open it up freshly
-& $openScript -ScriptPath $ScriptPath
+& $openScript -ScriptPaths @($ScriptPath)
 $openExitCode = $LASTEXITCODE
 
 if ($openExitCode -ne 0) {
