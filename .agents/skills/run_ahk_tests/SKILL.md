@@ -1,26 +1,27 @@
 ---
 name: Run AutoHotkey Tests
-description: Executes the test suite for the AggressiveScreensaver to validate pure functions and mocked hardware.
+description: Executes the test suite for any AHK app by auto-discovering all test_*.ahk files inside its tests/ subfolder.
 ---
 
 # Run AutoHotkey Tests
 
-This skill helps you validate logic changes to the `AggressiveScreensaver.ahk` workspace using the centralized test runner located in the `AggressiveScreensaver/tests/` directory.
-
-## Testing Standards
-The workspace follows specific testing guidelines outlined in `.github/copilot-instructions.md`. Tests heavily utilize **Dependency Injection** through functions like `GetKeyStateFn` and `GetTimeMsFn` to mock hardware boundaries.
+Use `CommonScripts/RunTests.ps1` to run all tests for any app. Pass the app root folder — it auto-discovers every `test_*.ahk` inside `<AppFolder>\tests\` and runs each through `DebugRunAhk.ps1`.
 
 ## Running Tests
-To run the automated tests and see console output naturally printed, use the following PowerShell command:
 
 ```powershell
-Start-Process -FilePath "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" -ArgumentList "C:\Users\ricfr\Documents\AutoHotkey\AggressiveScreensaver\tests\run_all_tests.ahk" -NoNewWindow -Wait
+# Run tests for AggressiveScreensaver
+powershell -ExecutionPolicy Bypass -File ".\CommonScripts\RunTests.ps1" -AppFolder ".\AggressiveScreensaver"
+
+# Run tests for any other app
+powershell -ExecutionPolicy Bypass -File ".\CommonScripts\RunTests.ps1" -AppFolder ".\<AppFolder>"
 ```
 
 ## Creating New Tests
-If modifying the main script with new features, you must write corresponding test scenarios.
-1. Place new test scripts named `test_[feature].ahk` in the `AggressiveScreensaver/tests/` directory.
-2. `#Include ..\AggressiveScreensaver.ahk` at the top.
+If modifying a script with new features, write corresponding test scenarios.
+1. Place new test scripts named `test_[feature].ahk` in the app's `tests/` directory.
+2. `#Include` the main script at the top.
 3. Hook into dependencies if necessary (e.g. override global variables like `GetKeyStateFn` or define new mocks).
 4. Do **not** use real system queries or execute blocking hardware checks directly in your tests.
-5. Finally, append your new test filename to the `testsToRun` array inside `AggressiveScreensaver/tests/run_all_tests.ahk`.
+
+No registration needed — `RunTests.ahk` picks up any `test_*.ahk` file automatically.
