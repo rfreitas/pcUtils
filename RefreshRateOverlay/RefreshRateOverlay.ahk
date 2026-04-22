@@ -2,7 +2,7 @@
 #SingleInstance Force
 
 #Include "%A_ScriptDir%\TrayIconRenderer.ahk"
-#Include "%A_ScriptDir%\..\CommonScripts\HDRControl.ahk"
+#Include "%A_ScriptDir%\..\Modules\HDRControl.ahk"
 
 ; Globals
 global INI_FILE := A_ScriptDir "\RefreshSettings.ini"

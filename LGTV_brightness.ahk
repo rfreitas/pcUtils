@@ -1,6 +1,6 @@
 ﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
-#Include VerticalSlider.ahk
+#Include "Modules\VerticalSlider.ahk"
 
 ; =======================
 ; LG TV Backlight Hotkeys
