@@ -13,7 +13,7 @@
     Optional timeout in milliseconds. Exits with code 124 on timeout.
 
 .EXAMPLE
-    .\CommonScripts\Invoke-Ahk.ps1 .\RefreshRateOverlay\RefreshRateOverlayCLI.ahk status
+    .\\CommonScripts\\DebugRunAhk.ps1 .\\RefreshRateOverlay\\RefreshRateOverlayCLI.ahk status
 #>
 param(
     [Parameter(Mandatory, Position = 0)]

@@ -9,7 +9,7 @@ Use this skill whenever you need to run an AHK script and capture its output, in
 
 ## How it works
 
-`CommonScripts/Invoke-Ahk.ps1` calls `CommonScripts/AhkRunner/bin/Release/net8.0/win-x64/publish/ahkrun.exe`, which:
+`CommonScripts/DebugRunAhk.ps1` calls `CommonScripts/AhkRunner/bin/Release/net8.0/win-x64/publish/ahkrun.exe`, which:
 - Injects an `OnError` handler so runtime exceptions print to stdout instead of showing a dialog
 - Sets `#Warn All, StdOut` so warnings print to stdout instead of showing a dialog
 - Passes `/ErrorStdOut` to AHK so compile errors go to stderr
@@ -19,20 +19,20 @@ Use this skill whenever you need to run an AHK script and capture its output, in
 
 ```powershell
 # Basic run
-powershell -ExecutionPolicy Bypass -File ".\CommonScripts\Invoke-Ahk.ps1" ".\Path\To\Script.ahk" [script args...]
+powershell -ExecutionPolicy Bypass -File ".\CommonScripts\DebugRunAhk.ps1" ".\Path\To\Script.ahk" [script args...]
 
 # With timeout (ms)
-powershell -ExecutionPolicy Bypass -File ".\CommonScripts\Invoke-Ahk.ps1" -Timeout 5000 ".\Path\To\Script.ahk" [script args...]
+powershell -ExecutionPolicy Bypass -File ".\CommonScripts\DebugRunAhk.ps1" -Timeout 5000 ".\Path\To\Script.ahk" [script args...]
 ```
 
 ## Examples
 
 ```powershell
 # Run CLI status check
-powershell -ExecutionPolicy Bypass -File ".\CommonScripts\Invoke-Ahk.ps1" ".\RefreshRateOverlay\RefreshRateOverlayCLI.ahk" status
+powershell -ExecutionPolicy Bypass -File ".\CommonScripts\DebugRunAhk.ps1" ".\RefreshRateOverlay\RefreshRateOverlayCLI.ahk" status
 
 # Run HDR sync test with 10s timeout
-powershell -ExecutionPolicy Bypass -File ".\CommonScripts\Invoke-Ahk.ps1" -Timeout 10000 ".\RefreshRateOverlay\RefreshRateOverlayCLI.ahk" test-hdr-sync
+powershell -ExecutionPolicy Bypass -File ".\CommonScripts\DebugRunAhk.ps1" -Timeout 10000 ".\RefreshRateOverlay\RefreshRateOverlayCLI.ahk" test-hdr-sync
 ```
 
 ## Exit codes
