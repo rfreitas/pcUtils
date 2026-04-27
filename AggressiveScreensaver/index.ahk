@@ -426,6 +426,15 @@ HasJoystickActivity(reset := false) {
         return false
 
     for joyID in connectedJoysticks {
+        ; Re-verify connection immediately before reading axes.
+        ; A disconnect between cache refreshes causes an OS-level access violation
+        ; inside GetKeyState that cannot be caught by try/catch.
+        if (GetKeyStateFn(joyID "JoyName") == "") {
+            connectedJoysticks := []   ; force full re-detection on next call
+            lastDetectionTime := 0
+            continue
+        }
+
         joyName := joyID "Joy"
 
         ; Build current state map
