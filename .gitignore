@@ -11,3 +11,9 @@ CommonScripts/AhkRunner/bin/
 CommonScripts/AhkRunner/obj/
 CommonScripts/AhkRunner/AhkRunner.Tests/bin/
 CommonScripts/AhkRunner/AhkRunner.Tests/obj/
+
+# AggressiveScreensaver.NET build artifacts
+AggressiveScreensaver.NET/bin/
+AggressiveScreensaver.NET/obj/
+AggressiveScreensaver.NET.Tests/bin/
+AggressiveScreensaver.NET.Tests/obj/
