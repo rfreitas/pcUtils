@@ -42,9 +42,13 @@ internal sealed class DarkSlider : Control
     private static readonly Color ThumbHover      = Color.FromArgb(0xFF, 0xFF, 0xFF);
     private static readonly Color StepDot         = Color.FromArgb(0x44, 0x44, 0x44);
 
-    private const int TrackW   = 4;   // track width in pixels
-    private const int ThumbR   = 16;  // thumb radius
-    private const int TrackPad = 22;  // top/bottom padding so thumb doesn't clip
+    // Base sizes at 96 DPI — multiplied by DpiScale at runtime
+    private const int TrackW   = 4;   // track width in logical pixels
+    private const int ThumbR   = 8;   // thumb radius in logical pixels
+    private const int TrackPad = 14;  // top/bottom padding in logical pixels
+    private const int DotR     = 1;   // step-dot radius in logical pixels
+
+    private float DpiScale => DeviceDpi / 96f;
 
     public DarkSlider()
     {
@@ -57,8 +61,8 @@ internal sealed class DarkSlider : Control
         BackColor = BgColor;
     }
 
-    private int TrackTop    => TrackPad;
-    private int TrackBottom => Height - TrackPad;
+    private int TrackTop    => (int)(TrackPad * DpiScale);
+    private int TrackBottom => Height - (int)(TrackPad * DpiScale);
     private int CenterX     => Width / 2;
 
     private int ValueToY(int v)
@@ -96,32 +100,36 @@ internal sealed class DarkSlider : Control
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         g.Clear(BgColor);
 
+        float s    = DpiScale;
+        float trkW = TrackW * s;
+        float thmR = ThumbR * s;
+        float dotR = DotR   * s;
+        float hw   = trkW / 2f;
+
         int cx  = CenterX;
         int top = TrackTop;
         int bot = TrackBottom;
         int ty  = ValueToY(_value);
 
-        float hw = TrackW / 2f;
-
         // Inactive track (below thumb = lower values)
         using (var b = new SolidBrush(TrackInactive))
-            FillRoundedRect(g, b, new RectangleF(cx - hw, top, TrackW, bot - top), hw);
+            FillRoundedRect(g, b, new RectangleF(cx - hw, top, trkW, bot - top), hw);
 
         // Active track (above thumb = higher/selected value and above)
         if (ty > top)
             using (var b = new SolidBrush(TrackActive))
-                FillRoundedRect(g, b, new RectangleF(cx - hw, top, TrackW, ty - top), hw);
+                FillRoundedRect(g, b, new RectangleF(cx - hw, top, trkW, ty - top), hw);
 
-        // Step dots on the inactive portion
+        // Step dots
         for (int i = Minimum; i <= Maximum; i++)
         {
             int dy = ValueToY(i);
             using var dotB = new SolidBrush(StepDot);
-            g.FillEllipse(dotB, cx - 2, dy - 2, 4, 4);
+            g.FillEllipse(dotB, cx - dotR, dy - dotR, dotR * 2, dotR * 2);
         }
 
         // Thumb circle
-        var thumbRect = new RectangleF(cx - ThumbR, ty - ThumbR, ThumbR * 2, ThumbR * 2);
+        var thumbRect = new RectangleF(cx - thmR, ty - thmR, thmR * 2, thmR * 2);
         using (var b = new SolidBrush(_hover ? ThumbHover : ThumbNormal))
             g.FillEllipse(b, thumbRect);
     }
@@ -133,10 +141,11 @@ internal sealed class DarkSlider : Control
 
     private bool IsOverThumb(int x, int y)
     {
-        int ty = ValueToY(_value);
-        int dx = x - CenterX;
-        int dy = y - ty;
-        return dx * dx + dy * dy <= ThumbR * ThumbR;
+        int ty    = ValueToY(_value);
+        float thmR = ThumbR * DpiScale;
+        float dx  = x - CenterX;
+        float dy  = y - ty;
+        return dx * dx + dy * dy <= thmR * thmR;
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
