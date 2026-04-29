@@ -30,8 +30,11 @@ public class SliderRenderTest
 
         var thread = new Thread(() =>
         {
+            // Use real monitor DPI so DeviceDpi reflects actual scaling (e.g. 120 at 125%)
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             using var form = new TimeoutSliderForm(30, steps, _ => { });
-            form.ClientSize = new Size(60, 210);
+            // Don't override ClientSize — let the form use its own natural size
+            // (ShowAboveMouse sets size in the real app; here we just use the defaults)
             form.StartPosition = FormStartPosition.Manual;
             form.Location = new Point(50, 50);
 

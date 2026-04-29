@@ -1,9 +1,155 @@
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Windows.Forms;
 
 namespace AggressiveScreensaver.Forms;
+
+/// <summary>
+/// Fully custom-drawn vertical slider with modern dark styling.
+/// Circular thumb, rounded track, filled active section, subtle step dots.
+/// </summary>
+internal sealed class DarkSlider : Control
+{
+    public int Minimum { get; init; } = 1;
+    public int Maximum { get; init; } = 10;
+
+    private int _value = 1;
+    public int Value
+    {
+        get => _value;
+        set
+        {
+            int v = Math.Clamp(value, Minimum, Maximum);
+            if (_value == v) return;
+            _value = v;
+            Invalidate();
+            ValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public event EventHandler? ValueChanged;
+
+    private bool _dragging;
+    private bool _hover;
+
+    // Colors
+    private static readonly Color BgColor        = Color.FromArgb(0x2D, 0x2D, 0x2D);
+    private static readonly Color TrackInactive   = Color.FromArgb(0x55, 0x55, 0x55);
+    private static readonly Color TrackActive     = Color.FromArgb(0x88, 0xBB, 0xFF);
+    private static readonly Color ThumbNormal     = Color.FromArgb(0xCC, 0xCC, 0xCC);
+    private static readonly Color ThumbHover      = Color.FromArgb(0xFF, 0xFF, 0xFF);
+    private static readonly Color StepDot         = Color.FromArgb(0x44, 0x44, 0x44);
+
+    private const int TrackW   = 4;   // track width in pixels
+    private const int ThumbR   = 8;   // thumb radius
+    private const int TrackPad = 14;  // top/bottom padding so thumb doesn't clip
+
+    public DarkSlider()
+    {
+        SetStyle(
+            ControlStyles.UserPaint |
+            ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.OptimizedDoubleBuffer |
+            ControlStyles.ResizeRedraw,
+            true);
+        BackColor = BgColor;
+        Cursor    = Cursors.Hand;
+    }
+
+    private int TrackTop    => TrackPad;
+    private int TrackBottom => Height - TrackPad;
+    private int CenterX     => Width / 2;
+
+    private int ValueToY(int v)
+    {
+        if (Maximum == Minimum) return TrackTop;
+        double t = (double)(v - Minimum) / (Maximum - Minimum);
+        // High value = top (low y), low value = bottom (high y)
+        return TrackBottom - (int)(t * (TrackBottom - TrackTop));
+    }
+
+    private int YToValue(int y)
+    {
+        double t = 1.0 - Math.Clamp((double)(y - TrackTop) / (TrackBottom - TrackTop), 0.0, 1.0);
+        return Minimum + (int)Math.Round(t * (Maximum - Minimum));
+    }
+
+    private static void FillRoundedRect(Graphics g, Brush b, RectangleF r, float radius)
+    {
+        if (r.Width < 1 || r.Height < 1) return; // degenerate — GraphicsPath would crash
+        float d = radius * 2;
+        using var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        g.FillPath(b, path);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (TrackBottom <= TrackTop || Width < 4) return; // too small to draw
+
+        var g = e.Graphics;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.Clear(BgColor);
+
+        int cx  = CenterX;
+        int top = TrackTop;
+        int bot = TrackBottom;
+        int ty  = ValueToY(_value);
+
+        float hw = TrackW / 2f;
+
+        // Inactive track (below thumb = lower values)
+        using (var b = new SolidBrush(TrackInactive))
+            FillRoundedRect(g, b, new RectangleF(cx - hw, top, TrackW, bot - top), hw);
+
+        // Active track (above thumb = higher/selected value and above)
+        if (ty > top)
+            using (var b = new SolidBrush(TrackActive))
+                FillRoundedRect(g, b, new RectangleF(cx - hw, top, TrackW, ty - top), hw);
+
+        // Step dots on the inactive portion
+        for (int i = Minimum; i <= Maximum; i++)
+        {
+            int dy = ValueToY(i);
+            using var dotB = new SolidBrush(StepDot);
+            g.FillEllipse(dotB, cx - 2, dy - 2, 4, 4);
+        }
+
+        // Thumb circle
+        var thumbRect = new RectangleF(cx - ThumbR, ty - ThumbR, ThumbR * 2, ThumbR * 2);
+        using (var b = new SolidBrush(_hover ? ThumbHover : ThumbNormal))
+            g.FillEllipse(b, thumbRect);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left) { _dragging = true; Value = YToValue(e.Y); }
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        if (_dragging) Value = YToValue(e.Y);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left) _dragging = false;
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        Value += e.Delta > 0 ? 1 : -1;
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { _hover = true;  Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); }
+}
 
 /// <summary>
 /// Vertical timeout slider — dark borderless window, opens above the mouse cursor,
@@ -15,9 +161,9 @@ internal sealed class TimeoutSliderForm : Form
     private readonly int[]      _steps;
     private readonly Action<int> _onChanged;
     private readonly Label      _label;
-    private readonly TrackBar   _track;
+    private readonly DarkSlider  _track;
 
-    private const int GuiW  = 45;
+    private const int GuiW  = 60;
     private const int GuiH  = 210;
     private const int LabelH = 26;
 
@@ -45,22 +191,15 @@ internal sealed class TimeoutSliderForm : Form
             AutoSize  = false,
         };
 
-        // ---------- TrackBar ----------
+        // ---------- Slider ----------
         // Raw 1 (top) = longest timeout step; Raw 10 (bottom) = shortest.
         // Mirrors AHK inversion: FindStepIndex uses (11 - step) so bottom=short.
-        _track = new TrackBar
+        _track = new DarkSlider
         {
-            Orientation   = Orientation.Vertical,
-            Minimum       = 1,
-            Maximum       = _steps.Length,
-            TickFrequency = 1,
-            LargeChange   = 1,
-            SmallChange   = 1,
-            TickStyle     = TickStyle.Both,
-            BackColor     = Color.FromArgb(0x2D, 0x2D, 0x2D),
+            Minimum = 1,
+            Maximum = _steps.Length,
         };
         _track.ValueChanged += TrackValueChanged;
-        _track.AutoSize = false;
 
         Controls.Add(_label);
         Controls.Add(_track);

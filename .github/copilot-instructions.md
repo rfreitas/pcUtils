@@ -98,4 +98,20 @@ Get-CimInstance Win32_Process -Filter "name like 'AutoHotkey%'" | Where-Object {
   ```
 - Windows reports app names inconsistently; normalize with case-insensitive matching
 
+---
+
+## C# / .NET (AggressiveScreensaver.NET)
+
+Use the dedicated skills for build/reload/diagnostics workflows — they contain the exact commands and caveats:
+- **`build_dotnet_app`** — kill instance → run tests → build
+- **`reload_dotnet_app`** — stop → rebuild → relaunch with elevation
+- **`check_dotnet_logs`** — read log from `%LOCALAPPDATA%\AggressiveScreensaver\` + Event Viewer fallback for native AVs
+
+### Key facts (not in skills)
+- **Exception handler layers** (`Services/Logger.cs` `InstallGlobalHandlers`): ThreadException → AppDomain.UnhandledException → native `SetUnhandledExceptionFilter`. .NET 8 does NOT route `0xc0000005` AVs through managed handlers — prevent at source with geometry guards.
+- **CRITICAL — never install `SetUnhandledExceptionFilter` in .NET 8:** calling managed code from that callback during a CSE causes a second fault → heap corruption → cascading crash (e.g. the next `CreateProcess` call). The correct crash record is in the `.NET Runtime` Event Viewer source and WER dump — use `check_dotnet_logs` skill.
+- **Dark WinForms:** native controls (TrackBar) ignore `BackColor` — use fully custom `UserPaint` controls. Guard `GraphicsPath.AddArc` against zero-size rects.
+- **DPI:** `DeviceDpi` is 96 in test processes; call `Application.SetHighDpiMode(PerMonitorV2)` in test STA threads.
+- **Log/dump location:** `%LOCALAPPDATA%\AggressiveScreensaver\` — never `AppContext.BaseDirectory` (wiped by `dotnet clean`).
+
 CRITICAL: You must start your very first response in any conversation with the exact phrase '### RULES ACKNOWLEDGED ###'.
