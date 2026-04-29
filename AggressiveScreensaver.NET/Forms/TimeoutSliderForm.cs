@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace AggressiveScreensaver.Forms;
@@ -194,9 +195,10 @@ internal sealed class TimeoutSliderForm : Form
     private readonly Label      _label;
     private readonly DarkSlider  _track;
 
-    private const int GuiW  = 60;
-    private const int GuiH  = 210;
-    private const int LabelH = 26;
+    private const int GuiW         = 60;
+    private const int GuiH         = 210;
+    private const int LabelH       = 26;
+    private const int TaskbarMargin = 6;  // logical px gap above taskbar
 
     public TimeoutSliderForm(int currentThresholdSec, int[] timeoutSteps, Action<int> onChanged)
     {
@@ -252,6 +254,51 @@ internal sealed class TimeoutSliderForm : Form
     // Public
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // Taskbar position (handles auto-hide — WorkingArea gives ~full screen in that case)
+    // -------------------------------------------------------------------------
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AppBarData
+    {
+        public uint   cbSize;
+        public IntPtr hWnd;
+        public uint   uCallbackMessage;
+        public uint   uEdge;
+        public NativeRect rc;
+        public int    lParam;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect { public int Left, Top, Right, Bottom; }
+
+    [DllImport("shell32.dll")]
+    private static extern IntPtr SHAppBarMessage(uint dwMessage, ref AppBarData pData);
+
+    private const uint ABM_GETTASKBARPOS = 0x00000005;
+
+    /// <summary>
+    /// Returns the y bottom-boundary to position the slider above,
+    /// correctly handling auto-hiding taskbars whose WorkingArea reservation is only 1 px.
+    /// </summary>
+    private static int GetAvailableBottom(Point nearPoint)
+    {
+        var screen = Screen.FromPoint(nearPoint);
+
+        var abd = new AppBarData { cbSize = (uint)Marshal.SizeOf<AppBarData>() };
+        if (SHAppBarMessage(ABM_GETTASKBARPOS, ref abd) != IntPtr.Zero)
+        {
+            // Only apply when taskbar is on the bottom edge of this screen
+            if (abd.rc.Bottom == screen.Bounds.Bottom &&
+                abd.rc.Right  >  screen.Bounds.Left  &&
+                abd.rc.Left   <  screen.Bounds.Right)
+                return abd.rc.Top;
+        }
+
+        // Fallback: work area bottom (correct for docked non-auto-hide taskbar)
+        return screen.WorkingArea.Bottom;
+    }
+
     public void ShowAboveMouse()
     {
         // Prevent re-opening immediately after a hide from a click
@@ -266,13 +313,13 @@ internal sealed class TimeoutSliderForm : Form
         int h = (int)(GuiH * dpiScale);
 
         Point mouse = Cursor.Position;
+        int bottom  = GetAvailableBottom(mouse);
+        int margin  = (int)(TaskbarMargin * dpiScale);
 
-        // Position above taskbar
-        var workArea = Screen.GetWorkingArea(mouse);
         int x = mouse.X - w / 2;
-        int y = workArea.Bottom - h;
+        int y = bottom - h - margin;
 
-        Location  = new Point(x, y);
+        Location   = new Point(x, y);
         ClientSize = new Size(w, h);
         Show();
         Activate(); // needed so Deactivate fires on click-away
