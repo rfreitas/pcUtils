@@ -43,8 +43,8 @@ internal sealed class DarkSlider : Control
     private static readonly Color StepDot         = Color.FromArgb(0x44, 0x44, 0x44);
 
     private const int TrackW   = 4;   // track width in pixels
-    private const int ThumbR   = 8;   // thumb radius
-    private const int TrackPad = 14;  // top/bottom padding so thumb doesn't clip
+    private const int ThumbR   = 16;  // thumb radius
+    private const int TrackPad = 22;  // top/bottom padding so thumb doesn't clip
 
     public DarkSlider()
     {
@@ -55,7 +55,6 @@ internal sealed class DarkSlider : Control
             ControlStyles.ResizeRedraw,
             true);
         BackColor = BgColor;
-        Cursor    = Cursors.Hand;
     }
 
     private int TrackTop    => TrackPad;
@@ -132,9 +131,28 @@ internal sealed class DarkSlider : Control
         if (e.Button == MouseButtons.Left) { _dragging = true; Value = YToValue(e.Y); }
     }
 
+    private bool IsOverThumb(int x, int y)
+    {
+        int ty = ValueToY(_value);
+        int dx = x - CenterX;
+        int dy = y - ty;
+        return dx * dx + dy * dy <= ThumbR * ThumbR;
+    }
+
     protected override void OnMouseMove(MouseEventArgs e)
     {
-        if (_dragging) Value = YToValue(e.Y);
+        if (_dragging)
+        {
+            Value = YToValue(e.Y);
+            return;
+        }
+        bool over = IsOverThumb(e.X, e.Y);
+        if (over != _hover)
+        {
+            _hover  = over;
+            Cursor  = over ? Cursors.Hand : Cursors.Default;
+            Invalidate();
+        }
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -147,8 +165,12 @@ internal sealed class DarkSlider : Control
         Value += e.Delta > 0 ? 1 : -1;
     }
 
-    protected override void OnMouseEnter(EventArgs e) { _hover = true;  Invalidate(); }
-    protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        _hover = false;
+        Cursor = Cursors.Default;
+        Invalidate();
+    }
 }
 
 /// <summary>
