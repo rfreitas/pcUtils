@@ -313,11 +313,15 @@ internal sealed class TimeoutSliderForm : Form
         int h = (int)(GuiH * dpiScale);
 
         Point mouse = Cursor.Position;
-        int bottom  = GetAvailableBottom(mouse);
         int margin  = (int)(TaskbarMargin * dpiScale);
 
+        // When the tray icon is in the overflow (hidden icons) menu the cursor
+        // is already above the taskbar, so anchor to the cursor rather than the
+        // taskbar edge — whichever is higher wins.
+        int anchor = Math.Min(GetAvailableBottom(mouse), mouse.Y);
+
         int x = mouse.X - w / 2;
-        int y = bottom - h - margin;
+        int y = anchor - h - margin;
 
         Location   = new Point(x, y);
         ClientSize = new Size(w, h);
