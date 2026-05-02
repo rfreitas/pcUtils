@@ -17,6 +17,10 @@
             "approve": true,
             "matchCommandLine": true
         },
-        "dotnet test": true
+        "dotnet test": true,
+        "Add-Type": true,
+        "New-Object": true,
+        "New-IconBitmap": true,
+        "Save-AsIco": true
     }
 }

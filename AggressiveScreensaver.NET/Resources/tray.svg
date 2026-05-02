@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+  <!--
+    Monitor icon for AggressiveScreensaver tray.
+    Coordinate space: 32×32, white strokes on transparent background.
+    To regenerate tray.ico from this SVG, use Generate-TrayIco.ps1.
+  -->
+
+  <!-- Monitor body -->
+  <rect x="1" y="1" width="30" height="20"/>
+
+  <!-- Stand: neck + base -->
+  <line x1="16" y1="21" x2="16" y2="25.5"/>
+  <line x1="8"  y1="27" x2="24" y2="27"/>
+
+  <!--
+    Power button, center (16, 12.25), radius 5.
+    Arc: 300° sweep with 60° gap centred at 12-o'clock.
+      Start = 300° CW from 3-o'clock → (18.5,  7.92)
+      End   = 240° CW from 3-o'clock → (13.5,  7.92)
+    large-arc-flag=1, sweep-flag=1 (clockwise).
+  -->
+  <path d="M 18.5 7.92 A 5 5 0 1 1 13.5 7.92"/>
+
+  <!-- Power stem (fills the 60° gap, stops at circle edge) -->
+  <line x1="16" y1="4.75" x2="16" y2="7.25"/>
+</svg>
