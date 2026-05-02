@@ -20,6 +20,9 @@
     <EmbeddedResource Include="Resources\tray.ico" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\Shared.NET\StartupTaskService.cs" Link="Services\StartupTaskService.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>AggressiveScreensaver.NET.Tests</_Parameter1>
     </AssemblyAttribute>

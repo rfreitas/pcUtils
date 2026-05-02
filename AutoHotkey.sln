@@ -8,6 +8,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AhkRunner", "CommonScripts\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AggressiveScreensaver.NET", "AggressiveScreensaver.NET\AggressiveScreensaver.NET.csproj", "{0BD42DBE-557B-49A3-AF38-DB4AD24BDE41}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TaskbarReveal.NET", "TaskbarReveal.NET\TaskbarReveal.NET.csproj", "{77EB3197-2EDA-436C-8F36-0BF98E72919E}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AggressiveScreensaver.NET.Tests", "AggressiveScreensaver.NET.Tests\AggressiveScreensaver.NET.Tests.csproj", "{D4234822-C2DB-423F-888D-6B2D79334BEF}"
 EndProject
 Global
@@ -28,6 +30,10 @@ Global
 		{D4234822-C2DB-423F-888D-6B2D79334BEF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D4234822-C2DB-423F-888D-6B2D79334BEF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D4234822-C2DB-423F-888D-6B2D79334BEF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{77EB3197-2EDA-436C-8F36-0BF98E72919E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{77EB3197-2EDA-436C-8F36-0BF98E72919E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{77EB3197-2EDA-436C-8F36-0BF98E72919E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{77EB3197-2EDA-436C-8F36-0BF98E72919E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

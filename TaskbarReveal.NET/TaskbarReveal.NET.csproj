@@ -13,4 +13,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared.NET\StartupTaskService.cs" Link="Services\StartupTaskService.cs" />
+  </ItemGroup>
 </Project>

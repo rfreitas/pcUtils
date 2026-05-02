@@ -1,9 +1,11 @@
 using System;
 using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
 using AggressiveScreensaver.Forms;
 using AggressiveScreensaver.Input;
 using AggressiveScreensaver.Services;
+using Shared;
 
 namespace AggressiveScreensaver;
 
@@ -136,9 +138,13 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // -------------------------------------------------------------------------
     // Context menu
     // -------------------------------------------------------------------------
+    private const string TaskName = "AggressiveScreensaver";
+    private static readonly string ExePath = Path.Combine(AppContext.BaseDirectory, "AggressiveScreensaver.exe");
+    private const string TaskDescription = "Launches AggressiveScreensaver at logon with administrator privileges.";
+
     private ContextMenuStrip BuildContextMenu() =>
         TrayMenuFactory.Build(
-            startAtLogin:     StartupTaskService.IsInstalled(),
+            startAtLogin:     StartupTaskService.IsInstalled(TaskName),
             onBlacklist:      ShowBlacklistForm,
             onDebug:          ShowDebugForm,
             onStartupChanged: HandleStartupToggle,
@@ -147,8 +153,8 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     private bool HandleStartupToggle(bool wantEnabled)
     {
         bool success = wantEnabled
-            ? StartupTaskService.Install()
-            : StartupTaskService.Uninstall();
+            ? StartupTaskService.Install(TaskName, ExePath, TaskDescription, Logger.Log)
+            : StartupTaskService.Uninstall(TaskName, Logger.Log);
 
         if (!success)
             MessageBox.Show(

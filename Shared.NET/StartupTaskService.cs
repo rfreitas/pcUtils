@@ -2,29 +2,23 @@ using System;
 using System.Diagnostics;
 using System.IO;
 
-namespace AggressiveScreensaver.Services;
+namespace Shared;
 
 /// <summary>
-/// Creates / removes a Task Scheduler entry so the app launches at logon
-/// with highest privileges (matching the requireAdministrator manifest).
+/// Creates / removes a Task Scheduler entry so an app launches at logon
+/// with highest privileges (matching a requireAdministrator manifest).
 /// </summary>
 internal static class StartupTaskService
 {
-    private const string TaskName = "AggressiveScreensaver";
-
-    // -------------------------------------------------------------------------
-    // Public API
-    // -------------------------------------------------------------------------
-
-    public static bool IsInstalled()
+    public static bool IsInstalled(string taskName)
     {
         try
         {
             var psi = new ProcessStartInfo("schtasks.exe",
-                $"/Query /TN \"{TaskName}\" /FO LIST")
+                $"/Query /TN \"{taskName}\" /FO LIST")
             {
-                CreateNoWindow        = true,
-                UseShellExecute       = false,
+                CreateNoWindow         = true,
+                UseShellExecute        = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError  = true,
             };
@@ -32,36 +26,25 @@ internal static class StartupTaskService
             p.WaitForExit(5000);
             return p.ExitCode == 0;
         }
-        catch (Exception ex)
+        catch
         {
-            Logger.Log($"StartupTask.IsInstalled error: {ex.Message}");
             return false;
         }
     }
 
-    /// <summary>
-    /// Creates an ONLOGON task that runs the current exe with highest privileges.
-    /// Requires the process to already be elevated (requireAdministrator manifest).
-    /// </summary>
-    public static bool Install()
+    public static bool Install(string taskName, string exePath, string description, Action<string>? log = null)
     {
-        string exePath = Path.Combine(AppContext.BaseDirectory, "AggressiveScreensaver.exe");
-
-        // Build the XML-based task to get full control over RunLevel.
-        // schtasks /Create with /RL HIGHEST is simpler but doesn't always persist
-        // the run level reliably; an inline XML definition is the safest path.
-        string xml = BuildTaskXml(exePath, Environment.UserName);
-
-        string xmlFile = Path.Combine(Path.GetTempPath(), "AggressiveScreensaver_task.xml");
+        string xml     = BuildTaskXml(taskName, exePath, description, Environment.UserName);
+        string xmlFile = Path.Combine(Path.GetTempPath(), $"{taskName}_task.xml");
         try
         {
             File.WriteAllText(xmlFile, xml, System.Text.Encoding.Unicode);
 
             var psi = new ProcessStartInfo("schtasks.exe",
-                $"/Create /TN \"{TaskName}\" /XML \"{xmlFile}\" /F")
+                $"/Create /TN \"{taskName}\" /XML \"{xmlFile}\" /F")
             {
-                CreateNoWindow        = true,
-                UseShellExecute       = false,
+                CreateNoWindow         = true,
+                UseShellExecute        = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError  = true,
             };
@@ -72,16 +55,16 @@ internal static class StartupTaskService
 
             if (p.ExitCode != 0)
             {
-                Logger.Log($"StartupTask.Install failed (exit {p.ExitCode}): {stderr.Trim()}");
+                log?.Invoke($"StartupTask.Install failed (exit {p.ExitCode}): {stderr.Trim()}");
                 return false;
             }
 
-            Logger.Log($"StartupTask installed for \"{exePath}\".");
+            log?.Invoke($"StartupTask installed for \"{exePath}\".");
             return true;
         }
         catch (Exception ex)
         {
-            Logger.Log($"StartupTask.Install exception: {ex.Message}");
+            log?.Invoke($"StartupTask.Install exception: {ex.Message}");
             return false;
         }
         finally
@@ -90,15 +73,15 @@ internal static class StartupTaskService
         }
     }
 
-    public static bool Uninstall()
+    public static bool Uninstall(string taskName, Action<string>? log = null)
     {
         try
         {
             var psi = new ProcessStartInfo("schtasks.exe",
-                $"/Delete /TN \"{TaskName}\" /F")
+                $"/Delete /TN \"{taskName}\" /F")
             {
-                CreateNoWindow        = true,
-                UseShellExecute       = false,
+                CreateNoWindow         = true,
+                UseShellExecute        = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError  = true,
             };
@@ -109,27 +92,22 @@ internal static class StartupTaskService
 
             if (p.ExitCode != 0)
             {
-                Logger.Log($"StartupTask.Uninstall failed (exit {p.ExitCode}): {stderr.Trim()}");
+                log?.Invoke($"StartupTask.Uninstall failed (exit {p.ExitCode}): {stderr.Trim()}");
                 return false;
             }
 
-            Logger.Log("StartupTask removed.");
+            log?.Invoke("StartupTask removed.");
             return true;
         }
         catch (Exception ex)
         {
-            Logger.Log($"StartupTask.Uninstall exception: {ex.Message}");
+            log?.Invoke($"StartupTask.Uninstall exception: {ex.Message}");
             return false;
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Task XML builder
-    // -------------------------------------------------------------------------
-
-    private static string BuildTaskXml(string exePath, string userName)
+    private static string BuildTaskXml(string taskName, string exePath, string description, string userName)
     {
-        // Use the current user's domain\name so the task runs under the same account.
         string userDomain = string.IsNullOrEmpty(Environment.UserDomainName)
             ? Environment.MachineName
             : Environment.UserDomainName;
@@ -140,7 +118,7 @@ internal static class StartupTaskService
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Launches AggressiveScreensaver at logon with administrator privileges.</Description>
+    <Description>{description}</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
