@@ -7,7 +7,9 @@
       "WebSearch",
       "WebFetch(domain:microsoft.github.io)",
       "Bash(dotnet publish *)",
-      "Bash(dotnet test *)"
+      "Bash(dotnet test *)",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
     ]
   }
 }

@@ -1,5 +1,18 @@
 {
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$raw=[Console]::In.ReadToEnd(); $d=$raw|ConvertFrom-Json; $f=$d.tool_input.file_path; $ext=if($f){[IO.Path]::GetExtension($f).ToLower()}else{''}; $skip=@('.md','.json','.txt','.xml','.yaml','.yml','.toml','.ini','.cfg','.gitignore','.editorconfig',''); if($f -and $skip -notcontains $ext){ echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Code file modified. Before finishing: run automated tests (build_dotnet_app for .NET/.cs changes, run_ahk_tests for .ahk changes). If UI or visual rendering changed, also run screenshot tests via the render test infrastructure (RenderHelper).\"}}'  }",
+            "shell": "powershell",
+            "statusMessage": "Checking test coverage..."
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
