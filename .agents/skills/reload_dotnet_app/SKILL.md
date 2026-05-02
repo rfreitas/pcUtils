@@ -5,34 +5,27 @@ description: Stops the running AggressiveScreensaver.NET process, rebuilds it, a
 
 # Reload .NET App
 
-Use this skill after making code changes to AggressiveScreensaver.NET and wanting to test them live.
+Use this skill after making code changes to a .NET WinForms app and wanting to test it live.
 
-## Execution
+## Script
 
-Run all three steps in sequence — stop, build, launch.
+`CommonScripts/ReloadDotNetApp.ps1` — generic script that auto-detects the exe name from the `.csproj`, stops the running process, rebuilds (Debug), and relaunches with `-Verb RunAs`.
 
-### 1. Stop the running instance
+## Usage
+
 ```powershell
-Stop-Process -Name "AggressiveScreensaver" -Force -ErrorAction SilentlyContinue
+& ".\CommonScripts\ReloadDotNetApp.ps1" -ProjectDir "AggressiveScreensaver.NET"
 ```
 
-### 2. Rebuild (Debug)
-```powershell
-dotnet build AggressiveScreensaver.NET/ -c Debug 2>&1 | Select-Object -Last 4
-```
-
-### 3. Relaunch with elevation
-```powershell
-Start-Process "AggressiveScreensaver.NET\bin\Debug\net8.0-windows\win-x64\AggressiveScreensaver.exe" -Verb RunAs
-```
-
-## One-liner
-```powershell
-Stop-Process -Name "AggressiveScreensaver" -Force -ErrorAction SilentlyContinue; dotnet build AggressiveScreensaver.NET/ -c Debug 2>&1 | Select-Object -Last 4; Start-Process "AggressiveScreensaver.NET\bin\Debug\net8.0-windows\win-x64\AggressiveScreensaver.exe" -Verb RunAs
-```
+Pass the project folder (relative to the repo root or absolute). The script:
+1. Reads `<AssemblyName>` from the `.csproj`
+2. Stops any process with that name
+3. Runs `dotnet build` on the `.csproj`
+4. Resolves the Debug output exe (handles both flat and RID sub-folder layouts)
+5. Launches with `-Verb RunAs` for UAC elevation
 
 ## Notes
-- `-Verb RunAs` is required — the app needs admin rights for its screensaver/power management features
-- Always stop first; building while the process is running causes file-lock MSB3027 errors
+- `-Verb RunAs` is required — the app needs admin rights for powercfg/screensaver features
+- Always stop before building — the output `.exe` is locked while the app runs (MSB3027)
 - Logs are written to `%LOCALAPPDATA%\AggressiveScreensaver\AggressiveScreensaver.log`
-- Native AVs (`0xc0000005`) are not caught by managed handlers — check Event Viewer if the app dies silently
+- Native AVs (`0xc0000005`) bypass managed handlers — check Event Viewer if the app dies silently
