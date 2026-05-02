@@ -17,3 +17,7 @@ AggressiveScreensaver.NET/bin/
 AggressiveScreensaver.NET/obj/
 AggressiveScreensaver.NET.Tests/bin/
 AggressiveScreensaver.NET.Tests/obj/
+
+# TaskbarReveal.NET build artifacts
+TaskbarReveal.NET/bin/
+TaskbarReveal.NET/obj/

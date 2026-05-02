@@ -1,0 +1,82 @@
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+
+namespace TaskbarReveal;
+
+internal sealed class TrayApp : ApplicationContext, IDisposable
+{
+    private readonly TaskbarService _taskbar;
+    private readonly NotifyIcon     _tray;
+
+    public TrayApp()
+    {
+        _taskbar = new TaskbarService();
+
+        _tray = new NotifyIcon
+        {
+            Icon             = SystemIcons.Application,
+            Text             = "Taskbar Reveal",
+            Visible          = true,
+            ContextMenuStrip = BuildMenu(),
+        };
+    }
+
+    private ContextMenuStrip BuildMenu()
+    {
+        const string space = "   ";
+        const string check = "✓ ";
+
+        var menu = new ContextMenuStrip
+        {
+            Renderer        = new DarkMenuRenderer(),
+            ShowCheckMargin = false,
+            ShowImageMargin = false,
+        };
+
+        menu.Items.Add(new ToolStripMenuItem(" Taskbar Reveal") { Enabled = false });
+        menu.Items.Add(new ToolStripSeparator());
+
+        // Auto Hide toggle
+        bool autoHide = _taskbar.AutoHide;
+        var autoHideItem = new ToolStripMenuItem((autoHide ? check : space) + "Auto Hide Taskbar")
+        {
+            CheckOnClick = true,
+            Checked      = autoHide,
+        };
+        autoHideItem.CheckedChanged += (sender, _) =>
+        {
+            if (sender is not ToolStripMenuItem item) return;
+            item.Text = (item.Checked ? check : space) + "Auto Hide Taskbar";
+            _taskbar.AutoHide = item.Checked;
+        };
+        menu.Items.Add(autoHideItem);
+
+        menu.Items.Add(space + "Hide Taskbar", null, (_, _) => _taskbar.HideTaskbar());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(space + "Exit", null, (_, _) => Exit());
+
+        return menu;
+    }
+
+    private void Exit()
+    {
+        _taskbar.Dispose();
+        _tray.Visible = false;
+        _tray.Dispose();
+        Application.Exit();
+    }
+
+    private bool _disposed;
+    protected override void Dispose(bool disposing)
+    {
+        if (!_disposed && disposing)
+        {
+            _disposed = true;
+            _taskbar.Dispose();
+            _tray.Visible = false;
+            _tray.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+}
