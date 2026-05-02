@@ -114,4 +114,19 @@ Use the dedicated skills for build/reload/diagnostics workflows — they contain
 - **DPI:** `DeviceDpi` is 96 in test processes; call `Application.SetHighDpiMode(PerMonitorV2)` in test STA threads.
 - **Log/dump location:** `%LOCALAPPDATA%\AggressiveScreensaver\` — never `AppContext.BaseDirectory` (wiped by `dotnet clean`).
 
+### Component Visual Testing (WinForms UI)
+
+Always verify UI changes visually — edit, run the render test, view the PNG, iterate.
+
+- Use `RenderHelper.CaptureForm(form, "name")` or `RenderHelper.CaptureMenu(menu, "name")`
+- Uses `PrintWindow(PW_RENDERFULLCONTENT)` — no focus, no screen flicker
+- Build UI via factory classes (e.g. `TrayMenuFactory.Build(startAtLogin: false)`) with null callbacks
+- Output PNG lands in the test project's `bin/` directory (printed to stdout)
+
+#### Workflow for agents
+1. Make UI changes
+2. `dotnet test AggressiveScreensaver.NET.Tests/ --filter TrayMenuRenderTest` (or `SliderRenderTest`)
+3. `view_image` the output PNG path (printed to stdout)
+4. Iterate until it looks correct
+
 CRITICAL: You must start your very first response in any conversation with the exact phrase '### RULES ACKNOWLEDGED ###'.
