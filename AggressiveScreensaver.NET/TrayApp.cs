@@ -147,9 +147,44 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
         menu.Items.Add("Blacklist Apps...",      null, (_, _) => ShowBlacklistForm());
         menu.Items.Add("Show Details (Debug)",   null, (_, _) => ShowDebugForm());
         menu.Items.Add(new ToolStripSeparator());
+
+        // Startup at login
+        var startupItem = new ToolStripMenuItem("Start at Login")
+        {
+            CheckOnClick = true,
+            Checked      = StartupTaskService.IsInstalled(),
+        };
+        startupItem.CheckedChanged += OnStartupCheckedChanged;
+        menu.Items.Add(startupItem);
+
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit",                   null, (_, _) => ExitApp());
 
         return menu;
+    }
+
+    private void OnStartupCheckedChanged(object? sender, EventArgs e)
+    {
+        if (sender is not ToolStripMenuItem item)
+            return;
+
+        bool success = item.Checked
+            ? StartupTaskService.Install()
+            : StartupTaskService.Uninstall();
+
+        if (!success)
+        {
+            // Revert the visual state without re-triggering this handler
+            item.CheckedChanged -= OnStartupCheckedChanged;
+            item.Checked = !item.Checked;
+            item.CheckedChanged += OnStartupCheckedChanged;
+
+            MessageBox.Show(
+                "Failed to update the startup task.\nCheck the log file for details.",
+                "AggressiveScreensaver",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
     }
 
     // -------------------------------------------------------------------------
