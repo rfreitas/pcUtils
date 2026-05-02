@@ -138,8 +138,13 @@ internal sealed class PowercfgService : IDisposable
             }
         };
         proc.Start();
+        // Read stderr asynchronously to prevent pipe-buffer deadlock: if powercfg
+        // writes to stderr while we block on ReadToEnd(stdout), the stderr buffer
+        // fills, powercfg blocks, and the UI thread hangs indefinitely.
+        var stderrTask = proc.StandardError.ReadToEndAsync();
         string output = proc.StandardOutput.ReadToEnd();
         proc.WaitForExit(10_000); // 10 s hard limit
+        stderrTask.GetAwaiter().GetResult(); // drain stderr; result is discarded
         return output;
     }
 
