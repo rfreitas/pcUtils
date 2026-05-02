@@ -12,22 +12,26 @@ namespace AggressiveScreensaver.NET.Tests;
 /// </summary>
 public class TrayMenuRenderTest
 {
-    [Fact]
-    public void RenderMenu_StartAtLogin_Unchecked_SavesToPng()
+    [Theory]
+    [InlineData(1.0f, "100")]
+    [InlineData(1.5f, "150")]
+    public void RenderMenu_StartAtLogin_Unchecked_SavesToPng(float scale, string dpiLabel)
     {
         using var menu = TrayMenuFactory.Build(startAtLogin: false);
-        string path = RenderHelper.CaptureMenu(menu, "tray_menu_startup_off");
+        string path = RenderHelper.CaptureMenu(menu, $"tray_menu_startup_off_{dpiLabel}", scaleFactor: scale);
 
         Assert.True(File.Exists(path), $"Expected PNG at {path}");
         Assert.True(new FileInfo(path).Length > 0, "PNG file is empty");
         Console.WriteLine($"View: {path}");
     }
 
-    [Fact]
-    public void RenderMenu_StartAtLogin_Checked_SavesToPng()
+    [Theory]
+    [InlineData(1.0f, "100")]
+    [InlineData(1.5f, "150")]
+    public void RenderMenu_StartAtLogin_Checked_SavesToPng(float scale, string dpiLabel)
     {
         using var menu = TrayMenuFactory.Build(startAtLogin: true);
-        string path = RenderHelper.CaptureMenu(menu, "tray_menu_startup_on");
+        string path = RenderHelper.CaptureMenu(menu, $"tray_menu_startup_on_{dpiLabel}", scaleFactor: scale);
 
         Assert.True(File.Exists(path), $"Expected PNG at {path}");
         Assert.True(new FileInfo(path).Length > 0, "PNG file is empty");

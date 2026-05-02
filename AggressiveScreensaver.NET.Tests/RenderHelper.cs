@@ -12,14 +12,20 @@ namespace AggressiveScreensaver.NET.Tests;
 internal static class RenderHelper
 {
     // Set DPI mode exactly once per process before any form is created.
-    // SystemAware = all windows use the primary monitor DPI consistently.
+    // PerMonitorV2 allows us to simulate different DPIs per-window via P/Invoke.
     static RenderHelper()
     {
-        try { Application.SetHighDpiMode(HighDpiMode.SystemAware); } catch { }
+        try { Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); } catch { }
     }
 
     [DllImport("user32.dll")]
     private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
+
+    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    private static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (IntPtr)(-4);
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
@@ -67,13 +73,25 @@ internal static class RenderHelper
     /// <summary>
     /// Shows a ContextMenuStrip on a tiny invisible host form, waits for it to
     /// render, then captures the menu popup.
+    /// <param name="scaleFactor">E.g. 1.0f for 96 DPI, 1.5f for 144 DPI (150%).</param>
     /// </summary>
-    public static string CaptureMenu(ContextMenuStrip menu, string fileNameWithoutExtension, int settleMs = 400)
+    public static string CaptureMenu(ContextMenuStrip menu, string fileNameWithoutExtension, int settleMs = 400, float scaleFactor = 1.0f)
     {
         string? outPath = null;
 
         var thread = new Thread(() =>
         {
+            // Force the thread into PerMonitorV2 mode so the window can accept custom DPI scaling
+            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+            // If a scale is requested, we scale the default 96-DPI font manually.
+            // (Simulating a monitor DPI change for a borderless invisible window is notoriously
+            // hard in WinForms test threads, so we simulate the *effect* of high DPI on the menu).
+            if (scaleFactor != 1.0f)
+            {
+                menu.Font = new Font(menu.Font.FontFamily, menu.Font.Size * scaleFactor, menu.Font.Style);
+            }
+
             // Tiny invisible host form to anchor the popup
             using var host = new Form
             {
