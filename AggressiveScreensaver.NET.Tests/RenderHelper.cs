@@ -11,6 +11,13 @@ namespace AggressiveScreensaver.NET.Tests;
 /// </summary>
 internal static class RenderHelper
 {
+    // Central DPI scale list — edit here to affect ALL render tests.
+    public static TheoryData<float, string> ScaleFactors { get; } = new()
+    {
+        { 1.0f, "100" },
+        { 1.5f, "150" },
+    };
+
     // Set DPI mode exactly once per process before any form is created.
     // PerMonitorV2 allows us to simulate different DPIs per-window via P/Invoke.
     static RenderHelper()

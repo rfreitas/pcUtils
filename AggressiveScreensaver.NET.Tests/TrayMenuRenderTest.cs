@@ -13,8 +13,7 @@ namespace AggressiveScreensaver.NET.Tests;
 public class TrayMenuRenderTest
 {
     [Theory]
-    [InlineData(1.0f, "100")]
-    [InlineData(1.5f, "150")]
+    [MemberData(nameof(RenderHelper.ScaleFactors), MemberType = typeof(RenderHelper))]
     public void RenderMenu_StartAtLogin_Unchecked_SavesToPng(float scale, string dpiLabel)
     {
         using var menu = TrayMenuFactory.Build(startAtLogin: false);
@@ -26,8 +25,7 @@ public class TrayMenuRenderTest
     }
 
     [Theory]
-    [InlineData(1.0f, "100")]
-    [InlineData(1.5f, "150")]
+    [MemberData(nameof(RenderHelper.ScaleFactors), MemberType = typeof(RenderHelper))]
     public void RenderMenu_StartAtLogin_Checked_SavesToPng(float scale, string dpiLabel)
     {
         using var menu = TrayMenuFactory.Build(startAtLogin: true);

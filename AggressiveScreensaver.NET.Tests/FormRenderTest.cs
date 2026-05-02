@@ -10,8 +10,7 @@ namespace AggressiveScreensaver.NET.Tests;
 public class FormRenderTest
 {
     [Theory]
-    [InlineData(1.0f, "100")]
-    [InlineData(1.5f, "150")]
+    [MemberData(nameof(RenderHelper.ScaleFactors), MemberType = typeof(RenderHelper))]
     public void Render_BlacklistForm_SavesToPng(float scale, string dpiLabel)
     {
         // Mock IniStore
@@ -31,8 +30,7 @@ public class FormRenderTest
     }
 
     [Theory]
-    [InlineData(1.0f, "100")]
-    [InlineData(1.5f, "150")]
+    [MemberData(nameof(RenderHelper.ScaleFactors), MemberType = typeof(RenderHelper))]
     public void Render_DebugForm_SavesToPng(float scale, string dpiLabel)
     {
         string tempIni = Path.GetTempFileName();
