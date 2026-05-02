@@ -100,6 +100,12 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // -------------------------------------------------------------------------
     private void OnAgentIdleTicked(object? sender, EventArgs e)
     {
+        // A screen-blocking app (e.g. video player) counts as activity: reset the
+        // idle counter while it is present so the full threshold must elapse again
+        // after it stops before we blank.
+        if (!string.IsNullOrEmpty(_powercfg.BlockingScreenApps))
+            _agentIdle.ResetActivity();
+
         bool shouldBlank =
             _agentIdle.AgentIdleSeconds >= _blankThresholdSec &&
             string.IsNullOrEmpty(_powercfg.BlockingScreenApps);
