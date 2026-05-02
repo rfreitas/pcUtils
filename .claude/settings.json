@@ -11,6 +11,16 @@
             "statusMessage": "Checking test coverage..."
           }
         ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$raw=[Console]::In.ReadToEnd(); $d=$raw|ConvertFrom-Json; $f=$d.tool_input.file_path; if($f){ git ls-files --error-unmatch $f 2>&1 | Out-Null; if($LASTEXITCODE -ne 0){ git check-ignore -q $f 2>&1 | Out-Null; if($LASTEXITCODE -ne 0){ Write-Output '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"New untracked file created. Ask the user whether it should be added to .gitignore.\"}}' } } }",
+            "shell": "powershell"
+          }
+        ]
       }
     ],
     "SessionStart": [
