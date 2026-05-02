@@ -11,6 +11,13 @@ namespace AggressiveScreensaver.NET.Tests;
 /// </summary>
 internal static class RenderHelper
 {
+    // Set DPI mode exactly once per process before any form is created.
+    // SystemAware = all windows use the primary monitor DPI consistently.
+    static RenderHelper()
+    {
+        try { Application.SetHighDpiMode(HighDpiMode.SystemAware); } catch { }
+    }
+
     [DllImport("user32.dll")]
     private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
 
@@ -35,8 +42,6 @@ internal static class RenderHelper
 
         var thread = new Thread(() =>
         {
-            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-
             form.StartPosition = FormStartPosition.Manual;
             form.Location = new Point(OFF_SCREEN_X, OFF_SCREEN_Y);
 
@@ -69,8 +74,6 @@ internal static class RenderHelper
 
         var thread = new Thread(() =>
         {
-            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-
             // Tiny invisible host form to anchor the popup
             using var host = new Form
             {

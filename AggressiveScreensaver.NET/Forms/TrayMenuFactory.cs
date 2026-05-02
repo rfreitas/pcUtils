@@ -25,18 +25,28 @@ internal static class TrayMenuFactory
         Func<bool, bool>? onStartupChanged = null,
         Action?    onExit           = null)
     {
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenuStrip
+        {
+            Renderer        = new DarkMenuRenderer(),
+            // Turn off all margins to avoid WinForms High-DPI layout bugs entirely.
+            // We'll use text characters ("✓ " vs "   ") for perfect alignment.
+            ShowCheckMargin = false,
+            ShowImageMargin = false,
+        };
+
+        const string space = "   ";
+        const string check = "✓ ";
 
         // Header
-        menu.Items.Add(new ToolStripMenuItem("Power Request Monitor") { Enabled = false });
+        menu.Items.Add(new ToolStripMenuItem(" Power Request Monitor") { Enabled = false });
         menu.Items.Add(new ToolStripSeparator());
 
-        menu.Items.Add("Blacklist Apps…",    null, (_, _) => onBlacklist?.Invoke());
-        menu.Items.Add("Show Details (Debug)", null, (_, _) => onDebug?.Invoke());
+        menu.Items.Add(space + "Blacklist Apps…",    null, (_, _) => onBlacklist?.Invoke());
+        menu.Items.Add(space + "Show Details (Debug)", null, (_, _) => onDebug?.Invoke());
         menu.Items.Add(new ToolStripSeparator());
 
         // Start at Login checkbox
-        var startupItem = new ToolStripMenuItem("Start at Login")
+        var startupItem = new ToolStripMenuItem((startAtLogin ? check : space) + "Start at Login")
         {
             CheckOnClick = true,
             Checked      = startAtLogin,
@@ -49,6 +59,8 @@ internal static class TrayMenuFactory
             {
                 if (reverting || sender is not ToolStripMenuItem item) return;
 
+                item.Text = (item.Checked ? check : space) + "Start at Login";
+
                 bool ok = onStartupChanged(item.Checked);
                 if (!ok)
                 {
@@ -58,10 +70,19 @@ internal static class TrayMenuFactory
                 }
             };
         }
+        else
+        {
+            // For render-only tests
+            startupItem.CheckedChanged += (sender, _) =>
+            {
+                if (sender is ToolStripMenuItem item)
+                    item.Text = (item.Checked ? check : space) + "Start at Login";
+            };
+        }
 
         menu.Items.Add(startupItem);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Exit", null, (_, _) => onExit?.Invoke());
+        menu.Items.Add(space + "Exit", null, (_, _) => onExit?.Invoke());
 
         return menu;
     }
