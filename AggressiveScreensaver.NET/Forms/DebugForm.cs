@@ -56,19 +56,6 @@ internal sealed class DebugForm : Form
                 $"Raw powercfg output:\r\n{(string.IsNullOrEmpty(rawOutput) ? "(empty)" : rawOutput)}";
         };
 
-        var close = new Button
-        {
-            Text      = "Close",
-            Dock      = DockStyle.Bottom,
-            Height    = 30,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(0x44, 0x44, 0x44),
-            ForeColor = Color.FromArgb(0xCC, 0xCC, 0xCC),
-        };
-        close.FlatAppearance.BorderColor = Color.FromArgb(0x88, 0x88, 0x88);
-        close.Click += (_, _) => Close();
-        Controls.Add(close);
-        AcceptButton = close;
     }
 
     private static string RunPowercfg()

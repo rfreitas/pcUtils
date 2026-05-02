@@ -77,6 +77,7 @@ internal sealed class BlacklistForm : Form
                     Checked   = isBlacklisted,
                     ForeColor = Color.FromArgb(0xCC, 0xCC, 0xCC),
                     BackColor = Color.Transparent,
+                    UseVisualStyleBackColor = false,
                     AutoSize  = true,
                     Width     = 390,
                 };
@@ -86,19 +87,6 @@ internal sealed class BlacklistForm : Form
         }
 
         Controls.Add(panel);
-
-        var close = new Button
-        {
-            Text     = "Close",
-            Bounds   = new Rectangle(160, 360, 100, 28),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(0x44, 0x44, 0x44),
-            ForeColor = Color.FromArgb(0xCC, 0xCC, 0xCC),
-        };
-        close.FlatAppearance.BorderColor = Color.FromArgb(0x88, 0x88, 0x88);
-        close.Click += (_, _) => Close();
-        Controls.Add(close);
-        AcceptButton = close;
     }
 
     private void OnCheckChanged(object? sender, EventArgs e)

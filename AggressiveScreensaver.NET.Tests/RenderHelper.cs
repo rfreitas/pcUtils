@@ -15,7 +15,12 @@ internal static class RenderHelper
     // PerMonitorV2 allows us to simulate different DPIs per-window via P/Invoke.
     static RenderHelper()
     {
-        try { Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); } catch { }
+        try 
+        { 
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+        } catch { }
     }
 
     [DllImport("user32.dll")]
@@ -38,23 +43,39 @@ internal static class RenderHelper
     private const int OFF_SCREEN_Y = -4096;
 
     /// <summary>
-    /// Shows <paramref name="form"/> off-screen on an STA thread, waits for it to
-    /// fully paint, captures it with PrintWindow, then closes it.
+    /// Shows the form returned by <paramref name="formFactory"/> off-screen on an STA thread,
+    /// waits for it to fully paint, captures it with PrintWindow, then closes it.
     /// Returns the absolute path of the saved PNG.
     /// </summary>
-    public static string CaptureForm(Form form, string fileNameWithoutExtension, int settleMs = 400)
+    public static string CaptureForm(Func<Form> formFactory, string fileNameWithoutExtension, int settleMs = 400, float scaleFactor = 1.0f)
     {
         string? outPath = null;
 
         var thread = new Thread(() =>
         {
+            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            
+            using Form form = formFactory();
             form.StartPosition = FormStartPosition.Manual;
             form.Location = new Point(OFF_SCREEN_X, OFF_SCREEN_Y);
 
-            var timer = new System.Windows.Forms.Timer { Interval = settleMs };
+            // Simulate high DPI scaling manually if requested, since the thread DPI context
+            // trick alone doesn't trigger WinForms auto-scaling for off-screen test forms.
+            if (scaleFactor != 1.0f)
+            {
+                form.Scale(new SizeF(scaleFactor, scaleFactor));
+                form.Font = new Font(form.Font.FontFamily, form.Font.Size * scaleFactor, form.Font.Style);
+            }
+
+            // Force a layout pass so things like AutoSize labels don't get cropped
+            form.Show();
+            Application.DoEvents();
+
+            var timer = new System.Windows.Forms.Timer { Interval = Math.Max(50, settleMs) };
             timer.Tick += (_, _) =>
             {
                 timer.Stop();
+                Application.DoEvents(); // One last pump before snapping
                 outPath = Snap(form, fileNameWithoutExtension);
                 form.Close();
             };
@@ -84,11 +105,10 @@ internal static class RenderHelper
             // Force the thread into PerMonitorV2 mode so the window can accept custom DPI scaling
             SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-            // If a scale is requested, we scale the default 96-DPI font manually.
-            // (Simulating a monitor DPI change for a borderless invisible window is notoriously
-            // hard in WinForms test threads, so we simulate the *effect* of high DPI on the menu).
+            // Manual scale to simulate High DPI
             if (scaleFactor != 1.0f)
             {
+                menu.Scale(new SizeF(scaleFactor, scaleFactor));
                 menu.Font = new Font(menu.Font.FontFamily, menu.Font.Size * scaleFactor, menu.Font.Style);
             }
 
