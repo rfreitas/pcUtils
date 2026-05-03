@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!--
+    Taskbar reveal icon for TaskbarReveal tray.
+    Coordinate space: 32×32, white on transparent background.
+    To regenerate tray.ico from this SVG, use Generate-TrayIco.ps1.
+  -->
+
+  <!-- Upward chevron -->
+  <polyline points="8,18 16,8 24,18" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Taskbar bar with dot cutouts -->
+  <path fill="white" fill-rule="evenodd" d="M 4,20 L 28,20 Q 30,20 30,22 L 30,28 Q 30,30 28,30 L 4,30 Q 2,30 2,28 L 2,22 Q 2,20 4,20 Z M 6,25 A 2,2 0 1 0 10,25 A 2,2 0 1 0 6,25 Z M 14,25 A 2,2 0 1 0 18,25 A 2,2 0 1 0 14,25 Z M 22,25 A 2,2 0 1 0 26,25 A 2,2 0 1 0 22,25 Z"/>
+</svg>

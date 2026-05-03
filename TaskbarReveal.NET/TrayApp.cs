@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Reflection;
 using System.Windows.Forms;
 using Shared;
 
@@ -21,7 +22,7 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
 
         _tray = new NotifyIcon
         {
-            Icon             = SystemIcons.Application,
+            Icon             = LoadTrayIcon(),
             Text             = "Taskbar Reveal",
             Visible          = true,
             ContextMenuStrip = BuildMenu(),
@@ -94,6 +95,19 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
         menu.Items.Add(space + "Exit", null, (_, _) => Exit());
 
         return menu;
+    }
+
+    private static Icon LoadTrayIcon()
+    {
+        try
+        {
+            using var stream = Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("TaskbarReveal.Resources.tray.ico");
+            if (stream is not null)
+                return new Icon(stream);
+        }
+        catch { }
+        return SystemIcons.Application;
     }
 
     private void Exit()
