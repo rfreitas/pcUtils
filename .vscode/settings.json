@@ -22,5 +22,6 @@
         "New-Object": true,
         "New-IconBitmap": true,
         "Save-AsIco": true
-    }
+    },
+    "dotrush.roslyn.projectOrSolutionFiles": []
 }

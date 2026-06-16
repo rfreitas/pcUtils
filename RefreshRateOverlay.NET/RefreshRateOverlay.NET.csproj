@@ -3,10 +3,11 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <AssemblyName>TaskbarReveal</AssemblyName>
-    <RootNamespace>TaskbarReveal</RootNamespace>
+    <AssemblyName>RefreshRateOverlay</AssemblyName>
+    <RootNamespace>RefreshRateOverlay</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <PublishTrimmed>false</PublishTrimmed>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -16,5 +17,13 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources\tray.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared.NET\StartupTaskService.cs" Link="Services\StartupTaskService.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>RefreshRateOverlay.NET.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 </Project>

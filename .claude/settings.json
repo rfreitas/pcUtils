@@ -1,4 +1,27 @@
 {
+  "permissions": {
+    "allow": [
+      "PowerShell(& \".\\\\CommonScripts\\\\ReloadDotNetApp.ps1\" -ProjectDir \"TaskbarReveal.NET\")",
+      "PowerShell(Stop-Process -Name \"TaskbarReveal\" -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(dotnet build TaskbarReveal.NET/ -c Debug 2>&1)",
+      "PowerShell(dir \"c:\\\\Users\\\\ricfr\\\\Documents\\\\AutoHotkey\\\\RefreshRateOverlay\" -Recurse | Where-Object { -not $_.PSIsContainer } | Select-Object FullName)",
+      "PowerShell(& \".\\\\CommonScripts\\\\ReloadDotNetApp.ps1\" -ProjectDir \"AggressiveScreensaver.NET\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\ricfr\\\\Documents\\\\AutoHotkey\\\\RefreshRateOverlay.NET\\\\Services\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\ricfr\\\\Documents\\\\AutoHotkey\\\\RefreshRateOverlay.NET\\\\Forms\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\ricfr\\\\Documents\\\\AutoHotkey\\\\RefreshRateOverlay.NET\\\\Rendering\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\ricfr\\\\Documents\\\\AutoHotkey\\\\RefreshRateOverlay.NET\\\\Resources\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\ricfr\\\\Documents\\\\AutoHotkey\\\\RefreshRateOverlay.NET.Tests\")",
+      "PowerShell(Stop-Process -Name \"RefreshRateOverlay\" -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(dotnet build \"RefreshRateOverlay.NET/\" -c Debug 2>&1)",
+      "PowerShell(dotnet test \"RefreshRateOverlay.NET.Tests/\" --verbosity normal 2>&1)",
+      "PowerShell(Start-Process \"RefreshRateOverlay.NET\\\\bin\\\\Debug\\\\net8.0-windows\\\\win-x64\\\\RefreshRateOverlay.exe\")",
+      "PowerShell(dotnet test \"RefreshRateOverlay.NET.Tests/\" --filter \"OverlayFormRenderTest|TrayMenuRenderTest\" --verbosity quiet 2>&1)",
+      "PowerShell(dotnet test \"RefreshRateOverlay.NET.Tests/\" --filter \"OverlayFormRenderTest\" --verbosity quiet 2>&1)",
+      "PowerShell(dotnet test RefreshRateOverlay.NET.Tests/ --verbosity normal 2>&1)",
+      "PowerShell(dotnet build RefreshRateOverlay.NET/ -c Debug 2>&1)",
+      "PowerShell(Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; Start-Sleep -Milliseconds 1500; $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object System.Drawing.Bitmap\\($screen.Width, $screen.Height\\); $g = [System.Drawing.Graphics]::FromImage\\($bmp\\); $g.CopyFromScreen\\(0, 0, 0, 0, $screen.Size\\); $g.Dispose\\(\\); $bmp.Save\\(\"C:\\\\Users\\\\ricfr\\\\AppData\\\\Local\\\\Temp\\\\overlay_live.png\"\\); $bmp.Dispose\\(\\); Write-Host \"Saved\")"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
@@ -46,11 +69,6 @@
           }
         ]
       }
-    ]
-  },
-  "permissions": {
-    "allow": [
-      "PowerShell(& \".\\\\CommonScripts\\\\ReloadDotNetApp.ps1\" -ProjectDir \"TaskbarReveal.NET\")"
     ]
   }
 }
