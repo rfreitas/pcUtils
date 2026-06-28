@@ -20,10 +20,12 @@ internal static class TrayMenuFactory
     /// <param name="onExit">Callback for "Exit". Pass null for render-only tests.</param>
     public static ContextMenuStrip Build(
         bool       startAtLogin,
-        Action?    onBlacklist      = null,
-        Action?    onDebug          = null,
-        Func<bool, bool>? onStartupChanged = null,
-        Action?    onExit           = null)
+        bool       suppressFullscreen      = false,
+        Action?    onBlacklist             = null,
+        Action?    onDebug                 = null,
+        Func<bool, bool>? onStartupChanged         = null,
+        Func<bool, bool>? onSuppressFullscreenChanged = null,
+        Action?    onExit                  = null)
     {
         var menu = new ContextMenuStrip
         {
@@ -66,6 +68,7 @@ internal static class TrayMenuFactory
                 {
                     reverting = true;
                     item.Checked = !item.Checked;
+                    item.Text = (item.Checked ? check : space) + "Start at Login";
                     reverting = false;
                 }
             };
@@ -81,6 +84,43 @@ internal static class TrayMenuFactory
         }
 
         menu.Items.Add(startupItem);
+
+        // Suppress in Fullscreen checkbox
+        var fullscreenItem = new ToolStripMenuItem((suppressFullscreen ? check : space) + "Suppress in Fullscreen")
+        {
+            CheckOnClick = true,
+            Checked      = suppressFullscreen,
+        };
+
+        if (onSuppressFullscreenChanged is not null)
+        {
+            bool reverting = false;
+            fullscreenItem.CheckedChanged += (sender, _) =>
+            {
+                if (reverting || sender is not ToolStripMenuItem item) return;
+
+                item.Text = (item.Checked ? check : space) + "Suppress in Fullscreen";
+
+                bool ok = onSuppressFullscreenChanged(item.Checked);
+                if (!ok)
+                {
+                    reverting = true;
+                    item.Checked = !item.Checked;
+                    item.Text = (item.Checked ? check : space) + "Suppress in Fullscreen";
+                    reverting = false;
+                }
+            };
+        }
+        else
+        {
+            fullscreenItem.CheckedChanged += (sender, _) =>
+            {
+                if (sender is ToolStripMenuItem item)
+                    item.Text = (item.Checked ? check : space) + "Suppress in Fullscreen";
+            };
+        }
+
+        menu.Items.Add(fullscreenItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(space + "Exit", null, (_, _) => onExit?.Invoke());
 

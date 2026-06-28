@@ -31,9 +31,11 @@ internal sealed class BlackOverlayManager
     // -------------------------------------------------------------------------
     private readonly List<Form> _overlays = [];
     private bool _isBlanked;
+    private long _shownAt;
     private readonly Action _onActivityReset;   // called after cleanup
 
     public bool IsBlanked => _isBlanked;
+    public long ShownDurationMs => _isBlanked ? Environment.TickCount64 - _shownAt : long.MaxValue;
 
     public BlackOverlayManager(Action onActivityReset)
     {
@@ -82,6 +84,7 @@ internal sealed class BlackOverlayManager
             {
                 ShowCursor(false);
                 SetTaskbarsVisible(false);
+                _shownAt   = Environment.TickCount64;
                 _isBlanked = true;
             }
         }

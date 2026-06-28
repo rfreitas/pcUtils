@@ -77,6 +77,9 @@ internal sealed class JoystickMonitor
     /// <summary>
     /// Returns true if any joystick has meaningful activity since the last call.
     /// </summary>
+    // TODO: investigate crash on virtual controller app disconnect — device removal
+    // between the connected-list cache refresh and the joyGetPosEx/joyGetDevCaps
+    // calls may throw or corrupt state. Add defensive handling / re-enumerate on error.
     public bool HasActivity()
     {
         long now = Environment.TickCount64;

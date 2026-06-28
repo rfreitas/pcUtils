@@ -9,7 +9,8 @@
       "Bash(dotnet publish *)",
       "Bash(dotnet test *)",
       "Skill(update-config)",
-      "Skill(update-config:*)"
+      "Skill(update-config:*)",
+      "PowerShell(dotnet test *)"
     ]
   }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using AggressiveScreensaver.Forms;
 using AggressiveScreensaver.Input;
@@ -33,7 +34,8 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // -------------------------------------------------------------------------
     // Settings
     // -------------------------------------------------------------------------
-    private int _blankThresholdSec;
+    private int  _blankThresholdSec;
+    private bool _suppressFullscreen;
     private static readonly int[] TimeoutSteps = [15, 30, 60, 120, 180, 300, 600, 900, 1200, 1800];
 
     // -------------------------------------------------------------------------
@@ -49,7 +51,8 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
         string iniPath = System.IO.Path.Combine(AppContext.BaseDirectory, "AggressiveScreensaver.ini");
         _ini = new IniStore(iniPath);
 
-        _blankThresholdSec = _ini.ReadInt("Settings", "BlankThreshold", 30);
+        _blankThresholdSec  = _ini.ReadInt("Settings", "BlankThreshold",    30);
+        _suppressFullscreen = _ini.ReadInt("Settings", "SuppressFullscreen", 0) != 0;
 
         // Input
         var idleTimers = new IdleTimers();
@@ -64,9 +67,12 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
         // Overlay
         _overlay = new BlackOverlayManager(_agentIdle.ResetActivity);
 
-        // Message sink for display/power events
+        // Message sink for display/power events.
+        // Ignore WM_DISPLAYCHANGE if the overlay just appeared — exclusive-fullscreen
+        // games trigger a mode switch when they lose focus, which would otherwise
+        // self-remove the overlay in ~10 ms (flicker).
         _msgSink = new SystemMessageSink(
-            onDisplayChange: _overlay.Remove,
+            onDisplayChange: () => { if (_overlay.ShownDurationMs > 1000) _overlay.Remove(); },
             onWake:          _overlay.Remove);
 
         // Powercfg
@@ -110,12 +116,64 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
 
         bool shouldBlank =
             _agentIdle.AgentIdleSeconds >= _blankThresholdSec &&
-            string.IsNullOrEmpty(_powercfg.BlockingScreenApps);
+            string.IsNullOrEmpty(_powercfg.BlockingScreenApps) &&
+            (!_suppressFullscreen || !IsFullscreenAppForeground());
 
         if (shouldBlank && !_overlay.IsBlanked)
             _overlay.Show();
         else if (!shouldBlank && _overlay.IsBlanked)
             _overlay.Remove();
+    }
+
+    // -------------------------------------------------------------------------
+    // Fullscreen detection
+    // -------------------------------------------------------------------------
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetDesktopWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
+    [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+    [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public uint cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    /// <summary>
+    /// Returns true when the foreground window covers an entire monitor (games,
+    /// fullscreen video). Maximized windowed apps don't reach the taskbar band,
+    /// so they are not matched. The desktop and shell windows are excluded.
+    /// </summary>
+    private static bool IsFullscreenAppForeground()
+    {
+        try
+        {
+            IntPtr hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return false;
+            if (hwnd == GetDesktopWindow() || hwnd == GetShellWindow()) return false;
+
+            if (!GetWindowRect(hwnd, out RECT wr)) return false;
+
+            IntPtr hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            var mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+            if (!GetMonitorInfo(hMon, ref mi)) return false;
+
+            return wr.Left  <= mi.rcMonitor.Left  &&
+                   wr.Top   <= mi.rcMonitor.Top    &&
+                   wr.Right >= mi.rcMonitor.Right  &&
+                   wr.Bottom >= mi.rcMonitor.Bottom;
+        }
+        catch { return false; }
     }
 
     // -------------------------------------------------------------------------
@@ -144,11 +202,20 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
 
     private ContextMenuStrip BuildContextMenu() =>
         TrayMenuFactory.Build(
-            startAtLogin:     StartupTaskService.IsInstalled(TaskName),
-            onBlacklist:      ShowBlacklistForm,
-            onDebug:          ShowDebugForm,
-            onStartupChanged: HandleStartupToggle,
-            onExit:           ExitApp);
+            startAtLogin:                StartupTaskService.IsInstalled(TaskName),
+            suppressFullscreen:          _suppressFullscreen,
+            onBlacklist:                 ShowBlacklistForm,
+            onDebug:                     ShowDebugForm,
+            onStartupChanged:            HandleStartupToggle,
+            onSuppressFullscreenChanged: HandleSuppressFullscreenToggle,
+            onExit:                      ExitApp);
+
+    private bool HandleSuppressFullscreenToggle(bool wantEnabled)
+    {
+        _suppressFullscreen = wantEnabled;
+        _ini.DebouncedSave(() => _ini.WriteInt("Settings", "SuppressFullscreen", _suppressFullscreen ? 1 : 0));
+        return true;
+    }
 
     private bool HandleStartupToggle(bool wantEnabled)
     {

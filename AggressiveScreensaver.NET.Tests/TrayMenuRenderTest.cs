@@ -35,4 +35,28 @@ public class TrayMenuRenderTest
         Assert.True(new FileInfo(path).Length > 0, "PNG file is empty");
         Console.WriteLine($"View: {path}");
     }
+
+    [Theory]
+    [MemberData(nameof(RenderHelper.ScaleFactors), MemberType = typeof(RenderHelper))]
+    public void RenderMenu_SuppressFullscreen_Unchecked_SavesToPng(float scale, string dpiLabel)
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, suppressFullscreen: false);
+        string path = RenderHelper.CaptureMenu(menu, $"tray_menu_suppress_off_{dpiLabel}", scaleFactor: scale);
+
+        Assert.True(File.Exists(path), $"Expected PNG at {path}");
+        Assert.True(new FileInfo(path).Length > 0, "PNG file is empty");
+        Console.WriteLine($"View: {path}");
+    }
+
+    [Theory]
+    [MemberData(nameof(RenderHelper.ScaleFactors), MemberType = typeof(RenderHelper))]
+    public void RenderMenu_SuppressFullscreen_Checked_SavesToPng(float scale, string dpiLabel)
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, suppressFullscreen: true);
+        string path = RenderHelper.CaptureMenu(menu, $"tray_menu_suppress_on_{dpiLabel}", scaleFactor: scale);
+
+        Assert.True(File.Exists(path), $"Expected PNG at {path}");
+        Assert.True(new FileInfo(path).Length > 0, "PNG file is empty");
+        Console.WriteLine($"View: {path}");
+    }
 }
