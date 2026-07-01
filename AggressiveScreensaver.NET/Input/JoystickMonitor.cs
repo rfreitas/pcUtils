@@ -17,7 +17,11 @@ internal sealed class JoystickMonitor
     // -------------------------------------------------------------------------
     // P/Invoke
     // -------------------------------------------------------------------------
-    [StructLayout(LayoutKind.Sequential)]
+    // Must use CharSet.Ansi so the struct layout matches JOYCAPSA (the A-variant
+    // called by joyGetDevCapsA). Without this, .NET calls joyGetDevCapsW which
+    // writes WCHAR (2 bytes/char) into a buffer sized for char (1 byte/char),
+    // causing a buffer overrun → heap corruption → 0xc0000374.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
     private struct JOYCAPS
     {
         public ushort wMid, wPid;
@@ -47,7 +51,10 @@ internal sealed class JoystickMonitor
         public uint dwReserved1, dwReserved2;
     }
 
-    [DllImport("winmm.dll")] private static extern uint joyGetDevCaps(uint uJoyID, ref JOYCAPS pjc, uint cbjc);
+    // CharSet.Ansi ensures the A-variant (joyGetDevCapsA) is called, which writes
+    // JOYCAPSA-sized data — matching the struct above. The W-variant would corrupt
+    // the heap by writing twice as many bytes into the string fields.
+    [DllImport("winmm.dll", CharSet = CharSet.Ansi)] private static extern uint joyGetDevCaps(uint uJoyID, ref JOYCAPS pjc, uint cbjc);
     [DllImport("winmm.dll")] private static extern uint joyGetPosEx(uint uJoyID, ref JOYINFOEX pji);
 
     private const uint JOYERR_NOERROR = 0;
@@ -76,10 +83,10 @@ internal sealed class JoystickMonitor
 
     /// <summary>
     /// Returns true if any joystick has meaningful activity since the last call.
+    /// A native AV inside joyGetDevCaps/joyGetPosEx (e.g. on virtual controller
+    /// disconnect) is caught as an SEHException; the offending ID is evicted and
+    /// full re-detection is triggered on the next tick.
     /// </summary>
-    // TODO: investigate crash on virtual controller app disconnect — device removal
-    // between the connected-list cache refresh and the joyGetPosEx/joyGetDevCaps
-    // calls may throw or corrupt state. Add defensive handling / re-enumerate on error.
     public bool HasActivity()
     {
         long now = Environment.TickCount64;
@@ -93,8 +100,15 @@ internal sealed class JoystickMonitor
             uint capsSize = (uint)Marshal.SizeOf<JOYCAPS>();
             for (uint id = 0; id < MaxJoysticks; id++)
             {
-                if (joyGetDevCaps(id, ref caps, capsSize) == JOYERR_NOERROR)
-                    _connected.Add(id);
+                try
+                {
+                    if (joyGetDevCaps(id, ref caps, capsSize) == JOYERR_NOERROR)
+                        _connected.Add(id);
+                }
+                catch
+                {
+                    // Native fault probing this slot — skip it silently
+                }
             }
         }
 
@@ -105,49 +119,58 @@ internal sealed class JoystickMonitor
 
         foreach (uint id in _connected)
         {
-            // Defensive re-check: disconnect between cache refreshes can cause
-            // bad reads; if joyGetDevCaps fails here the joystick was just removed.
-            var caps = new JOYCAPS();
-            if (joyGetDevCaps(id, ref caps, (uint)Marshal.SizeOf<JOYCAPS>()) != JOYERR_NOERROR)
+            try
             {
-                (needsReset ??= []).Add(id);
-                continue;
-            }
+                // Defensive re-check: disconnect between cache refreshes can cause
+                // a native AV inside joyGetDevCaps; treat any failure as "removed".
+                var caps = new JOYCAPS();
+                if (joyGetDevCaps(id, ref caps, (uint)Marshal.SizeOf<JOYCAPS>()) != JOYERR_NOERROR)
+                {
+                    (needsReset ??= []).Add(id);
+                    continue;
+                }
 
-            var info = new JOYINFOEX { dwSize = (uint)Marshal.SizeOf<JOYINFOEX>(), dwFlags = JOY_RETURNALL };
-            if (joyGetPosEx(id, ref info) != JOYERR_NOERROR) continue;
+                var info = new JOYINFOEX { dwSize = (uint)Marshal.SizeOf<JOYINFOEX>(), dwFlags = JOY_RETURNALL };
+                if (joyGetPosEx(id, ref info) != JOYERR_NOERROR) continue;
 
-            // Rescale axes from 0-65535 to 0-100 to match AHK's JoyX/Y/Z scale
-            var current = new JoyState
-            {
-                dwXpos    = Scale(info.dwXpos),
-                dwYpos    = Scale(info.dwYpos),
-                dwZpos    = Scale(info.dwZpos),
-                dwRpos    = Scale(info.dwRpos),
-                dwUpos    = Scale(info.dwUpos),
-                dwVpos    = Scale(info.dwVpos),
-                dwButtons = info.dwButtons,
-                dwPOV     = info.dwPOV,
-            };
+                // Rescale axes from 0-65535 to 0-100 to match AHK's JoyX/Y/Z scale
+                var current = new JoyState
+                {
+                    dwXpos    = Scale(info.dwXpos),
+                    dwYpos    = Scale(info.dwYpos),
+                    dwZpos    = Scale(info.dwZpos),
+                    dwRpos    = Scale(info.dwRpos),
+                    dwUpos    = Scale(info.dwUpos),
+                    dwVpos    = Scale(info.dwVpos),
+                    dwButtons = info.dwButtons,
+                    dwPOV     = info.dwPOV,
+                };
 
-            if (!_lastState.TryGetValue(id, out var last))
-            {
+                if (!_lastState.TryGetValue(id, out var last))
+                {
+                    _lastState[id] = current;
+                    continue;
+                }
+
+                bool changed =
+                    AxisChanged(current.dwXpos, last.dwXpos) ||
+                    AxisChanged(current.dwYpos, last.dwYpos) ||
+                    AxisChanged(current.dwZpos, last.dwZpos) ||
+                    AxisChanged(current.dwRpos, last.dwRpos) ||
+                    AxisChanged(current.dwUpos, last.dwUpos) ||
+                    AxisChanged(current.dwVpos, last.dwVpos) ||
+                    current.dwButtons != last.dwButtons      ||
+                    current.dwPOV     != last.dwPOV;
+
                 _lastState[id] = current;
-                continue;
+                if (changed) anyActivity = true;
             }
-
-            bool changed =
-                AxisChanged(current.dwXpos, last.dwXpos) ||
-                AxisChanged(current.dwYpos, last.dwYpos) ||
-                AxisChanged(current.dwZpos, last.dwZpos) ||
-                AxisChanged(current.dwRpos, last.dwRpos) ||
-                AxisChanged(current.dwUpos, last.dwUpos) ||
-                AxisChanged(current.dwVpos, last.dwVpos) ||
-                current.dwButtons != last.dwButtons      ||
-                current.dwPOV     != last.dwPOV;
-
-            _lastState[id] = current;
-            if (changed) anyActivity = true;
+            catch
+            {
+                // Native fault (e.g. AV on disconnect) — evict this ID and
+                // force a full re-detection on the next tick.
+                (needsReset ??= []).Add(id);
+            }
         }
 
         // Force full re-detection on next tick if any device disappeared

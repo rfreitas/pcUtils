@@ -105,10 +105,10 @@ internal sealed class XInputMonitor
                 state.Gamepad.wButtons != 0 ||
                 state.Gamepad.bLeftTrigger  > TriggerThreshold ||
                 state.Gamepad.bRightTrigger > TriggerThreshold ||
-                Math.Abs(state.Gamepad.sThumbLX) > Deadzone ||
-                Math.Abs(state.Gamepad.sThumbLY) > Deadzone ||
-                Math.Abs(state.Gamepad.sThumbRX) > Deadzone ||
-                Math.Abs(state.Gamepad.sThumbRY) > Deadzone;
+                Math.Abs((int)state.Gamepad.sThumbLX) > Deadzone ||
+                Math.Abs((int)state.Gamepad.sThumbLY) > Deadzone ||
+                Math.Abs((int)state.Gamepad.sThumbRX) > Deadzone ||
+                Math.Abs((int)state.Gamepad.sThumbRY) > Deadzone;
 
             _lastStates[i] = state;
             if (hasInput) return true;
