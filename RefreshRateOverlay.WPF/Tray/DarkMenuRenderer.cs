@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Windows.Forms;
 
-namespace RefreshRateOverlay.Forms;
+namespace RefreshRateOverlay.WPF.Tray;
 
 internal sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
 {

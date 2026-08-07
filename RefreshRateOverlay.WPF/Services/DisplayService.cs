@@ -2,11 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace RefreshRateOverlay.Services;
+namespace RefreshRateOverlay.WPF.Services;
 
 /// <summary>
 /// Wraps EnumDisplaySettingsW and ChangeDisplaySettingsW for the primary monitor.
-/// Mirrors the AHK GetAvailableRefreshRatesForCurrentRes / GetCurrentRefreshRate / SetMonitorRefreshRate functions.
 /// </summary>
 internal static class DisplayService
 {
@@ -29,14 +28,12 @@ internal static class DisplayService
 
     /// <summary>
     /// Returns available refresh rates for the current resolution, sorted descending.
-    /// Mirrors GetAvailableRefreshRatesForCurrentRes().
     /// </summary>
     public static List<int> GetAvailableRates()
     {
         var buf = AllocDevMode();
         try
         {
-            // Get current bits/width/height to constrain enumeration
             uint targetBits = 0, targetW = 0, targetH = 0;
             if (EnumDisplaySettingsW(null, ENUM_CURRENT_SETTINGS, buf))
             {
@@ -89,8 +86,7 @@ internal static class DisplayService
     }
 
     /// <summary>
-    /// Applies the given refresh rate to the primary monitor.
-    /// Returns true on success.
+    /// Applies the given refresh rate to the primary monitor. Returns true on success.
     /// </summary>
     public static bool SetRate(int rate)
     {
@@ -114,10 +110,8 @@ internal static class DisplayService
     private static IntPtr AllocDevMode()
     {
         var buf = Marshal.AllocHGlobal(DEVMODE_SIZE);
-        // Zero-fill
         for (int i = 0; i < DEVMODE_SIZE; i += 4)
             Marshal.WriteInt32(buf, i, 0);
-        // Set dmSize field
         Marshal.WriteInt16(buf, OFF_SIZE, DEVMODE_SIZE);
         return buf;
     }

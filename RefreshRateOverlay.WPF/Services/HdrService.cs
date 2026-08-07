@@ -1,11 +1,10 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace RefreshRateOverlay.Services;
+namespace RefreshRateOverlay.WPF.Services;
 
 /// <summary>
 /// Reads and sets HDR state on the primary monitor.
-/// Mirrors the AHK HDRControl module: GetPrimaryHDRState / SetHDRState.
 /// Supports both Win11 24H2+ API (type 15/16) and legacy (type 9/10).
 /// </summary>
 internal static class HdrService
@@ -28,9 +27,7 @@ internal static class HdrService
     private const uint GET_ADVANCED_COLOR_INFO_2 = 15;  // Win11 24H2+
     private const uint SET_HDR_STATE             = 16;  // Win11 24H2+
 
-    /// <summary>
-    /// Returns (supported, enabled). Mirrors GetPrimaryHDRState(&amp;supp, &amp;en).
-    /// </summary>
+    /// <summary>Returns (supported, enabled).</summary>
     public static (bool Supported, bool Enabled) GetState()
     {
         if (!QueryPaths(out int numPaths, out IntPtr paths, out IntPtr modes))

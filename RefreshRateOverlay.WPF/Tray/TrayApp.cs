@@ -1,74 +1,55 @@
 using System;
 using System.Drawing;
 using System.IO;
-using System.Reflection;
 using System.Windows.Forms;
-using RefreshRateOverlay.Forms;
-using RefreshRateOverlay.Rendering;
-using RefreshRateOverlay.Services;
+using System.Windows.Interop;
+using RefreshRateOverlay.WPF.Rendering;
+using RefreshRateOverlay.WPF.Services;
 using Shared;
 
-namespace RefreshRateOverlay;
+namespace RefreshRateOverlay.WPF.Tray;
 
 /// <summary>
-/// Application context. Owns all services and the NotifyIcon.
-/// Mirrors the AHK index.ahk main block + TrayIconRenderer + TrackForegroundApp.
+/// Owns the tray icon and all services. WPF has no native tray-icon control,
+/// so this still uses System.Windows.Forms.NotifyIcon/ContextMenuStrip (a
+/// common, dependency-free pattern for WPF apps) while the settings surface
+/// itself is the WPF OverlayWindow.
 /// </summary>
-internal sealed class TrayApp : ApplicationContext, IDisposable
+internal sealed class TrayApp : IDisposable
 {
-    // -------------------------------------------------------------------------
-    // Services
-    // -------------------------------------------------------------------------
     private readonly IniStore          _ini;
     private readonly ProfileService    _profiles;
     private readonly ForegroundTracker _tracker;
     private readonly SystemMessageSink _msgSink;
+    private readonly HotkeyService     _hotkey;
 
-    // -------------------------------------------------------------------------
-    // State
-    // -------------------------------------------------------------------------
     private int  _defaultRate;
     private bool _defaultHdr;
     private bool _hdrSupported;
     private int  _currentRate;
     private int  _ignoreDisplayChangeUntil; // Environment.TickCount64 threshold
 
-    // -------------------------------------------------------------------------
-    // Tray
-    // -------------------------------------------------------------------------
     private readonly NotifyIcon _tray;
     private Icon? _currentIcon;
 
-    // -------------------------------------------------------------------------
-    // Overlay
-    // -------------------------------------------------------------------------
-    private OverlayForm? _overlay;
+    private OverlayWindow? _overlay;
 
-    // -------------------------------------------------------------------------
-    // Startup
-    // -------------------------------------------------------------------------
-    private const string TaskName        = "RefreshRateOverlay";
-    private static readonly string ExePath = Path.Combine(AppContext.BaseDirectory, "RefreshRateOverlay.exe");
-    private const string TaskDescription = "Launches RefreshRateOverlay at logon.";
+    private const string TaskName        = "RefreshRateOverlay.WPF";
+    private static readonly string ExePath = Path.Combine(AppContext.BaseDirectory, "RefreshRateOverlay.WPF.exe");
+    private const string TaskDescription = "Launches RefreshRateOverlay (WPF) at logon.";
 
-    // -------------------------------------------------------------------------
-    // Ctor
-    // -------------------------------------------------------------------------
     public TrayApp()
     {
         string iniPath = Path.Combine(AppContext.BaseDirectory, "RefreshSettings.ini");
         _ini      = new IniStore(iniPath);
         _profiles = new ProfileService(_ini);
 
-        // Read HDR support once at startup
         (_hdrSupported, bool hdrEnabled) = HdrService.GetState();
 
-        // Read defaults from INI, falling back to current system state
         _currentRate = DisplayService.GetCurrentRate();
         _defaultRate = _profiles.ReadDefaultRate();
-        _defaultHdr  = _hdrSupported ? _profiles.ReadDefaultHdr() : false;
+        _defaultHdr  = _hdrSupported && _profiles.ReadDefaultHdr();
 
-        // If INI had no value, bootstrap from current system state
         if (_defaultRate == 60 && _currentRate > 0)
         {
             _defaultRate = _currentRate;
@@ -80,11 +61,9 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
             _profiles.WriteDefaultHdr(_defaultHdr);
         }
 
-        // Apply defaults on startup (mirrors AHK SetMonitorRefreshRate on startup)
         ApplyRate(_defaultRate);
         if (_hdrSupported) HdrService.SetState(_defaultHdr);
 
-        // Tray icon
         _tray = new NotifyIcon
         {
             Text    = "RefreshRateOverlay",
@@ -94,13 +73,12 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
         _tray.ContextMenuStrip = BuildContextMenu();
         _tray.MouseClick += TrayMouseClick;
 
-        // Foreground tracker (mirrors SetTimer(TrackForegroundApp, 500))
         _tracker = new ForegroundTracker();
         _tracker.AppChanged += OnAppChanged;
         _tracker.Start();
 
-        // Display change listener
         _msgSink = new SystemMessageSink(OnDisplayChange);
+        _hotkey  = new HotkeyService(ShowOverlay);
 
         Logger.Log($"TrayApp started. Rate={_currentRate} HDR={_hdrSupported}");
     }
@@ -124,7 +102,7 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     }
 
     // -------------------------------------------------------------------------
-    // Display change sync (mirrors SyncSettingsWithSystem)
+    // Display change sync
     // -------------------------------------------------------------------------
     private void OnDisplayChange()
     {
@@ -136,7 +114,6 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
 
         string lastApp = _tracker.LastApp;
 
-        // Only update defaults when not inside an app profile
         if (_profiles.ReadRateProfile(lastApp) is null)
         {
             if (_defaultRate != _currentRate)
@@ -224,7 +201,7 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
                 reverting = true;
                 item.Checked = !item.Checked;
                 reverting = false;
-                MessageBox.Show(
+                System.Windows.Forms.MessageBox.Show(
                     "Failed to update the startup task.\nCheck the log file for details.",
                     "RefreshRateOverlay",
                     MessageBoxButtons.OK,
@@ -240,20 +217,20 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     }
 
     // -------------------------------------------------------------------------
-    // Tray click → overlay
+    // Tray click -> overlay
     // -------------------------------------------------------------------------
-    private void TrayMouseClick(object? sender, MouseEventArgs e)
+    private void TrayMouseClick(object? sender, System.Windows.Forms.MouseEventArgs e)
     {
         if (e.Button == MouseButtons.Left)
             ShowOverlay();
     }
 
     // -------------------------------------------------------------------------
-    // Overlay (mirrors ToggleOverlay)
+    // Overlay
     // -------------------------------------------------------------------------
     private void ShowOverlay()
     {
-        if (_overlay is not null && !_overlay.IsDisposed)
+        if (_overlay is not null)
         {
             _overlay.Close();
             return;
@@ -285,7 +262,7 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
             }
         }
 
-        _overlay = new OverlayForm(
+        _overlay = new OverlayWindow(
             activeApp:      app,
             availableRates: DisplayService.GetAvailableRates(),
             currentRate:    _currentRate,
@@ -293,17 +270,21 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
             hdrEnabled:     currHdr,
             hasProfile:     hasProfile);
 
-        _tracker.OverlayHandle = _overlay.Handle;
+        var helper = new WindowInteropHelper(_overlay);
+        helper.EnsureHandle();
+        _tracker.OverlayHandle = helper.Handle;
 
-        _overlay.FormClosed += (_, _) =>
+        _overlay.Closed += (_, _) =>
         {
             _tracker.OverlayHandle = IntPtr.Zero;
 
-            if (!_overlay.Applied) return;
-
-            int selRate = _overlay.SelectedRate;
+            bool applied     = _overlay!.Applied;
+            int  selRate     = _overlay.SelectedRate;
             bool saveProfile = _overlay.SaveProfile;
-            bool hdrVal = _overlay.HdrEnabled;
+            bool hdrVal      = _overlay.HdrEnabled;
+            _overlay = null;
+
+            if (!applied) return;
 
             if (saveProfile)
             {
@@ -336,40 +317,23 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     private void ExitApp()
     {
         Logger.Log("Exit requested.");
-        Application.Exit();
-    }
-
-    // -------------------------------------------------------------------------
-    // Icon loading (fallback for initial state before renderer fires)
-    // -------------------------------------------------------------------------
-    private static Icon LoadTrayIcon()
-    {
-        try
-        {
-            using var stream = Assembly.GetExecutingAssembly()
-                .GetManifestResourceStream("RefreshRateOverlay.Resources.tray.ico");
-            if (stream is not null) return new Icon(stream);
-        }
-        catch { }
-        return SystemIcons.Application;
+        System.Windows.Application.Current.Shutdown();
     }
 
     // -------------------------------------------------------------------------
     // IDisposable
     // -------------------------------------------------------------------------
     private bool _disposed;
-    protected override void Dispose(bool disposing)
+    public void Dispose()
     {
-        if (!_disposed && disposing)
-        {
-            _disposed = true;
-            _tracker.Dispose();
-            _msgSink.Dispose();
-            _ini.Dispose();
-            _tray.Visible = false;
-            _currentIcon?.Dispose();
-            _tray.Dispose();
-        }
-        base.Dispose(disposing);
+        if (_disposed) return;
+        _disposed = true;
+        _tracker.Dispose();
+        _msgSink.Dispose();
+        _hotkey.Dispose();
+        _ini.Dispose();
+        _tray.Visible = false;
+        _currentIcon?.Dispose();
+        _tray.Dispose();
     }
 }

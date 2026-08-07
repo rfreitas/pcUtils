@@ -4,11 +4,11 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 
-namespace RefreshRateOverlay.Services;
+namespace RefreshRateOverlay.WPF.Services;
 
 /// <summary>
 /// Polls the foreground window every 500 ms and fires AppChanged when the active
-/// process name changes. Mirrors the AHK TrackForegroundApp timer.
+/// process name changes.
 /// </summary>
 internal sealed class ForegroundTracker : IDisposable
 {
@@ -33,7 +33,7 @@ internal sealed class ForegroundTracker : IDisposable
     private readonly System.Windows.Forms.Timer _timer;
     private string _lastApp = string.Empty;
 
-    // Set this to the overlay form's handle so we don't react while it is focused
+    // Set this to the overlay window's handle so we don't react while it is focused
     public IntPtr OverlayHandle { get; set; } = IntPtr.Zero;
 
     public ForegroundTracker()

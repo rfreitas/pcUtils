@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WPF has no native tray-icon control; NotifyIcon/ContextMenuStrip are
+         still the pragmatic, dependency-free way to get one. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>RefreshRateOverlay.WPF</RootNamespace>
+    <AssemblyName>RefreshRateOverlay.WPF</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared.NET\StartupTaskService.cs" Link="Services\StartupTaskService.cs" />
+  </ItemGroup>
+</Project>

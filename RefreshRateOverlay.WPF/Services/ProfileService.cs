@@ -1,10 +1,9 @@
 using System.Collections.Generic;
 
-namespace RefreshRateOverlay.Services;
+namespace RefreshRateOverlay.WPF.Services;
 
 /// <summary>
 /// Manages per-app refresh-rate and HDR profiles persisted in the INI file.
-/// Mirrors the AHK IniRead/IniWrite calls scattered across index.ahk.
 /// </summary>
 internal sealed class ProfileService
 {

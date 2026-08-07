@@ -1,12 +1,12 @@
 using System;
 using System.Windows.Forms;
 
-namespace RefreshRateOverlay.Services;
+namespace RefreshRateOverlay.WPF.Services;
 
 /// <summary>
 /// Hidden NativeWindow that receives WM_DISPLAYCHANGE.
-/// Defers the callback via a one-shot WinForms Timer to avoid synchronous
-/// GUI destruction inside WndProc (mirrors the AHK SetTimer(-500) pattern).
+/// Defers the callback via a one-shot Timer to avoid synchronous
+/// GUI destruction inside WndProc.
 /// </summary>
 internal sealed class SystemMessageSink : NativeWindow, IDisposable
 {

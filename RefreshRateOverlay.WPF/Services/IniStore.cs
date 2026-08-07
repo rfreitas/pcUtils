@@ -4,11 +4,10 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace RefreshRateOverlay.Services;
+namespace RefreshRateOverlay.WPF.Services;
 
 /// <summary>
 /// INI persistence using kernel32 WritePrivateProfileString / GetPrivateProfileString.
-/// Produces UTF-16 LE files identical to those written by AHK's IniRead/IniWrite.
 /// </summary>
 internal sealed class IniStore : IDisposable
 {

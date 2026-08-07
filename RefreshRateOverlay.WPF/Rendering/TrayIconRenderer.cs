@@ -3,13 +3,12 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
-namespace RefreshRateOverlay.Rendering;
+namespace RefreshRateOverlay.WPF.Rendering;
 
 /// <summary>
-/// Renders a refresh-rate number (e.g. "60", "144") as a tray icon.
-/// Mirrors the AHK TrayIconRenderer.ahk: white text, transparent background,
-/// alpha = luminance of each pixel so white glyphs are opaque and the black
-/// background becomes fully transparent.
+/// Renders a refresh-rate number (e.g. "60", "144") as a tray icon: white text,
+/// transparent background, alpha = luminance of each pixel so white glyphs are
+/// opaque and the black background becomes fully transparent.
 /// </summary>
 internal static class TrayIconRenderer
 {
@@ -48,7 +47,7 @@ internal static class TrayIconRenderer
             g.DrawString(text, font, brush, bounds, sf);
         }
 
-        // Set alpha = red channel so white glyphs are opaque, black → transparent
+        // Set alpha = red channel so white glyphs are opaque, black -> transparent
         ApplyLuminanceAlpha(bmp);
 
         IntPtr hIcon = bmp.GetHicon();
@@ -61,7 +60,7 @@ internal static class TrayIconRenderer
 
     /// <summary>
     /// Finds the largest bold font size where <paramref name="text"/> fits within
-    /// <paramref name="targetWidth"/> pixels. Mirrors AHK SolveFontToFit.
+    /// <paramref name="targetWidth"/> pixels.
     /// </summary>
     internal static Font SolveFontToFit(string text, int targetWidth, int targetHeight)
     {

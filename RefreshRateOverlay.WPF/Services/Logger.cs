@@ -1,13 +1,13 @@
 using System;
 using System.IO;
 
-namespace RefreshRateOverlay.Services;
+namespace RefreshRateOverlay.WPF.Services;
 
 internal static class Logger
 {
     private static readonly string LogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "RefreshRateOverlay", "RefreshRateOverlay.log");
+        "RefreshRateOverlay.WPF", "RefreshRateOverlay.WPF.log");
 
     private static readonly object _lock = new();
 
@@ -34,6 +34,8 @@ internal static class Logger
             (ex.StackTrace is not null ? $"\n    Stack: {ex.StackTrace}" : ""));
     }
 
+    // AppDomain handler only: WPF's DispatcherUnhandledException is wired in
+    // App.xaml.cs since it needs the running Application instance.
     public static void InstallGlobalHandlers()
     {
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
@@ -43,8 +45,5 @@ internal static class Logger
                 : $"UNHANDLED EXCEPTION OBJECT: {e.ExceptionObject}";
             Log(msg);
         };
-
-        System.Windows.Forms.Application.ThreadException += (_, e) =>
-            LogException(e.Exception, severe: true);
     }
 }
