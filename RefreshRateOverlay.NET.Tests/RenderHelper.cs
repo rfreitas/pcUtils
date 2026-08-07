@@ -123,11 +123,11 @@ internal static class RenderHelper
 
     private static string Snap(Control control, string name)
     {
-        // PrintWindow writes physical pixels; size the bitmap to match.
-        float dpiScale = control.DeviceDpi > 0 ? control.DeviceDpi / 96f : 1f;
-        int physW = (int)Math.Ceiling(control.Width  * dpiScale);
-        int physH = (int)Math.Ceiling(control.Height * dpiScale);
-        var bmp = new Bitmap(physW, physH);
+        // The capture thread runs Per-Monitor-V2 DPI aware (see SetThreadDpiAwarenessContext
+        // above), so Control.Width/Height already report real physical pixels — PrintWindow
+        // paints that same physical bitmap. Re-multiplying by DeviceDpi/96 double-scales,
+        // producing an oversized bitmap that's mostly blank with content crammed in a corner.
+        var bmp = new Bitmap(control.Width, control.Height);
         using (var g = Graphics.FromImage(bmp))
         {
             var hdc = g.GetHdc();

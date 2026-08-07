@@ -61,34 +61,34 @@ internal sealed class OverlayForm : Form
         AutoScaleMode       = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96f, 96f);
 
-        const int ctrlW  = 250;
-        const int pad    = 12;
-        const int btnGap = 10;
-        const int btnW   = (ctrlW - btnGap) / 2;
+        const int ctrlW  = 280;
+        const int pad    = 14;
+        const int rowGap = 8;
+        const int btnGap = 8;
 
-        var outer = new Panel
+        var grid = new TableLayoutPanel
         {
             BackColor    = BgColor,
             AutoSize     = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount  = 1,
+            GrowStyle    = TableLayoutPanelGrowStyle.AddRows,
             Padding      = new Padding(pad),
+            Margin       = Padding.Empty,
         };
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ctrlW));
 
-        var flow = new FlowLayoutPanel
+        void AddRow(Control c)
         {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents  = false,
-            BackColor     = BgColor,
-            AutoSize      = true,
-            AutoSizeMode  = AutoSizeMode.GrowAndShrink,
-            Margin        = Padding.Empty,
-            Padding       = Padding.Empty,
-        };
+            grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            grid.Controls.Add(c, 0, grid.RowCount++);
+        }
 
-        flow.Controls.Add(MakeLabel("Refresh Rate Overlay", Ui10, TextWhite, ctrlW));
-        flow.Controls.Add(MakeSpacer(ctrlW, 4));
-        flow.Controls.Add(MakeLabel($"Active: {activeApp}", Ui9, TextGray, ctrlW));
-        flow.Controls.Add(MakeSpacer(ctrlW, 8));
+        AddRow(MakeLabel("Refresh Rate Overlay", Ui10, TextWhite, ctrlW));
+
+        var subtitle = MakeLabel($"Active: {activeApp}", Ui9, TextGray, ctrlW);
+        subtitle.Margin = new Padding(0, 4, 0, 0);
+        AddRow(subtitle);
 
         _rateDropDown = new ComboBox
         {
@@ -96,7 +96,7 @@ internal sealed class OverlayForm : Form
             Width         = ctrlW,
             Font          = Ui10,
             BackColor     = Color.White,
-            Margin        = new Padding(0, 0, 0, 6),
+            Margin        = new Padding(0, rowGap, 0, 0),
         };
         int preSelect = 0;
         for (int i = 0; i < availableRates.Count; i++)
@@ -105,38 +105,39 @@ internal sealed class OverlayForm : Form
             if (availableRates[i] == currentRate) preSelect = i;
         }
         _rateDropDown.SelectedIndex = preSelect;
-        flow.Controls.Add(_rateDropDown);
+        AddRow(_rateDropDown);
 
         if (hdrSupported)
         {
             _hdrCheckBox = MakeCheckBox("Enable HDR", hdrEnabled, ctrlW);
-            flow.Controls.Add(_hdrCheckBox);
+            _hdrCheckBox.Margin = new Padding(0, rowGap, 0, 0);
+            AddRow(_hdrCheckBox);
         }
 
         _saveCheckBox = MakeCheckBox($"Save for {activeApp}", hasProfile, ctrlW);
-        flow.Controls.Add(_saveCheckBox);
+        _saveCheckBox.Margin = new Padding(0, hdrSupported ? 4 : rowGap, 0, 0);
+        AddRow(_saveCheckBox);
 
-        flow.Controls.Add(MakeSpacer(ctrlW, 8));
-
+        int btnW = (ctrlW - btnGap) / 2;
         var applyBtn  = MakeButton("Apply",  btnW, new Padding(0, 0, btnGap, 0));
         var cancelBtn = MakeButton("Cancel", btnW, Padding.Empty);
 
-        var btnRow = new FlowLayoutPanel
+        var btnRow = new TableLayoutPanel
         {
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents  = false,
-            BackColor     = BgColor,
-            AutoSize      = true,
-            AutoSizeMode  = AutoSizeMode.GrowAndShrink,
-            Margin        = Padding.Empty,
-            Padding       = Padding.Empty,
+            ColumnCount  = 2,
+            RowCount     = 1,
+            BackColor    = BgColor,
+            AutoSize     = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Margin       = new Padding(0, rowGap, 0, 0),
         };
-        btnRow.Controls.Add(applyBtn);
-        btnRow.Controls.Add(cancelBtn);
-        flow.Controls.Add(btnRow);
+        btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, btnW + btnGap));
+        btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, btnW));
+        btnRow.Controls.Add(applyBtn,  0, 0);
+        btnRow.Controls.Add(cancelBtn, 1, 0);
+        AddRow(btnRow);
 
-        outer.Controls.Add(flow);
-        Controls.Add(outer);
+        Controls.Add(grid);
 
         applyBtn.Click  += (_, _) => { Applied = true;  Close(); };
         cancelBtn.Click += (_, _) => { Applied = false; Close(); };
@@ -144,37 +145,46 @@ internal sealed class OverlayForm : Form
         CancelButton = cancelBtn;
     }
 
-    // AutoSize = true + MinimumSize/MaximumSize keeps the label exactly ctrlW wide
-    // while letting height grow with the font — no font.Height arithmetic needed.
-    private static Label MakeLabel(string text, Font font, Color fore, int width) =>
-        new()
+    // Size is computed up front from measured, word-wrapped text rather than left to
+    // AutoSize + MaximumSize: nested AutoSize containers (TableLayoutPanel wrapping a
+    // wrapped-text Label) can finalize their preferred size before the wrap height
+    // settles, which clips content. Explicit sizing sidesteps that timing bug entirely.
+    private static Label MakeLabel(string text, Font font, Color fore, int width)
+    {
+        int height = TextRenderer.MeasureText(
+            text, font, new Size(width, int.MaxValue), TextFormatFlags.WordBreak).Height;
+        return new Label
         {
-            Text        = text,
-            Font        = font,
-            ForeColor   = fore,
-            BackColor   = BgColor,
-            AutoSize    = true,
-            MinimumSize = new Size(width, 0),
-            MaximumSize = new Size(width, 0),
-            TextAlign   = ContentAlignment.MiddleCenter,
-            Margin      = Padding.Empty,
+            Text      = text,
+            Font      = font,
+            ForeColor = fore,
+            BackColor = BgColor,
+            AutoSize  = false,
+            Size      = new Size(width, height),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Margin    = Padding.Empty,
         };
+    }
 
-    private static Panel MakeSpacer(int width, int height) =>
-        new() { Width = width, Height = height, BackColor = BgColor, Margin = Padding.Empty };
+    private const int CheckGlyphW = 24; // checkbox tick + spacing eaten from the text area
 
-    private static CheckBox MakeCheckBox(string text, bool isChecked, int width) =>
-        new()
+    private static CheckBox MakeCheckBox(string text, bool isChecked, int width)
+    {
+        int height = TextRenderer.MeasureText(
+            text, Ui10, new Size(width - CheckGlyphW, int.MaxValue), TextFormatFlags.WordBreak).Height;
+        return new CheckBox
         {
-            Text        = text,
-            Checked     = isChecked,
-            ForeColor   = TextWhite,
-            BackColor   = BgColor,
-            AutoSize    = true,
-            MinimumSize = new Size(width, 0), // forces full-width; height auto-fits the font
-            FlatStyle   = FlatStyle.Standard,
-            Margin      = new Padding(0, 0, 0, 6),
+            Text      = text,
+            Checked   = isChecked,
+            Font      = Ui10,
+            ForeColor = TextWhite,
+            BackColor = BgColor,
+            AutoSize  = false,
+            Size      = new Size(width, Math.Max(height, 20) + 4),
+            FlatStyle = FlatStyle.Standard,
+            Margin    = Padding.Empty,
         };
+    }
 
     private static Button MakeButton(string text, int width, Padding margin)
     {
