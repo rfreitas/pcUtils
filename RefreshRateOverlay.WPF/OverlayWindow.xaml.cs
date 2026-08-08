@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
@@ -5,9 +6,9 @@ using System.Windows.Controls;
 namespace RefreshRateOverlay.WPF;
 
 /// <summary>
-/// WPF port of RefreshRateOverlay.NET's OverlayForm. Same public surface
-/// (ActiveApp/SelectedRate/SaveProfile/HdrEnabled/Applied) so it can drop
-/// into TrayApp in place of the WinForms version later.
+/// WPF port of RefreshRateOverlay.NET's OverlayForm. Apply and the trash icon
+/// take effect immediately via events rather than closing the window — only
+/// the Close button (or Escape) dismisses it.
 /// </summary>
 public partial class OverlayWindow : Window
 {
@@ -18,7 +19,12 @@ public partial class OverlayWindow : Window
 
     public bool SaveProfile => SaveCheckBox.IsChecked == true;
     public bool HdrEnabled  => HdrCheckBox.IsChecked == true;
-    public bool Applied     { get; private set; }
+
+    /// <summary>Raised immediately on Apply click; does not close the window.</summary>
+    public event EventHandler? ApplyRequested;
+
+    /// <summary>Raised immediately on trash-icon click; does not close the window.</summary>
+    public event EventHandler? ProfileDeleteRequested;
 
     public OverlayWindow(
         string    activeApp,
@@ -53,7 +59,19 @@ public partial class OverlayWindow : Window
         SaveCheckBox.Content   = new TextBlock { Text = $"Save for {activeApp}", TextWrapping = TextWrapping.Wrap };
         SaveCheckBox.IsChecked = hasProfile;
 
-        ApplyButton.Click  += (_, _) => { Applied = true;  Close(); };
-        CancelButton.Click += (_, _) => { Applied = false; Close(); };
+        DeleteProfileButton.Visibility = hasProfile ? Visibility.Visible : Visibility.Collapsed;
+        DeleteProfileButton.Click += (_, _) =>
+        {
+            ProfileDeleteRequested?.Invoke(this, EventArgs.Empty);
+            SaveCheckBox.IsChecked = false;
+            DeleteProfileButton.Visibility = Visibility.Collapsed;
+        };
+
+        ApplyButton.Click  += (_, _) => ApplyRequested?.Invoke(this, EventArgs.Empty);
+        CancelButton.Click += (_, _) => Close();
     }
+
+    /// <summary>Reflects a profile save/delete that just happened via ApplyRequested.</summary>
+    public void ReflectProfileState(bool hasProfile) =>
+        DeleteProfileButton.Visibility = hasProfile ? Visibility.Visible : Visibility.Collapsed;
 }

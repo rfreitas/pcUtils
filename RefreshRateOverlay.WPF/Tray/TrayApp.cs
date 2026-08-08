@@ -194,7 +194,10 @@ internal sealed class TrayApp : IDisposable
             if (reverting || sender is not ToolStripMenuItem item) return;
             item.Text = (item.Checked ? check : space) + "Start at Login";
             bool ok = item.Checked
-                ? StartupTaskService.Install(TaskName, ExePath, TaskDescription, Logger.Log)
+                // This app runs asInvoker (no admin needed), so the startup task must not
+                // request RunLevel=HighestAvailable — registering that requires the calling
+                // process to already be elevated, which this one deliberately isn't.
+                ? StartupTaskService.Install(TaskName, ExePath, TaskDescription, Logger.Log, requireElevation: false)
                 : StartupTaskService.Uninstall(TaskName, Logger.Log);
             if (!ok)
             {
@@ -274,17 +277,19 @@ internal sealed class TrayApp : IDisposable
         helper.EnsureHandle();
         _tracker.OverlayHandle = helper.Handle;
 
-        _overlay.Closed += (_, _) =>
+        _overlay.ProfileDeleteRequested += (_, _) =>
         {
-            _tracker.OverlayHandle = IntPtr.Zero;
+            _profiles.DeleteRateProfile(app);
+            if (_hdrSupported) _profiles.DeleteHdrProfile(app);
+            ApplyRate(_defaultRate);
+            if (_hdrSupported) HdrService.SetState(_defaultHdr);
+        };
 
-            bool applied     = _overlay!.Applied;
-            int  selRate     = _overlay.SelectedRate;
+        _overlay.ApplyRequested += (_, _) =>
+        {
+            int  selRate     = _overlay!.SelectedRate;
             bool saveProfile = _overlay.SaveProfile;
             bool hdrVal      = _overlay.HdrEnabled;
-            _overlay = null;
-
-            if (!applied) return;
 
             if (saveProfile)
             {
@@ -306,6 +311,13 @@ internal sealed class TrayApp : IDisposable
 
             ApplyRate(selRate);
             if (_hdrSupported) HdrService.SetState(hdrVal);
+            _overlay.ReflectProfileState(saveProfile);
+        };
+
+        _overlay.Closed += (_, _) =>
+        {
+            _tracker.OverlayHandle = IntPtr.Zero;
+            _overlay = null;
         };
 
         _overlay.Show();

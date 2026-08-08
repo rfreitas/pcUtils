@@ -32,9 +32,14 @@ internal static class StartupTaskService
         }
     }
 
-    public static bool Install(string taskName, string exePath, string description, Action<string>? log = null)
+    public static bool Install(
+        string taskName, string exePath, string description, Action<string>? log = null, bool requireElevation = true)
     {
-        string xml     = BuildTaskXml(taskName, exePath, description, Environment.UserName);
+        // Registering a task with RunLevel=HighestAvailable itself requires the calling
+        // process to already be elevated (schtasks fails with "Access is denied"
+        // otherwise). Only opt in if the app's own manifest runs elevated (e.g.
+        // requireAdministrator) — a normal asInvoker app should pass requireElevation:false.
+        string xml     = BuildTaskXml(taskName, exePath, description, Environment.UserName, requireElevation);
         string xmlFile = Path.Combine(Path.GetTempPath(), $"{taskName}_task.xml");
         try
         {
@@ -106,13 +111,15 @@ internal static class StartupTaskService
         }
     }
 
-    private static string BuildTaskXml(string taskName, string exePath, string description, string userName)
+    private static string BuildTaskXml(
+        string taskName, string exePath, string description, string userName, bool requireElevation)
     {
         string userDomain = string.IsNullOrEmpty(Environment.UserDomainName)
             ? Environment.MachineName
             : Environment.UserDomainName;
 
         string fullUser = $"{userDomain}\\{userName}";
+        string runLevel = requireElevation ? "HighestAvailable" : "LeastPrivilege";
 
         return $"""
 <?xml version="1.0" encoding="UTF-16"?>
@@ -130,7 +137,7 @@ internal static class StartupTaskService
     <Principal id="Author">
       <UserId>{fullUser}</UserId>
       <LogonType>InteractiveToken</LogonType>
-      <RunLevel>HighestAvailable</RunLevel>
+      <RunLevel>{runLevel}</RunLevel>
     </Principal>
   </Principals>
   <Settings>
