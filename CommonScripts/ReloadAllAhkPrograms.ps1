@@ -3,9 +3,7 @@ $closeScript = Join-Path $PSScriptRoot "CloseAhkProgram.ps1"
 $openScript  = Join-Path $PSScriptRoot "OpenAhkProgram.ps1"
 
 $scripts = @(
-    "AggressiveScreensaver\index.ahk",
-    "RevealTaskbar\index.ahk",
-    "RefreshRateOverlay\index.ahk"
+    "TouchpadSettings\index.ahk"
 )
 
 $fullPaths = $scripts | ForEach-Object { Join-Path $rootDir $_ }
