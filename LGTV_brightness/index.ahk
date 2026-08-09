@@ -25,6 +25,8 @@ minIntervalMs := 90         ; Throttle for key repeat (keyboard hotkeys)
 syncEveryMs := 15000        ; Interval to re-read actual value from TV
 iniFile := A_ScriptDir "\LGTV_brightness.ini"
 autoBrightness := IniRead(iniFile, "Settings", "AutoBrightness", 1) ; Default to 1 (true)
+hotkeyUp := IniRead(iniFile, "Settings", "HotkeyUp", "^#Up")
+hotkeyDown := IniRead(iniFile, "Settings", "HotkeyDown", "^#Down")
 
 
 ; =======================
@@ -119,6 +121,7 @@ A_TrayMenu.Add("Auto-Brightness (Refresh Rate)", ToggleAutoBrightness)
 if (autoBrightness)
     A_TrayMenu.Check("Auto-Brightness (Refresh Rate)")
 A_TrayMenu.Add("Sync from TV now", (*) => SyncFromTV(true))
+A_TrayMenu.Add("Change Hotkeys…", ShowHotkeySettings)
 
 A_TrayMenu.Add()
 A_TrayMenu.Add("Exit", (*) => ExitApp())
@@ -151,12 +154,101 @@ A_IconTip := "LGTV Backlight: starting..."
 ; =======================
 ; HOTKEYS
 ; =======================
-^#Up::AdjustBacklight("up")      ; Ctrl + Win + Up
-^#Down::AdjustBacklight("down")  ; Ctrl + Win + Down
+; Registered dynamically (not via `::`) so they can be changed at runtime
+; from the "Change Hotkeys…" tray menu item.
+AdjustUp(*) => AdjustBacklight("up")
+AdjustDown(*) => AdjustBacklight("down")
+
+/**
+ * Settings window to record new Up/Down hotkeys.
+ * Uses the native Gui "Hotkey" control (a real Windows common control) to
+ * capture the combination — it reliably sees the Windows key, unlike a
+ * plain script-level key hook. WM_SETRULES is sent to each control to lift
+ * its default restriction against modifier-less (single-key) shortcuts.
+ */
+ShowHotkeySettings(*) {
+    global hotkeyUp, hotkeyDown, iniFile
+
+    hsGui := Gui("+AlwaysOnTop -Caption +ToolWindow +Border", "Hotkeys")
+    hsGui.BackColor := "2d2d2d"
+    hsGui.MarginX := 14
+    hsGui.MarginY := 14
+
+    hsGui.SetFont("s10 cffffff", "Segoe UI")
+    hsGui.Add("Text", "w220 Center", "Brightness Hotkeys")
+
+    hsGui.SetFont("s10 cffffff")
+    hsGui.Add("Text", "w220 y+14", "Increase backlight:")
+    upCtrl := hsGui.Add("Hotkey", "w220 y+4", hotkeyUp)
+    AllowSingleKey(upCtrl)
+
+    hsGui.Add("Text", "w220 y+10", "Decrease backlight:")
+    downCtrl := hsGui.Add("Hotkey", "w220 y+4", hotkeyDown)
+    AllowSingleKey(downCtrl)
+
+    hsGui.SetFont("s9 cff8888")
+    statusText := hsGui.Add("Text", "w220 y+10", "")
+    statusText.Visible := false
+
+    btnSave := hsGui.Add("Button", "w106 y+12", "Save")
+    btnClose := hsGui.Add("Button", "w106 x+8 yp", "Close")
+
+    btnSave.OnEvent("Click", SaveClick)
+    btnClose.OnEvent("Click", (*) => hsGui.Destroy())
+    hsGui.OnEvent("Escape", (*) => hsGui.Destroy())
+    hsGui.OnEvent("Close", (*) => hsGui.Destroy())
+
+    SaveClick(*) {
+        global hotkeyUp, hotkeyDown, iniFile
+        newUp := upCtrl.Value
+        newDown := downCtrl.Value
+
+        if (newUp = "" || newDown = "") {
+            statusText.Text := "Both hotkeys must be set."
+            statusText.Visible := true
+            return
+        }
+        if (newUp = newDown) {
+            statusText.Text := "Up and Down hotkeys must be different."
+            statusText.Visible := true
+            return
+        }
+
+        try {
+            RebindHotkey(&hotkeyUp, newUp, AdjustUp)
+            RebindHotkey(&hotkeyDown, newDown, AdjustDown)
+        } catch as e {
+            statusText.Text := "Could not register: " e.Message
+            statusText.Visible := true
+            return
+        }
+
+        IniWrite(hotkeyUp, iniFile, "Settings", "HotkeyUp")
+        IniWrite(hotkeyDown, iniFile, "Settings", "HotkeyDown")
+        hsGui.Destroy()
+    }
+
+    hsGui.Show()
+}
+
+/** Lifts the Hotkey control's default rule disallowing a modifier-less key. */
+AllowSingleKey(ctrl) {
+    DllCall("SendMessage", "Ptr", ctrl.Hwnd, "UInt", 0x102, "Ptr", 0, "Ptr", 0) ; WM_SETRULES
+}
+
+/** Unregisters oldCombo (if bound) and registers newCombo for callback, updating oldCombo by reference. */
+RebindHotkey(&combo, newCombo, callback) {
+    if (combo != "" && combo != newCombo)
+        try Hotkey(combo, "Off")
+    Hotkey(newCombo, callback)
+    combo := newCombo
+}
 
 ; =======================
 ; INITIALIZATION
 ; =======================
+Hotkey(hotkeyUp, AdjustUp)
+Hotkey(hotkeyDown, AdjustDown)
 SyncFromTV(true) ; Initial sync
 CheckRefreshRate() ; Initialize refresh rate
 OnMessage(0x007E, OnDisplayChange) ; Listen for display changes (WM_DISPLAYCHANGE)
