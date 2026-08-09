@@ -3,6 +3,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
     <AssemblyName>AggressiveScreensaver</AssemblyName>
     <RootNamespace>AggressiveScreensaver</RootNamespace>
     <Nullable>enable</Nullable>
@@ -21,6 +22,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\Shared.NET\StartupTaskService.cs" Link="Services\StartupTaskService.cs" />
+    <Compile Include="..\Shared.NET\DarkMenuRenderer.cs" Link="Forms\DarkMenuRenderer.cs" />
+    <Compile Include="..\Shared.NET\TrayFlyoutWindow.cs" Link="Forms\TrayFlyoutWindow.cs" />
   </ItemGroup>
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">

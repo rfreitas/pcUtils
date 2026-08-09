@@ -1,0 +1,15 @@
+<Window x:Class="AggressiveScreensaver.Forms.DebugWindow"
+        x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Power Requests Debug"
+        Width="640" Height="480"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanResizeWithGrip"
+        Background="#2D2D2D">
+    <TextBox x:Name="OutputText"
+             IsReadOnly="True" TextWrapping="NoWrap" AcceptsReturn="True"
+             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+             Background="#1E1E1E" Foreground="#CCCCCC" BorderThickness="0"
+             FontFamily="Consolas" FontSize="12"/>
+</Window>

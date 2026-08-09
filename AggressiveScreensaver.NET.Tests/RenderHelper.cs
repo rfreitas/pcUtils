@@ -159,6 +159,76 @@ internal static class RenderHelper
         return outPath ?? throw new InvalidOperationException("Menu capture did not produce a file.");
     }
 
+    /// <summary>
+    /// Shows the WPF window returned by <paramref name="factory"/> off-screen on its
+    /// own STA thread with a Dispatcher message loop, waits for it to settle, captures
+    /// it with PrintWindow, then closes it. Sizing uses GetClientRect (physical pixels)
+    /// rather than ActualWidth/Height (device-independent) — WPF's DIU-to-physical
+    /// mapping isn't a simple multiply once thread DPI awareness is involved.
+    /// </summary>
+    public static string CaptureWpfWindow(Func<System.Windows.Window> factory, string name, int settleMs = 400, float scaleFactor = 1.0f)
+    {
+        string? outPath = null;
+
+        var thread = new Thread(() =>
+        {
+            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+            var window = factory();
+            window.WindowStartupLocation = System.Windows.WindowStartupLocation.Manual;
+            window.Left = OFF_SCREEN_X;
+            window.Top  = OFF_SCREEN_Y;
+
+            if (scaleFactor != 1.0f)
+            {
+                if (window.Content is System.Windows.FrameworkElement root)
+                    root.LayoutTransform = new System.Windows.Media.ScaleTransform(scaleFactor, scaleFactor);
+                if (!double.IsNaN(window.Width))  window.Width  *= scaleFactor;
+                if (!double.IsNaN(window.Height)) window.Height *= scaleFactor;
+            }
+
+            window.Show();
+
+            var timer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(Math.Max(50, settleMs)),
+            };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+                outPath = SnapHwnd(hwnd, name);
+                window.Close();
+                System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeShutdown();
+            };
+            timer.Start();
+
+            System.Windows.Threading.Dispatcher.Run();
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        return outPath ?? throw new InvalidOperationException("WPF capture did not produce a file.");
+    }
+
+    [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+
+    private static string SnapHwnd(IntPtr hwnd, string name)
+    {
+        GetClientRect(hwnd, out RECT rect);
+        var bmp = new Bitmap(rect.Right - rect.Left, rect.Bottom - rect.Top);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            var hdc = g.GetHdc();
+            PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT);
+            g.ReleaseHdc(hdc);
+        }
+        return Save(bmp, name);
+    }
+
     // -------------------------------------------------------------------------
     // Internals
     // -------------------------------------------------------------------------

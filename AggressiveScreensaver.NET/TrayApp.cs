@@ -41,7 +41,7 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // -------------------------------------------------------------------------
     // Forms (lazy)
     // -------------------------------------------------------------------------
-    private TimeoutSliderForm? _sliderForm;
+    private TimeoutSliderWindow? _sliderWindow;
 
     // -------------------------------------------------------------------------
     // Ctor
@@ -244,9 +244,12 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
 
     private void ShowSlider()
     {
-        if (_sliderForm is null || _sliderForm.IsDisposed)
+        // WPF window shown from a WinForms host: Show()/ShowDialog() pump their
+        // own Dispatcher via a nested message loop, so no System.Windows.Application
+        // instance is needed (this app is WinForms end to end otherwise).
+        if (_sliderWindow is null)
         {
-            _sliderForm = new TimeoutSliderForm(
+            _sliderWindow = new TimeoutSliderWindow(
                 currentThresholdSec: _blankThresholdSec,
                 timeoutSteps: TimeoutSteps,
                 onChanged: sec =>
@@ -257,7 +260,7 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
                     Logger.Log($"BlankThreshold changed to {sec}s");
                 });
         }
-        _sliderForm.ShowAboveMouse();
+        _sliderWindow.ShowAboveMouse();
     }
 
     // -------------------------------------------------------------------------
@@ -265,14 +268,14 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // -------------------------------------------------------------------------
     private void ShowBlacklistForm()
     {
-        var f = new BlacklistForm(_powercfg, _ini);
-        f.ShowDialog();
+        var w = new BlacklistWindow(_powercfg, _ini);
+        w.ShowDialog();
     }
 
     private void ShowDebugForm()
     {
-        var f = new DebugForm(_powercfg);
-        f.Show();
+        var w = new DebugWindow(_powercfg);
+        w.Show();
     }
 
     // -------------------------------------------------------------------------

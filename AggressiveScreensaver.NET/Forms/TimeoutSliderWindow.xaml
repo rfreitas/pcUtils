@@ -1,0 +1,94 @@
+<shared:TrayFlyoutWindow x:Class="AggressiveScreensaver.Forms.TimeoutSliderWindow"
+        x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shared="clr-namespace:Shared"
+        Title=""
+        Width="60" Height="210"
+        Background="#2D2D2D"
+        FontFamily="Segoe UI">
+
+    <shared:TrayFlyoutWindow.Resources>
+        <Style x:Key="SliderThumbStyle" TargetType="Thumb">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Ellipse x:Name="Circle" Width="16" Height="16" Fill="#CCCCCC"/>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Circle" Property="Fill" Value="#FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="TrackActiveButton" TargetType="RepeatButton">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="#88BBFF" CornerRadius="2" Width="4" HorizontalAlignment="Center"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="TrackInactiveButton" TargetType="RepeatButton" BasedOn="{StaticResource TrackActiveButton}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="#555555" CornerRadius="2" Width="4" HorizontalAlignment="Center"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Vertical, Minimum at bottom / Maximum at top (WPF default for Orientation=Vertical).
+             IsMoveToPointEnabled makes a track click jump the thumb straight to that point,
+             matching the original DarkSlider's click-to-set behavior instead of paging. -->
+        <Style x:Key="DarkVerticalSlider" TargetType="Slider">
+            <Setter Property="Orientation" Value="Vertical"/>
+            <Setter Property="IsMoveToPointEnabled" Value="True"/>
+            <Setter Property="IsSnapToTickEnabled" Value="True"/>
+            <Setter Property="TickFrequency" Value="1"/>
+            <Setter Property="SmallChange" Value="1"/>
+            <Setter Property="LargeChange" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Border Background="#2D2D2D">
+                            <Track x:Name="PART_Track" Margin="0,14">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource TrackInactiveButton}" Command="Slider.DecreaseLarge"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource TrackActiveButton}" Command="Slider.IncreaseLarge"/>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource SliderThumbStyle}"/>
+                                </Track.Thumb>
+                            </Track>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </shared:TrayFlyoutWindow.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="26"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="TimeoutLabel" Grid.Row="0"
+                   Foreground="#CCCCCC" FontSize="9"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+        <Slider x:Name="TimeoutSlider" Grid.Row="1" Style="{StaticResource DarkVerticalSlider}"/>
+    </Grid>
+</shared:TrayFlyoutWindow>

@@ -1,61 +1,39 @@
 using System;
 using System.Diagnostics;
-using System.Drawing;
-using System.Windows.Forms;
+using System.Windows;
 using AggressiveScreensaver.Services;
 
 namespace AggressiveScreensaver.Forms;
 
 /// <summary>
 /// Read-only debug view showing admin status, last poll time, blocking lists,
-/// and raw powercfg output. Ported from ShowPowerRequests() in index.ahk.
+/// and raw powercfg output.
 /// </summary>
-internal sealed class DebugForm : Form
+internal partial class DebugWindow : Window
 {
     private readonly PowercfgService _powercfg;
 
-    public DebugForm(PowercfgService powercfg)
+    public DebugWindow(PowercfgService powercfg)
     {
+        InitializeComponent();
         _powercfg = powercfg;
 
-        Text            = "Power Requests Debug";
-        Font            = new Font("Consolas", 9f);
-        BackColor       = ColorTranslator.FromHtml("#2d2d2d");
-        ForeColor       = Color.FromArgb(0xCC, 0xCC, 0xCC);
-        FormBorderStyle = FormBorderStyle.Sizable;
-        ClientSize      = new Size(640, 480);
-        StartPosition   = FormStartPosition.CenterScreen;
-
-        var textBox = new TextBox
+        Loaded += (_, _) =>
         {
-            Multiline   = true,
-            ReadOnly    = true,
-            ScrollBars  = ScrollBars.Vertical,
-            BackColor   = ColorTranslator.FromHtml("#1e1e1e"),
-            ForeColor   = Color.FromArgb(0xCC, 0xCC, 0xCC),
-            Font        = new Font("Consolas", 9f),
-            Dock        = DockStyle.Fill,
-            WordWrap    = false,
-        };
-        Controls.Add(textBox);
-
-        Load += (_, _) =>
-        {
-            bool isAdmin = IsAdmin();
+            bool isAdmin = PowercfgService.IsAdmin();
             string timeSinceLast = _powercfg.LastCheckTick == 0
                 ? "Never"
                 : $"{(Environment.TickCount64 - _powercfg.LastCheckTick) / 1000}s ago";
 
             string rawOutput = RunPowercfg();
 
-            textBox.Text =
+            OutputText.Text =
                 $"Running as Admin: {(isAdmin ? "YES" : "NO")}\r\n" +
                 $"Last Auto-Check: {timeSinceLast}\r\n" +
                 $"Screen Blocked: {(string.IsNullOrEmpty(_powercfg.BlockingScreenApps) ? "None" : _powercfg.BlockingScreenApps)}\r\n" +
                 $"Sleep Blocked: {(string.IsNullOrEmpty(_powercfg.BlockingSleepApps) ? "None" : _powercfg.BlockingSleepApps)}\r\n\r\n" +
                 $"Raw powercfg output:\r\n{(string.IsNullOrEmpty(rawOutput) ? "(empty)" : rawOutput)}";
         };
-
     }
 
     private static string RunPowercfg()
@@ -84,6 +62,4 @@ internal sealed class DebugForm : Form
             return $"(error: {ex.Message})";
         }
     }
-
-    private static bool IsAdmin() => PowercfgService.IsAdmin();
 }
