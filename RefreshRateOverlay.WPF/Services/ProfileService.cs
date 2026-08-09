@@ -12,6 +12,8 @@ internal sealed class ProfileService
     private const string SecHdrProfiles = "HDRProfiles";
     private const string KeyDefaultRate = "DefaultRefreshRate";
     private const string KeyDefaultHdr  = "DefaultHDR";
+    private const string KeyHotkeyMods  = "HotkeyModifiers";
+    private const string KeyHotkeyVk    = "HotkeyKey";
 
     private readonly IniStore _ini;
 
@@ -56,6 +58,22 @@ internal sealed class ProfileService
 
     public void DeleteHdrProfile(string app) =>
         _ini.DeleteKey(SecHdrProfiles, app);
+
+    // ---- hotkey ---------------------------------------------------------------
+
+    /// <summary>Returns the saved hotkey, or null if the user has never changed it.</summary>
+    public (uint Modifiers, uint Vk)? ReadHotkey()
+    {
+        int mods = _ini.ReadInt(SecSettings, KeyHotkeyMods, -1);
+        int vk   = _ini.ReadInt(SecSettings, KeyHotkeyVk, -1);
+        return mods >= 0 && vk >= 0 ? ((uint)mods, (uint)vk) : null;
+    }
+
+    public void WriteHotkey(uint modifiers, uint vk)
+    {
+        _ini.WriteInt(SecSettings, KeyHotkeyMods, (int)modifiers);
+        _ini.WriteInt(SecSettings, KeyHotkeyVk, (int)vk);
+    }
 
     // ---- convenience --------------------------------------------------------
 

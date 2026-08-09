@@ -78,7 +78,10 @@ internal sealed class TrayApp : IDisposable
         _tracker.Start();
 
         _msgSink = new SystemMessageSink(OnDisplayChange);
-        _hotkey  = new HotkeyService(ShowOverlay);
+
+        (uint hkMods, uint hkVk) = _profiles.ReadHotkey()
+            ?? (HotkeyService.MOD_WIN | HotkeyService.MOD_ALT | HotkeyService.MOD_SHIFT, 0x52 /* R */);
+        _hotkey = new HotkeyService(ShowOverlay, hkMods, hkVk, Logger.Log);
 
         Logger.Log($"TrayApp started. Rate={_currentRate} HDR={_hdrSupported}");
     }
@@ -179,6 +182,7 @@ internal sealed class TrayApp : IDisposable
         menu.Items.Add(new ToolStripMenuItem(" Refresh Rate Overlay") { Enabled = false });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(space + "Settings…", null, (_, _) => ShowOverlay());
+        menu.Items.Add(space + "Change Hotkey…", null, (_, _) => ShowHotkeySettings());
         menu.Items.Add(new ToolStripSeparator());
 
         // Start at Login
@@ -321,6 +325,23 @@ internal sealed class TrayApp : IDisposable
         };
 
         _overlay.Show();
+    }
+
+    // -------------------------------------------------------------------------
+    // Hotkey settings
+    // -------------------------------------------------------------------------
+    private void ShowHotkeySettings()
+    {
+        var win = new HotkeySettingsWindow("Overlay Hotkey", _hotkey.Modifiers, _hotkey.Vk)
+        {
+            SaveRequested = (mods, vk) =>
+            {
+                bool ok = _hotkey.Rebind(mods, vk);
+                if (ok) _profiles.WriteHotkey(mods, vk);
+                return ok;
+            },
+        };
+        win.Show();
     }
 
     // -------------------------------------------------------------------------

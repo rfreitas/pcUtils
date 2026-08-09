@@ -1,8 +1,12 @@
 using System.Drawing;
 using System.Windows.Forms;
 
-namespace RefreshRateOverlay.WPF.Tray;
+namespace Shared;
 
+/// <summary>
+/// Custom ToolStrip renderer that paints a tray context menu in a dark theme.
+/// Shared across apps (RefreshRateOverlay.WPF, AggressiveScreensaver.NET).
+/// </summary>
 internal sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
 {
     private static readonly Color BgColor       = Color.FromArgb(0x2D, 0x2D, 0x2D);

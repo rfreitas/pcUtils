@@ -14,5 +14,14 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Shared.NET\StartupTaskService.cs" Link="Services\StartupTaskService.cs" />
+    <Compile Include="..\Shared.NET\DarkMenuRenderer.cs" Link="Tray\DarkMenuRenderer.cs" />
+    <Compile Include="..\Shared.NET\HotkeyCapture.cs" Link="Services\HotkeyCapture.cs" />
+    <Compile Include="..\Shared.NET\HotkeyService.cs" Link="Services\HotkeyService.cs" />
+    <Page Include="..\Shared.NET\HotkeySettingsWindow.xaml" Link="HotkeySettingsWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Compile Include="..\Shared.NET\HotkeySettingsWindow.xaml.cs" Link="HotkeySettingsWindow.xaml.cs">
+      <DependentUpon>HotkeySettingsWindow.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 </Project>
