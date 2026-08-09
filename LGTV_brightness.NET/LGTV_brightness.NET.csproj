@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WPF has no native tray-icon control; NotifyIcon/ContextMenuStrip are
+         still the pragmatic, dependency-free way to get one. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>LgtvBrightness</RootNamespace>
+    <AssemblyName>LGTV_brightness.NET</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared.NET\StartupTaskService.cs" Link="Services\StartupTaskService.cs" />
+    <Compile Include="..\Shared.NET\DarkMenuRenderer.cs" Link="Tray\DarkMenuRenderer.cs" />
+    <Compile Include="..\Shared.NET\TrayFlyoutWindow.cs" Link="Forms\TrayFlyoutWindow.cs" />
+    <Compile Include="..\Shared.NET\HotkeyCapture.cs" Link="Services\HotkeyCapture.cs" />
+    <Compile Include="..\Shared.NET\HotkeyService.cs" Link="Services\HotkeyService.cs" />
+  </ItemGroup>
+</Project>
