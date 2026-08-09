@@ -55,13 +55,10 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
         _suppressFullscreen = _ini.ReadInt("Settings", "SuppressFullscreen", 0) != 0;
 
         // Input
-        var idleTimers = new IdleTimers();
-        var xinput     = new XInputMonitor();
-        var joy        = new JoystickMonitor();
+        var idleTimers  = new IdleTimers();
+        var controllers = new GameControllerMonitor();
 
-        xinput.Initialize();
-
-        _agentIdle = new AgentIdleService(idleTimers, xinput, joy);
+        _agentIdle = new AgentIdleService(idleTimers, controllers);
         _agentIdle.Ticked += OnAgentIdleTicked;
 
         // Overlay

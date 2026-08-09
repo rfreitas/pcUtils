@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <UseWindowsForms>true</UseWindowsForms>
     <UseWPF>true</UseWPF>
     <AssemblyName>AggressiveScreensaver</AssemblyName>
@@ -29,5 +30,17 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>AggressiveScreensaver.NET.Tests</_Parameter1>
     </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenRA-SDL2-CS" Version="1.0.44" GeneratePathProperty="true" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The package's own .targets file only copies its native SDL2.dll when
+         $(TargetPlatform) == 'win-x64', a property this project never sets
+         (it uses the standard $(RuntimeIdentifier) instead), so that copy
+         never fires. Do it explicitly. -->
+    <None Include="$(PkgOpenRA-SDL2-CS)\native\win-x64\SDL2.dll"
+          Link="SDL2.dll" CopyToOutputDirectory="PreserveNewest"
+          Condition="Exists('$(PkgOpenRA-SDL2-CS)\native\win-x64\SDL2.dll')" />
   </ItemGroup>
 </Project>

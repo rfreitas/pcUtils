@@ -17,9 +17,8 @@ internal sealed class AgentIdleService : IDisposable
     // -------------------------------------------------------------------------
     // Dependencies
     // -------------------------------------------------------------------------
-    private readonly IdleTimers      _idle;
-    private readonly XInputMonitor   _xinput;
-    private readonly JoystickMonitor _joy;
+    private readonly IdleTimers            _idle;
+    private readonly GameControllerMonitor _controllers;
     private readonly System.Windows.Forms.Timer _timer;
 
     // -------------------------------------------------------------------------
@@ -40,11 +39,10 @@ internal sealed class AgentIdleService : IDisposable
     // -------------------------------------------------------------------------
     // Ctor
     // -------------------------------------------------------------------------
-    public AgentIdleService(IdleTimers idle, XInputMonitor xinput, JoystickMonitor joy)
+    public AgentIdleService(IdleTimers idle, GameControllerMonitor controllers)
     {
-        _idle   = idle;
-        _xinput = xinput;
-        _joy    = joy;
+        _idle        = idle;
+        _controllers = controllers;
 
         _lastActivityTick = Environment.TickCount64;
 
@@ -89,10 +87,10 @@ internal sealed class AgentIdleService : IDisposable
             _lastActivityTick = Environment.TickCount64;
         }
 
-        // --- Controller / Joystick ---
+        // --- Controller (Xbox, DualSense/DualSense Edge, any HID gamepad) ---
         try
         {
-            if (_xinput.HasActivity() || _joy.HasActivity())
+            if (_controllers.HasActivity())
                 _lastActivityTick = Environment.TickCount64;
         }
         catch (Exception ex)
@@ -118,5 +116,6 @@ internal sealed class AgentIdleService : IDisposable
     {
         _timer.Dispose();
         _idle.Dispose();
+        _controllers.Dispose();
     }
 }
