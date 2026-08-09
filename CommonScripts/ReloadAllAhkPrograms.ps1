@@ -4,7 +4,6 @@ $openScript  = Join-Path $PSScriptRoot "OpenAhkProgram.ps1"
 
 $scripts = @(
     "AggressiveScreensaver\index.ahk",
-    "LGTV_brightness\index.ahk",
     "RevealTaskbar\index.ahk",
     "RefreshRateOverlay\index.ahk"
 )
