@@ -15,7 +15,12 @@
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Center">
             <TextBlock Text="&#xE706;" FontFamily="Segoe MDL2 Assets" FontSize="20"
                        Foreground="#EEEEEE" VerticalAlignment="Center"/>
-            <StackPanel x:Name="SegmentsPanel" Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center"/>
+            <!-- Continuous fill, same colors/visual language as BacklightSliderWindow's track. -->
+            <Grid x:Name="Track" Width="140" Height="8" Margin="14,0,0,0" VerticalAlignment="Center">
+                <Border CornerRadius="4" Background="#555555"/>
+                <Border x:Name="FillBar" CornerRadius="4" Background="#88BBFF"
+                        HorizontalAlignment="Left" Width="0"/>
+            </Grid>
         </StackPanel>
     </Border>
 </Window>
