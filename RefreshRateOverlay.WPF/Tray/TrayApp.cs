@@ -2,6 +2,8 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using RefreshRateOverlay.WPF.Rendering;
 using RefreshRateOverlay.WPF.Services;
@@ -39,6 +41,14 @@ internal sealed class TrayApp : IDisposable
     private Icon? _currentIcon;
 
     private OverlayWindow? _overlay;
+
+    // Reconciles hardware state against the last intended (rate, HDR) target for a
+    // short window after every apply, since SetDisplayConfig's HDR call can return
+    // before the driver/TV actually finish renegotiating the HDMI link — a rate
+    // change issued right after can get silently clamped by the still-settling
+    // link. A fresh ApplyDisplayState call cancels whatever reconciliation was
+    // still running for the previous target.
+    private CancellationTokenSource? _reconcileCts;
 
     private const string TaskName        = "RefreshRateOverlay.WPF";
     private static readonly string ExePath = Path.Combine(AppContext.BaseDirectory, "RefreshRateOverlay.WPF.exe");
@@ -176,12 +186,55 @@ internal sealed class TrayApp : IDisposable
     /// bandwidth-constrained links (e.g. a TV on HDMI 2.0) requesting a higher
     /// refresh rate while still in HDR/higher-bit-depth mode can silently fail
     /// or get clamped back down by the driver, so HDR must be settled first to
-    /// free up whatever headroom the rate change needs.
+    /// free up whatever headroom the rate change needs. Then spends up to a few
+    /// seconds confirming hardware actually landed on this target, re-applying
+    /// if it drifts (see ReconcileAsync) — the initial apply can still lose a
+    /// race against the driver/TV settling the HDMI link asynchronously.
     /// </summary>
     private void ApplyDisplayState(int rate, bool hdrEnabled)
     {
+        _reconcileCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _reconcileCts = cts;
+
         if (_hdrSupported) HdrService.SetState(hdrEnabled);
         ApplyRate(rate);
+
+        _ = ReconcileAsync(rate, hdrEnabled, cts.Token);
+    }
+
+    /// <summary>
+    /// Polls actual hardware state for up to ReconcileWindowMs after an apply and
+    /// re-applies (HDR then rate) if it ever finds a mismatch against the target —
+    /// absorbs the driver/TV's asynchronous HDMI settling delay instead of hoping
+    /// the first attempt landed. Stops as soon as hardware matches the target, or
+    /// if superseded by a newer ApplyDisplayState call (via the passed token).
+    /// </summary>
+    private async Task ReconcileAsync(int targetRate, bool targetHdr, CancellationToken token)
+    {
+        const int windowMs = 5000;
+        const int pollMs = 400;
+        int elapsed = 0;
+
+        while (elapsed < windowMs)
+        {
+            try { await Task.Delay(pollMs, token); }
+            catch (OperationCanceledException) { return; }
+            if (token.IsCancellationRequested) return;
+            elapsed += pollMs;
+
+            int  hwRate = DisplayService.GetCurrentRate();
+            bool hwHdr  = !_hdrSupported || HdrService.GetState().Enabled == targetHdr;
+            bool rateOk = hwRate == targetRate;
+
+            if (rateOk && hwHdr)
+                return; // converged
+
+            Logger.Log($"Reconcile: mismatch (hwRate={hwRate} target={targetRate}, hdrOk={hwHdr}) — re-applying.");
+            if (_hdrSupported) HdrService.SetState(targetHdr);
+            _currentRate = hwRate; // resync so ApplyRate's no-op guard doesn't skip the needed reapply
+            ApplyRate(targetRate);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -415,6 +468,7 @@ internal sealed class TrayApp : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _reconcileCts?.Cancel();
         _tracker.Dispose();
         _msgSink.Dispose();
         _hotkey.Dispose();
