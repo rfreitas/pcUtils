@@ -1,8 +1,8 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
-using System.Windows.Interop;
 using RefreshRateOverlay.WPF.Rendering;
 using RefreshRateOverlay.WPF.Services;
 using Shared;
@@ -17,6 +17,12 @@ namespace RefreshRateOverlay.WPF.Tray;
 /// </summary>
 internal sealed class TrayApp : IDisposable
 {
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    private const int SW_RESTORE = 9;
+
     private readonly IniStore          _ini;
     private readonly ProfileService    _profiles;
     private readonly ForegroundTracker _tracker;
@@ -61,8 +67,7 @@ internal sealed class TrayApp : IDisposable
             _profiles.WriteDefaultHdr(_defaultHdr);
         }
 
-        ApplyRate(_defaultRate);
-        if (_hdrSupported) HdrService.SetState(_defaultHdr);
+        ApplyDisplayState(_defaultRate, _defaultHdr);
 
         _tray = new NotifyIcon
         {
@@ -89,19 +94,28 @@ internal sealed class TrayApp : IDisposable
     // -------------------------------------------------------------------------
     // Foreground tracking
     // -------------------------------------------------------------------------
-    private void OnAppChanged(object? sender, string app) =>
+    private void OnAppChanged(object? sender, string app)
+    {
+        Logger.Log($"ForegroundTracker: app changed -> '{app}'");
         ApplyProfile(app);
+    }
 
     private void ApplyProfile(string app)
     {
-        int? profileRate = _profiles.ReadRateProfile(app);
-        ApplyRate(profileRate ?? _defaultRate);
+        // Re-sync from actual hardware before deciding whether a rate change is
+        // needed: _currentRate is only ever updated by our own calls, so if
+        // anything outside this app (the game's own fullscreen setup, a driver
+        // renegotiation, etc.) changed the real rate, the cached value would be
+        // stale and ApplyRate's no-op guard would wrongly skip re-applying it.
+        _currentRate = DisplayService.GetCurrentRate();
 
-        if (_hdrSupported)
-        {
-            bool? profileHdr = _profiles.ReadHdrProfile(app);
-            HdrService.SetState(profileHdr ?? _defaultHdr);
-        }
+        int? profileRate = _profiles.ReadRateProfile(app);
+        int  targetRate  = profileRate ?? _defaultRate;
+        bool targetHdr   = _hdrSupported ? (_profiles.ReadHdrProfile(app) ?? _defaultHdr) : _defaultHdr;
+
+        Logger.Log($"ApplyProfile: app='{app}' savedProfileRate={(profileRate?.ToString() ?? "none")} defaultRate={_defaultRate} target={targetRate} hwRateBefore={_currentRate}");
+
+        ApplyDisplayState(targetRate, targetHdr);
     }
 
     // -------------------------------------------------------------------------
@@ -151,6 +165,23 @@ internal sealed class TrayApp : IDisposable
             UpdateTrayIcon(_currentRate);
             Logger.Log($"Rate changed to {rate} Hz");
         }
+        else
+        {
+            Logger.Log($"Rate change to {rate} Hz FAILED (ChangeDisplaySettingsW rejected it).");
+        }
+    }
+
+    /// <summary>
+    /// Applies HDR before refresh rate — never the other way around. On
+    /// bandwidth-constrained links (e.g. a TV on HDMI 2.0) requesting a higher
+    /// refresh rate while still in HDR/higher-bit-depth mode can silently fail
+    /// or get clamped back down by the driver, so HDR must be settled first to
+    /// free up whatever headroom the rate change needs.
+    /// </summary>
+    private void ApplyDisplayState(int rate, bool hdrEnabled)
+    {
+        if (_hdrSupported) HdrService.SetState(hdrEnabled);
+        ApplyRate(rate);
     }
 
     // -------------------------------------------------------------------------
@@ -246,6 +277,15 @@ internal sealed class TrayApp : IDisposable
         string app = _tracker.LastApp;
         if (string.IsNullOrEmpty(app)) app = "Desktop";
 
+        // Remember whatever currently owns foreground/focus (typically the game)
+        // so we can hand it back explicitly once the overlay closes. A real click
+        // into the overlay's controls will activate it at some point no matter
+        // what — that's unavoidable for an interactive dialog — and a fullscreen
+        // app losing activation can drop behind other windows (or get minimized,
+        // for apps using an exclusive-fullscreen swapchain) as a result. Windows
+        // won't restore it on its own, so we do it ourselves.
+        IntPtr priorForeground = GetForegroundWindow();
+
         // Sync reality before opening
         _currentRate = DisplayService.GetCurrentRate();
         UpdateTrayIcon(_currentRate);
@@ -269,24 +309,26 @@ internal sealed class TrayApp : IDisposable
             }
         }
 
+        // Preselect from the saved profile when one exists, not live hardware state —
+        // otherwise if the actual display has drifted from what the profile says
+        // (e.g. mid-thrash, or anything external changed it), the overlay shows the
+        // wrong thing and looks like the saved profile itself is wrong.
+        int  preselectRate = (hasProfile ? _profiles.ReadRateProfile(app) : null) ?? _currentRate;
+        bool preselectHdr  = (hasProfile && _hdrSupported ? _profiles.ReadHdrProfile(app) : null) ?? currHdr;
+
         _overlay = new OverlayWindow(
             activeApp:      app,
             availableRates: DisplayService.GetAvailableRates(),
-            currentRate:    _currentRate,
+            preselectRate:  preselectRate,
             hdrSupported:   _hdrSupported,
-            hdrEnabled:     currHdr,
+            hdrEnabled:     preselectHdr,
             hasProfile:     hasProfile);
-
-        var helper = new WindowInteropHelper(_overlay);
-        helper.EnsureHandle();
-        _tracker.OverlayHandle = helper.Handle;
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {
             _profiles.DeleteRateProfile(app);
             if (_hdrSupported) _profiles.DeleteHdrProfile(app);
-            ApplyRate(_defaultRate);
-            if (_hdrSupported) HdrService.SetState(_defaultHdr);
+            ApplyDisplayState(_defaultRate, _defaultHdr);
         };
 
         _overlay.ApplyRequested += (_, _) =>
@@ -313,18 +355,27 @@ internal sealed class TrayApp : IDisposable
                 }
             }
 
-            ApplyRate(selRate);
-            if (_hdrSupported) HdrService.SetState(hdrVal);
+            ApplyDisplayState(selRate, hdrVal);
             _overlay.ReflectProfileState(saveProfile);
         };
 
         _overlay.Closed += (_, _) =>
         {
-            _tracker.OverlayHandle = IntPtr.Zero;
             _overlay = null;
+            RestoreForeground(priorForeground);
         };
 
         _overlay.Show();
+    }
+
+    /// <summary>Restores whatever window owned foreground before the overlay
+    /// opened — un-minimizing it first if needed (exclusive-fullscreen apps
+    /// commonly auto-minimize on focus loss).</summary>
+    private static void RestoreForeground(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return;
+        if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+        SetForegroundWindow(hwnd);
     }
 
     // -------------------------------------------------------------------------
@@ -332,6 +383,8 @@ internal sealed class TrayApp : IDisposable
     // -------------------------------------------------------------------------
     private void ShowHotkeySettings()
     {
+        IntPtr priorForeground = GetForegroundWindow();
+
         var win = new HotkeySettingsWindow("Overlay Hotkey", _hotkey.Modifiers, _hotkey.Vk)
         {
             SaveRequested = (mods, vk) =>
@@ -341,6 +394,7 @@ internal sealed class TrayApp : IDisposable
                 return ok;
             },
         };
+        win.Closed += (_, _) => RestoreForeground(priorForeground);
         win.Show();
     }
 

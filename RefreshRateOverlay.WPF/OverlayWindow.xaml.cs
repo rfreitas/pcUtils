@@ -29,7 +29,7 @@ public partial class OverlayWindow : Window
     public OverlayWindow(
         string    activeApp,
         List<int> availableRates,
-        int       currentRate,
+        int       preselectRate,
         bool      hdrSupported,
         bool      hdrEnabled,
         bool      hasProfile)
@@ -43,7 +43,7 @@ public partial class OverlayWindow : Window
         for (int i = 0; i < availableRates.Count; i++)
         {
             RateDropDown.Items.Add($"{availableRates[i]} Hz");
-            if (availableRates[i] == currentRate) preSelect = i;
+            if (availableRates[i] == preselectRate) preSelect = i;
         }
         RateDropDown.SelectedIndex = preSelect;
 

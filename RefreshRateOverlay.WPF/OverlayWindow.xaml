@@ -6,6 +6,7 @@
         ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
         Topmost="True"
+        ShowActivated="False"
         ShowInTaskbar="False"
         WindowStartupLocation="CenterScreen"
         Background="#1E1E1E"

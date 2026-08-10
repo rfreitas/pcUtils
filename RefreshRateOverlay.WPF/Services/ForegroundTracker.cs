@@ -28,13 +28,26 @@ internal sealed class ForegroundTracker : IDisposable
     private static readonly string[] IgnoredClasses =
         ["Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow"];
 
+    // Our own process id: any window we own (the settings overlay, the hotkey-
+    // rebind window, any future dialog) must never be treated as "the active
+    // app" for profile purposes. Excluding by PID rather than tracking a single
+    // window handle (the old OverlayHandle approach) covers every window this
+    // process ever creates, not just the one we remembered to wire up.
+    private static readonly uint OwnProcessId = (uint)Environment.ProcessId;
+
     public event EventHandler<string>? AppChanged;
 
     private readonly System.Windows.Forms.Timer _timer;
     private string _lastApp = string.Empty;
 
-    // Set this to the overlay window's handle so we don't react while it is focused
-    public IntPtr OverlayHandle { get; set; } = IntPtr.Zero;
+    // Debounce: a candidate app must be seen on this many consecutive ticks
+    // before we treat it as a real switch. Filters out transient foreground
+    // hand-offs (e.g. a display-mode change's brief blackout, or the settings
+    // overlay opening/closing) that would otherwise falsely trigger a profile
+    // re-application and clobber a value that was just correctly set.
+    private const int RequiredStableTicks = 2;
+    private string? _pendingApp;
+    private int _pendingTicks;
 
     public ForegroundTracker()
     {
@@ -49,18 +62,39 @@ internal sealed class ForegroundTracker : IDisposable
     {
         IntPtr hwnd = GetForegroundWindow();
 
-        // If the overlay itself is focused, don't change state
-        if (OverlayHandle != IntPtr.Zero && hwnd == OverlayHandle)
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        if (pid == OwnProcessId)
+        {
+            _pendingApp = null;
             return;
+        }
 
         string? app = GetProcessName(hwnd);
-        if (app is null) return;
-
-        if (app != _lastApp)
+        if (app is null)
         {
-            _lastApp = app;
-            AppChanged?.Invoke(this, app);
+            _pendingApp = null;
+            return;
         }
+
+        if (app == _lastApp)
+        {
+            _pendingApp = null;
+            return;
+        }
+
+        if (app != _pendingApp)
+        {
+            _pendingApp = app;
+            _pendingTicks = 1;
+            return;
+        }
+
+        if (++_pendingTicks < RequiredStableTicks)
+            return;
+
+        _lastApp = app;
+        _pendingApp = null;
+        AppChanged?.Invoke(this, app);
     }
 
     /// <summary>
