@@ -29,6 +29,7 @@ internal sealed class TrayApp : IDisposable
     private ToolStripMenuItem? _valueItem;
 
     private BacklightSliderWindow? _sliderWindow;
+    private BrightnessOsdWindow? _osd;
 
     private long _lastHotkeyTick;
     private const int HotkeyMinIntervalMs = 90; // throttle for key-repeat
@@ -48,6 +49,7 @@ internal sealed class TrayApp : IDisposable
 
         _brightness = new BrightnessService();
         _brightness.Changed += OnBrightnessChanged;
+        _brightness.HotkeyApplied += OnHotkeyApplied;
 
         _autoBrightness = new AutoBrightnessService(_brightness) { Enabled = _settings.ReadAutoBrightness() };
         _autoBrightness.Initialize();
@@ -103,6 +105,14 @@ internal sealed class TrayApp : IDisposable
 
         if (_sliderWindow is { IsVisible: true })
             _sliderWindow.SetValue(value);
+    }
+
+    /// <summary>Only raised for hotkey-driven changes (not slider drags or tray sync) —
+    /// shows the custom brightness OSD, since Windows has no real one for this TV.</summary>
+    private void OnHotkeyApplied(int value)
+    {
+        _osd ??= new BrightnessOsdWindow();
+        _osd.ShowValue(value);
     }
 
     // -------------------------------------------------------------------------
@@ -268,6 +278,7 @@ internal sealed class TrayApp : IDisposable
         _hotkeyUp.Dispose();
         _hotkeyDown.Dispose();
         _ini.Dispose();
+        _osd?.Close();
         _tray.Visible = false;
         _currentIcon?.Dispose();
         _tray.Dispose();

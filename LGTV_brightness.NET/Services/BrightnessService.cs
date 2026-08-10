@@ -29,6 +29,10 @@ internal sealed class BrightnessService
     /// <summary>Fired on the UI thread whenever the tracked value changes.</summary>
     public event Action<int>? Changed;
 
+    /// <summary>Fired on the UI thread only after a hotkey-driven adjustment (not
+    /// slider drags or tray sync) — drives the on-screen brightness OSD.</summary>
+    public event Action<int>? HotkeyApplied;
+
     public async Task SyncAsync(bool force = false)
     {
         long now = Environment.TickCount64;
@@ -40,14 +44,14 @@ internal sealed class BrightnessService
         if (val is int v)
         {
             _cur = Clamp(v);
-            RaiseChanged(_cur);
+            Raise(Changed, _cur);
         }
     }
 
     public async Task ApplyAsync(int value)
     {
         _cur = Clamp(value);
-        RaiseChanged(_cur);
+        Raise(Changed, _cur);
         await Task.Run(() => LgTvCliService.SetBacklight(_cur));
     }
 
@@ -57,6 +61,7 @@ internal sealed class BrightnessService
     {
         await SyncAsync(force: false);
         await ApplyAsync(_cur + direction * Step);
+        Raise(HotkeyApplied, _cur);
     }
 
     /// <summary>
@@ -66,7 +71,7 @@ internal sealed class BrightnessService
     public void QueueSliderValue(int value)
     {
         _pendingVal = Clamp(value);
-        RaiseChanged(_pendingVal);
+        Raise(Changed, _pendingVal);
 
         _debounce?.Dispose();
         _debounce = new System.Threading.Timer(_ =>
@@ -76,12 +81,12 @@ internal sealed class BrightnessService
         }, null, SliderDebounceMs, Timeout.Infinite);
     }
 
-    private void RaiseChanged(int value)
+    private void Raise(Action<int>? evt, int value)
     {
         if (_uiContext is null || SynchronizationContext.Current == _uiContext)
-            Changed?.Invoke(value);
+            evt?.Invoke(value);
         else
-            _uiContext.Post(_ => Changed?.Invoke(value), null);
+            _uiContext.Post(_ => evt?.Invoke(value), null);
     }
 
     private static int Clamp(int v) => Math.Clamp(v, 0, 100);
