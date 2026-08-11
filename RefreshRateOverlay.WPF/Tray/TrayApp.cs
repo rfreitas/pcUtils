@@ -282,10 +282,10 @@ internal sealed class TrayApp : IDisposable
             if (reverting || sender is not ToolStripMenuItem item) return;
             item.Text = (item.Checked ? check : space) + "Start at Login";
             bool ok = item.Checked
-                // This app runs asInvoker (no admin needed), so the startup task must not
-                // request RunLevel=HighestAvailable — registering that requires the calling
-                // process to already be elevated, which this one deliberately isn't.
-                ? StartupTaskService.Install(TaskName, ExePath, TaskDescription, Logger.Log, requireElevation: false)
+                // The app itself now requires admin (app.manifest), so the startup task must
+                // request RunLevel=HighestAvailable too — an elevated scheduled task launches
+                // silently at login (no UAC prompt), matching a manual elevated launch.
+                ? StartupTaskService.Install(TaskName, ExePath, TaskDescription, Logger.Log, requireElevation: true)
                 : StartupTaskService.Uninstall(TaskName, Logger.Log);
             if (!ok)
             {
@@ -339,6 +339,11 @@ internal sealed class TrayApp : IDisposable
         // won't restore it on its own, so we do it ourselves.
         IntPtr priorForeground = GetForegroundWindow();
 
+        // Must be detected now, before the overlay ever shows: SHQueryUserNotificationState
+        // (inside WindowModeService) reports on whatever is currently the actual foreground
+        // window system-wide, so it has to run while that's still the game, not our overlay.
+        WindowMode windowMode = WindowModeService.Detect(priorForeground);
+
         // Sync reality before opening
         _currentRate = DisplayService.GetCurrentRate();
         UpdateTrayIcon(_currentRate);
@@ -375,7 +380,8 @@ internal sealed class TrayApp : IDisposable
             preselectRate:  preselectRate,
             hdrSupported:   _hdrSupported,
             hdrEnabled:     preselectHdr,
-            hasProfile:     hasProfile);
+            hasProfile:     hasProfile,
+            windowMode:     windowMode);
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {

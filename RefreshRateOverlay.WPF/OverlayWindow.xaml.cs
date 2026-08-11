@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using RefreshRateOverlay.WPF.Services;
 
 namespace RefreshRateOverlay.WPF;
 
@@ -27,17 +29,31 @@ public partial class OverlayWindow : Window
     public event EventHandler? ProfileDeleteRequested;
 
     public OverlayWindow(
-        string    activeApp,
-        List<int> availableRates,
-        int       preselectRate,
-        bool      hdrSupported,
-        bool      hdrEnabled,
-        bool      hasProfile)
+        string     activeApp,
+        List<int>  availableRates,
+        int        preselectRate,
+        bool       hdrSupported,
+        bool       hdrEnabled,
+        bool       hasProfile,
+        WindowMode windowMode)
     {
         InitializeComponent();
 
         ActiveApp = activeApp;
         SubtitleText.Text = $"Active: {activeApp}";
+
+        bool canCheckPresentation = !string.IsNullOrEmpty(activeApp) && activeApp != "Desktop";
+        if (canCheckPresentation)
+        {
+            PresentationText.Text = "Presentation: checking…";
+            RecommendationText.Text = "";
+            _ = RunPresentationCheckAsync(activeApp, windowMode);
+        }
+        else
+        {
+            PresentationText.Text = $"Mode: {WindowModeService.Describe(windowMode)}";
+            RecommendationText.Text = "";
+        }
 
         int preSelect = 0;
         for (int i = 0; i < availableRates.Count; i++)
@@ -74,4 +90,38 @@ public partial class OverlayWindow : Window
     /// <summary>Reflects a profile save/delete that just happened via ApplyRequested.</summary>
     public void ReflectProfileState(bool hasProfile) =>
         DeleteProfileButton.Visibility = hasProfile ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>
+    /// Runs automatically whenever the overlay opens for a real app — no button,
+    /// no extra prompt: the whole process is already elevated (app.manifest), so
+    /// this is just a normal ~3s background capture. Fills in both the raw
+    /// presentation-mode line and the recommended-mode verdict line.
+    /// </summary>
+    private async Task RunPresentationCheckAsync(string app, WindowMode currentMode)
+    {
+        var result = await PresentModeService.CaptureAsync(app);
+
+        if (result is null)
+        {
+            PresentationText.Text = $"Mode: {WindowModeService.Describe(currentMode)} — presentation data unavailable.";
+            RecommendationText.Text = "";
+            return;
+        }
+
+        PresentationText.Text = $"Presentation: {result.RawMode}";
+
+        WindowMode? recommended = result.Verdict switch
+        {
+            PresentModeVerdict.Optimal or PresentModeVerdict.Good => currentMode,
+            PresentModeVerdict.Inefficient                        => WindowMode.ExclusiveFullscreen,
+            _                                                     => null,
+        };
+
+        RecommendationText.Text = recommended switch
+        {
+            null                                  => "Recommendation unavailable.",
+            var r when r == currentMode            => $"✓ {WindowModeService.Describe(currentMode)} is correct.",
+            _                                       => $"✗ Recommended: {WindowModeService.Describe(recommended.Value)} (currently {WindowModeService.Describe(currentMode)}).",
+        };
+    }
 }
