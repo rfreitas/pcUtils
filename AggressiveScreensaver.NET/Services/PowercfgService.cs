@@ -29,6 +29,13 @@ internal sealed class PowercfgService : IDisposable
     public string BlockingScreenApps { get; private set; } = "";
 
     /// <summary>
+    /// Identity filenames (e.g. "vlc.exe") of the current DISPLAY blockers, in the
+    /// same order/filtering as <see cref="BlockingScreenApps"/>. Used to check
+    /// whether a blocking app is the foreground window.
+    /// </summary>
+    public IReadOnlyList<string> BlockingScreenAppFilenames { get; private set; } = Array.Empty<string>();
+
+    /// <summary>
     /// Comma-separated SYSTEM/AWAYMODE blockers. Empty = none.
     /// </summary>
     public string BlockingSleepApps { get; private set; } = "";
@@ -75,8 +82,9 @@ internal sealed class PowercfgService : IDisposable
     {
         if (!IsAdmin())
         {
-            BlockingScreenApps = "";
-            BlockingSleepApps  = "";
+            BlockingScreenApps         = "";
+            BlockingScreenAppFilenames = Array.Empty<string>();
+            BlockingSleepApps          = "";
             Updated?.Invoke(this, EventArgs.Empty);
             return;
         }
@@ -87,7 +95,8 @@ internal sealed class PowercfgService : IDisposable
             var parsed = PowercfgParser.Parse(output);
 
             // Process DISPLAY results
-            var screenTexts = new List<string>();
+            var screenTexts     = new List<string>();
+            var screenFilenames = new List<string>();
             foreach (var app in parsed.Screen)
             {
                 // Track history
@@ -99,7 +108,10 @@ internal sealed class PowercfgService : IDisposable
 
                 // Filter by blacklist
                 if (!BlacklistedApps.ContainsKey(app.Filename))
+                {
                     screenTexts.Add(app.Text);
+                    screenFilenames.Add(app.Filename);
+                }
             }
 
             // Process SLEEP results
@@ -107,9 +119,10 @@ internal sealed class PowercfgService : IDisposable
             foreach (var app in parsed.Sleep)
                 sleepTexts.Add(app.Text);
 
-            BlockingScreenApps = BlockingFormatter.Format(screenTexts);
-            BlockingSleepApps  = BlockingFormatter.Format(sleepTexts);
-            LastCheckTick      = Environment.TickCount64;
+            BlockingScreenApps         = BlockingFormatter.Format(screenTexts);
+            BlockingScreenAppFilenames = screenFilenames;
+            BlockingSleepApps          = BlockingFormatter.Format(sleepTexts);
+            LastCheckTick              = Environment.TickCount64;
         }
         catch (Exception ex)
         {

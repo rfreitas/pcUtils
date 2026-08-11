@@ -99,4 +99,66 @@ public class TrayMenuBehaviorTests
         Assert.StartsWith("✓", Item(menu, "Start at Login").Text);
         Assert.StartsWith("   ", Item(menu, "Suppress in Fullscreen").Text);
     }
+
+    // -------------------------------------------------------------------------
+    // Ignore Unfocused Blockers — initial state
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void IgnoreUnfocusedBlockers_ItemExists()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false);
+        Assert.NotNull(Item(menu, "Ignore Unfocused Blockers"));
+    }
+
+    [Fact]
+    public void IgnoreUnfocusedBlockers_DefaultsToChecked()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false);
+        var item = Item(menu, "Ignore Unfocused Blockers");
+        Assert.True(item.Checked);
+        Assert.StartsWith("✓", item.Text);
+    }
+
+    [Fact]
+    public void IgnoreUnfocusedBlockers_False_ItemUnchecked()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, ignoreUnfocusedBlockers: false);
+        var item = Item(menu, "Ignore Unfocused Blockers");
+        Assert.False(item.Checked);
+        Assert.StartsWith("   ", item.Text);
+    }
+
+    // -------------------------------------------------------------------------
+    // Ignore Unfocused Blockers — toggling
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void IgnoreUnfocusedBlockers_Toggle_InvokesCallbackWithNewState()
+    {
+        bool? received = null;
+        using var menu = TrayMenuFactory.Build(
+            startAtLogin: false,
+            ignoreUnfocusedBlockers: true,
+            onIgnoreUnfocusedBlockersChanged: v => { received = v; return true; });
+
+        Item(menu, "Ignore Unfocused Blockers").Checked = false;
+
+        Assert.False(received);
+    }
+
+    [Fact]
+    public void IgnoreUnfocusedBlockers_Toggle_CallbackReturnsFalse_Reverts()
+    {
+        using var menu = TrayMenuFactory.Build(
+            startAtLogin: false,
+            ignoreUnfocusedBlockers: true,
+            onIgnoreUnfocusedBlockersChanged: _ => false);
+
+        var item = Item(menu, "Ignore Unfocused Blockers");
+        item.Checked = false;
+
+        Assert.True(item.Checked);
+        Assert.StartsWith("✓", item.Text);
+    }
 }

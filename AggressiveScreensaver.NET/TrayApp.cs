@@ -36,6 +36,7 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // -------------------------------------------------------------------------
     private int  _blankThresholdSec;
     private bool _suppressFullscreen;
+    private bool _ignoreUnfocusedBlockers;
     private static readonly int[] TimeoutSteps = [15, 30, 60, 120, 180, 300, 600, 900, 1200, 1800];
 
     // -------------------------------------------------------------------------
@@ -51,8 +52,9 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
         string iniPath = System.IO.Path.Combine(AppContext.BaseDirectory, "AggressiveScreensaver.ini");
         _ini = new IniStore(iniPath);
 
-        _blankThresholdSec  = _ini.ReadInt("Settings", "BlankThreshold",    30);
-        _suppressFullscreen = _ini.ReadInt("Settings", "SuppressFullscreen", 0) != 0;
+        _blankThresholdSec       = _ini.ReadInt("Settings", "BlankThreshold",    30);
+        _suppressFullscreen      = _ini.ReadInt("Settings", "SuppressFullscreen", 0) != 0;
+        _ignoreUnfocusedBlockers = _ini.ReadInt("Settings", "IgnoreUnfocusedBlockers", 1) != 0;
 
         // Input
         var idleTimers  = new IdleTimers();
@@ -105,21 +107,74 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // -------------------------------------------------------------------------
     private void OnAgentIdleTicked(object? sender, EventArgs e)
     {
+        bool screenBlocked = IsScreenBlocked();
+
         // A screen-blocking app (e.g. video player) counts as activity: reset the
         // idle counter while it is present so the full threshold must elapse again
         // after it stops before we blank.
-        if (!string.IsNullOrEmpty(_powercfg.BlockingScreenApps))
+        if (screenBlocked)
             _agentIdle.ResetActivity();
 
         bool shouldBlank =
             _agentIdle.AgentIdleSeconds >= _blankThresholdSec &&
-            string.IsNullOrEmpty(_powercfg.BlockingScreenApps) &&
+            !screenBlocked &&
             (!_suppressFullscreen || !IsFullscreenAppForeground());
 
         if (shouldBlank && !_overlay.IsBlanked)
             _overlay.Show();
         else if (!shouldBlank && _overlay.IsBlanked)
             _overlay.Remove();
+    }
+
+    /// <summary>
+    /// Whether a DISPLAY power request should currently hold off blanking.
+    /// When <see cref="_ignoreUnfocusedBlockers"/> is set, a blocking app only
+    /// counts while it is the foreground window — a blocker running unfocused in
+    /// the background is ignored, so the idle timer keeps ticking and blanking
+    /// still happens.
+    /// </summary>
+    private bool IsScreenBlocked()
+    {
+        if (string.IsNullOrEmpty(_powercfg.BlockingScreenApps))
+            return false;
+
+        return !_ignoreUnfocusedBlockers || IsBlockingAppForeground();
+    }
+
+    /// <summary>
+    /// True if the current foreground window belongs to one of the apps currently
+    /// holding a DISPLAY power request.
+    /// </summary>
+    private bool IsBlockingAppForeground()
+    {
+        var filenames = _powercfg.BlockingScreenAppFilenames;
+        if (filenames.Count == 0) return false;
+
+        string? fg = GetForegroundProcessFilename();
+        if (fg is null) return false;
+
+        foreach (var f in filenames)
+        {
+            if (string.Equals(f, fg, StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(Path.GetFileNameWithoutExtension(f), Path.GetFileNameWithoutExtension(fg), StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    private static string? GetForegroundProcessFilename()
+    {
+        try
+        {
+            IntPtr hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return null;
+
+            GetWindowThreadProcessId(hwnd, out uint pid);
+            using var proc = System.Diagnostics.Process.GetProcessById((int)pid);
+            return Path.GetFileName(proc.MainModule?.FileName) is { Length: > 0 } name ? name : proc.ProcessName + ".exe";
+        }
+        catch { return null; }
     }
 
     // -------------------------------------------------------------------------
@@ -199,18 +254,27 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
 
     private ContextMenuStrip BuildContextMenu() =>
         TrayMenuFactory.Build(
-            startAtLogin:                StartupTaskService.IsInstalled(TaskName),
-            suppressFullscreen:          _suppressFullscreen,
-            onBlacklist:                 ShowBlacklistForm,
-            onDebug:                     ShowDebugForm,
-            onStartupChanged:            HandleStartupToggle,
-            onSuppressFullscreenChanged: HandleSuppressFullscreenToggle,
-            onExit:                      ExitApp);
+            startAtLogin:                     StartupTaskService.IsInstalled(TaskName),
+            suppressFullscreen:               _suppressFullscreen,
+            ignoreUnfocusedBlockers:          _ignoreUnfocusedBlockers,
+            onBlacklist:                      ShowBlacklistForm,
+            onDebug:                          ShowDebugForm,
+            onStartupChanged:                 HandleStartupToggle,
+            onSuppressFullscreenChanged:      HandleSuppressFullscreenToggle,
+            onIgnoreUnfocusedBlockersChanged: HandleIgnoreUnfocusedBlockersToggle,
+            onExit:                           ExitApp);
 
     private bool HandleSuppressFullscreenToggle(bool wantEnabled)
     {
         _suppressFullscreen = wantEnabled;
         _ini.DebouncedSave(() => _ini.WriteInt("Settings", "SuppressFullscreen", _suppressFullscreen ? 1 : 0));
+        return true;
+    }
+
+    private bool HandleIgnoreUnfocusedBlockersToggle(bool wantEnabled)
+    {
+        _ignoreUnfocusedBlockers = wantEnabled;
+        _ini.DebouncedSave(() => _ini.WriteInt("Settings", "IgnoreUnfocusedBlockers", _ignoreUnfocusedBlockers ? 1 : 0));
         return true;
     }
 

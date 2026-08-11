@@ -22,10 +22,12 @@ internal static class TrayMenuFactory
     public static ContextMenuStrip Build(
         bool       startAtLogin,
         bool       suppressFullscreen      = false,
+        bool       ignoreUnfocusedBlockers = true,
         Action?    onBlacklist             = null,
         Action?    onDebug                 = null,
         Func<bool, bool>? onStartupChanged         = null,
         Func<bool, bool>? onSuppressFullscreenChanged = null,
+        Func<bool, bool>? onIgnoreUnfocusedBlockersChanged = null,
         Action?    onExit                  = null)
     {
         var menu = new ContextMenuStrip
@@ -122,6 +124,43 @@ internal static class TrayMenuFactory
         }
 
         menu.Items.Add(fullscreenItem);
+
+        // Ignore Unfocused Blockers checkbox
+        var unfocusedBlockersItem = new ToolStripMenuItem((ignoreUnfocusedBlockers ? check : space) + "Ignore Unfocused Blockers")
+        {
+            CheckOnClick = true,
+            Checked      = ignoreUnfocusedBlockers,
+        };
+
+        if (onIgnoreUnfocusedBlockersChanged is not null)
+        {
+            bool reverting = false;
+            unfocusedBlockersItem.CheckedChanged += (sender, _) =>
+            {
+                if (reverting || sender is not ToolStripMenuItem item) return;
+
+                item.Text = (item.Checked ? check : space) + "Ignore Unfocused Blockers";
+
+                bool ok = onIgnoreUnfocusedBlockersChanged(item.Checked);
+                if (!ok)
+                {
+                    reverting = true;
+                    item.Checked = !item.Checked;
+                    item.Text = (item.Checked ? check : space) + "Ignore Unfocused Blockers";
+                    reverting = false;
+                }
+            };
+        }
+        else
+        {
+            unfocusedBlockersItem.CheckedChanged += (sender, _) =>
+            {
+                if (sender is ToolStripMenuItem item)
+                    item.Text = (item.Checked ? check : space) + "Ignore Unfocused Blockers";
+            };
+        }
+
+        menu.Items.Add(unfocusedBlockersItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(space + "Exit", null, (_, _) => onExit?.Invoke());
 
