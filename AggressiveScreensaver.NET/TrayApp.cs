@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using AggressiveScreensaver.Forms;
 using AggressiveScreensaver.Input;
+using AggressiveScreensaver.Parsing;
 using AggressiveScreensaver.Services;
 using Shared;
 
@@ -145,21 +146,8 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     /// True if the current foreground window belongs to one of the apps currently
     /// holding a DISPLAY power request.
     /// </summary>
-    private bool IsBlockingAppForeground()
-    {
-        var filenames = _powercfg.BlockingScreenAppFilenames;
-        if (filenames.Count == 0) return false;
-
-        string? fg = GetForegroundProcessFilename();
-        if (fg is null) return false;
-
-        foreach (var f in filenames)
-        {
-            if (string.Equals(f, fg, StringComparison.OrdinalIgnoreCase)) return true;
-            if (string.Equals(Path.GetFileNameWithoutExtension(f), Path.GetFileNameWithoutExtension(fg), StringComparison.OrdinalIgnoreCase)) return true;
-        }
-        return false;
-    }
+    private bool IsBlockingAppForeground() =>
+        BlockerFocusMatcher.IsBlockerFocused(_powercfg.BlockingScreenAppFilenames, GetForegroundProcessFilename());
 
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
