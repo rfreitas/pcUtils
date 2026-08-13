@@ -22,6 +22,10 @@ public partial class OverlayWindow : Window
     public bool SaveProfile => SaveCheckBox.IsChecked == true;
     public bool HdrEnabled  => HdrCheckBox.IsChecked == true;
 
+    /// <summary>Null means "— Not Managed —" (index 0): leave DSX alone.</summary>
+    public string? SelectedDsxProfile =>
+        DsxProfileDropDown.SelectedIndex > 0 ? DsxProfileDropDown.SelectedItem as string : null;
+
     /// <summary>Raised immediately on Apply click; does not close the window.</summary>
     public event EventHandler? ApplyRequested;
 
@@ -35,12 +39,15 @@ public partial class OverlayWindow : Window
         bool       hdrSupported,
         bool       hdrEnabled,
         bool       hasProfile,
-        WindowMode windowMode)
+        WindowMode windowMode,
+        string?    preselectDsxProfile)
     {
         InitializeComponent();
 
         ActiveApp = activeApp;
         SubtitleText.Text = $"Active: {activeApp}";
+
+        _ = LoadDsxProfilesAsync(preselectDsxProfile);
 
         bool canCheckPresentation = !string.IsNullOrEmpty(activeApp) && activeApp != "Desktop";
         if (canCheckPresentation)
@@ -123,5 +130,32 @@ public partial class OverlayWindow : Window
             var r when r == currentMode            => $"✓ {WindowModeService.Describe(currentMode)} is correct.",
             _                                       => $"✗ Recommended: {WindowModeService.Describe(recommended.Value)} (currently {WindowModeService.Describe(currentMode)}).",
         };
+    }
+
+    /// <summary>
+    /// Populates the controller-profile dropdown from DSX itself (via
+    /// DSX_Console.exe) and reveals the row — stays hidden if DSX isn't
+    /// installed, isn't running, has no controller connected, or has no
+    /// profiles defined, since there's nothing useful to offer in that case.
+    /// </summary>
+    private async Task LoadDsxProfilesAsync(string? preselect)
+    {
+        if (!DsxProfileService.IsAvailable) return;
+
+        var devices = await DsxProfileService.ListDevicesAsync();
+        if (devices.Count == 0) return;
+
+        var profiles = await DsxProfileService.ListProfilesAsync();
+        if (profiles.Count == 0) return;
+
+        DsxProfileDropDown.Items.Add("— Not Managed —");
+        int preIndex = 0;
+        for (int i = 0; i < profiles.Count; i++)
+        {
+            DsxProfileDropDown.Items.Add(profiles[i]);
+            if (profiles[i] == preselect) preIndex = i + 1;
+        }
+        DsxProfileDropDown.SelectedIndex = preIndex;
+        DsxProfileRow.Visibility = Visibility.Visible;
     }
 }

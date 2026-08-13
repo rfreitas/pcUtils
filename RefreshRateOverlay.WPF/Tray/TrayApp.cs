@@ -108,6 +108,7 @@ internal sealed class TrayApp : IDisposable
     {
         Logger.Log($"ForegroundTracker: app changed -> '{app}'");
         ApplyProfile(app);
+        ApplyDsxProfileForApp(app);
     }
 
     private void ApplyProfile(string app)
@@ -126,6 +127,30 @@ internal sealed class TrayApp : IDisposable
         Logger.Log($"ApplyProfile: app='{app}' savedProfileRate={(profileRate?.ToString() ?? "none")} defaultRate={_defaultRate} target={targetRate} hwRateBefore={_currentRate}");
 
         ApplyDisplayState(targetRate, targetHdr);
+    }
+
+    // -------------------------------------------------------------------------
+    // DSX controller-profile application
+    // -------------------------------------------------------------------------
+
+    /// <summary>No saved mapping means "leave the controller alone" — unlike
+    /// rate/HDR there's no meaningful system-wide default to fall back to.</summary>
+    private void ApplyDsxProfileForApp(string app)
+    {
+        string? profile = _profiles.ReadDsxProfile(app);
+        if (profile is not null) _ = ApplyDsxProfileToDevicesAsync(profile);
+    }
+
+    private static async Task ApplyDsxProfileToDevicesAsync(string profileName)
+    {
+        var devices = await DsxProfileService.ListDevicesAsync();
+        if (devices.Count == 0)
+        {
+            Logger.Log($"ApplyDsxProfile: no DSX devices connected, wanted '{profileName}'.");
+            return;
+        }
+        foreach (var device in devices)
+            await DsxProfileService.ChangeProfileAsync(device.MacAddress, profileName);
     }
 
     // -------------------------------------------------------------------------
@@ -350,7 +375,8 @@ internal sealed class TrayApp : IDisposable
 
         (_, bool currHdr) = _hdrSupported ? HdrService.GetState() : (false, _defaultHdr);
 
-        bool hasProfile = _profiles.HasRateProfile(app);
+        string? dsxProfile = _profiles.ReadDsxProfile(app);
+        bool hasProfile = _profiles.HasRateProfile(app) || dsxProfile is not null;
 
         // If not in a profile, ensure defaults match reality
         if (!hasProfile)
@@ -381,30 +407,36 @@ internal sealed class TrayApp : IDisposable
             hdrSupported:   _hdrSupported,
             hdrEnabled:     preselectHdr,
             hasProfile:     hasProfile,
-            windowMode:     windowMode);
+            windowMode:     windowMode,
+            preselectDsxProfile: dsxProfile);
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {
             _profiles.DeleteRateProfile(app);
             if (_hdrSupported) _profiles.DeleteHdrProfile(app);
+            _profiles.DeleteDsxProfile(app);
             ApplyDisplayState(_defaultRate, _defaultHdr);
         };
 
         _overlay.ApplyRequested += (_, _) =>
         {
-            int  selRate     = _overlay!.SelectedRate;
-            bool saveProfile = _overlay.SaveProfile;
-            bool hdrVal      = _overlay.HdrEnabled;
+            int     selRate     = _overlay!.SelectedRate;
+            bool    saveProfile = _overlay.SaveProfile;
+            bool    hdrVal      = _overlay.HdrEnabled;
+            string? selDsx      = _overlay.SelectedDsxProfile;
 
             if (saveProfile)
             {
                 _profiles.WriteRateProfile(app, selRate);
                 if (_hdrSupported) _profiles.WriteHdrProfile(app, hdrVal);
+                if (selDsx is not null) _profiles.WriteDsxProfile(app, selDsx);
+                else _profiles.DeleteDsxProfile(app);
             }
             else
             {
                 _profiles.DeleteRateProfile(app);
                 if (_hdrSupported) _profiles.DeleteHdrProfile(app);
+                _profiles.DeleteDsxProfile(app);
                 _defaultRate = selRate;
                 _profiles.WriteDefaultRate(selRate);
                 if (_hdrSupported)
@@ -415,6 +447,7 @@ internal sealed class TrayApp : IDisposable
             }
 
             ApplyDisplayState(selRate, hdrVal);
+            if (selDsx is not null) _ = ApplyDsxProfileToDevicesAsync(selDsx);
             _overlay.ReflectProfileState(saveProfile);
         };
 

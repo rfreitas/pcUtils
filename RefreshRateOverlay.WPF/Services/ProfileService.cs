@@ -10,6 +10,7 @@ internal sealed class ProfileService
     private const string SecSettings    = "Settings";
     private const string SecProfiles    = "Profiles";
     private const string SecHdrProfiles = "HDRProfiles";
+    private const string SecDsxProfiles = "ControllerProfiles";
     private const string KeyDefaultRate = "DefaultRefreshRate";
     private const string KeyDefaultHdr  = "DefaultHDR";
     private const string KeyHotkeyMods  = "HotkeyModifiers";
@@ -58,6 +59,22 @@ internal sealed class ProfileService
 
     public void DeleteHdrProfile(string app) =>
         _ini.DeleteKey(SecHdrProfiles, app);
+
+    // ---- controller (DSX) profiles ------------------------------------------
+    // Unlike rate/HDR, there's no meaningful "default" controller profile — an
+    // app with nothing saved here just means DSX is left alone on switch.
+
+    public string? ReadDsxProfile(string app)
+    {
+        string v = _ini.ReadString(SecDsxProfiles, app);
+        return v.Length > 0 ? v : null;
+    }
+
+    public void WriteDsxProfile(string app, string profile) =>
+        _ini.WriteString(SecDsxProfiles, app, profile);
+
+    public void DeleteDsxProfile(string app) =>
+        _ini.DeleteKey(SecDsxProfiles, app);
 
     // ---- hotkey ---------------------------------------------------------------
 
