@@ -63,18 +63,18 @@ internal sealed class TrayApp : IDisposable
         (_hdrSupported, bool hdrEnabled) = HdrService.GetState();
 
         _currentRate = DisplayService.GetCurrentRate();
-        _defaultRate = _profiles.ReadDefaultRate();
-        _defaultHdr  = _hdrSupported && _profiles.ReadDefaultHdr();
+        _defaultRate = _profiles.Rate.ReadDefault();
+        _defaultHdr  = _hdrSupported && _profiles.Hdr.ReadDefault();
 
         if (_defaultRate == 60 && _currentRate > 0)
         {
             _defaultRate = _currentRate;
-            _profiles.WriteDefaultRate(_defaultRate);
+            _profiles.Rate.WriteDefault(_defaultRate);
         }
         if (_hdrSupported)
         {
             _defaultHdr = hdrEnabled;
-            _profiles.WriteDefaultHdr(_defaultHdr);
+            _profiles.Hdr.WriteDefault(_defaultHdr);
         }
 
         ApplyDisplayState(_defaultRate, _defaultHdr);
@@ -120,11 +120,13 @@ internal sealed class TrayApp : IDisposable
         // stale and ApplyRate's no-op guard would wrongly skip re-applying it.
         _currentRate = DisplayService.GetCurrentRate();
 
-        int? profileRate = _profiles.ReadRateProfile(app);
-        int  targetRate  = profileRate ?? _defaultRate;
-        bool targetHdr   = _hdrSupported ? (_profiles.ReadHdrProfile(app) ?? _defaultHdr) : _defaultHdr;
+        bool hasProfileRate = _profiles.Rate.TryReadProfile(app, out int profileRate);
+        int  targetRate     = hasProfileRate ? profileRate : _defaultRate;
+        bool targetHdr      = _hdrSupported && _profiles.Hdr.TryReadProfile(app, out bool profileHdr)
+            ? profileHdr
+            : _defaultHdr;
 
-        Logger.Log($"ApplyProfile: app='{app}' savedProfileRate={(profileRate?.ToString() ?? "none")} defaultRate={_defaultRate} target={targetRate} hwRateBefore={_currentRate}");
+        Logger.Log($"ApplyProfile: app='{app}' savedProfileRate={(hasProfileRate ? profileRate.ToString() : "none")} defaultRate={_defaultRate} target={targetRate} hwRateBefore={_currentRate}");
 
         ApplyDisplayState(targetRate, targetHdr);
     }
@@ -133,12 +135,13 @@ internal sealed class TrayApp : IDisposable
     // DSX controller-profile application
     // -------------------------------------------------------------------------
 
-    /// <summary>No saved mapping means "leave the controller alone" — unlike
-    /// rate/HDR there's no meaningful system-wide default to fall back to.</summary>
+    /// <summary>Falls back to the default controller profile the same way rate/HDR
+    /// fall back to _defaultRate/_defaultHdr. An empty default means "leave the
+    /// controller alone" (never configured).</summary>
     private void ApplyDsxProfileForApp(string app)
     {
-        string? profile = _profiles.ReadDsxProfile(app);
-        if (profile is not null) _ = ApplyDsxProfileToDevicesAsync(profile);
+        string profile = _profiles.Dsx.TryReadProfile(app, out string p) ? p : _profiles.Dsx.ReadDefault();
+        if (profile.Length > 0) _ = ApplyDsxProfileToDevicesAsync(profile);
     }
 
     private static async Task ApplyDsxProfileToDevicesAsync(string profileName)
@@ -166,22 +169,22 @@ internal sealed class TrayApp : IDisposable
 
         string lastApp = _tracker.LastApp;
 
-        if (_profiles.ReadRateProfile(lastApp) is null)
+        if (!_profiles.Rate.TryReadProfile(lastApp, out _))
         {
             if (_defaultRate != _currentRate)
             {
                 _defaultRate = _currentRate;
-                _profiles.WriteDefaultRate(_defaultRate);
+                _profiles.Rate.WriteDefault(_defaultRate);
             }
         }
 
-        if (_hdrSupported && _profiles.ReadHdrProfile(lastApp) is null)
+        if (_hdrSupported && !_profiles.Hdr.TryReadProfile(lastApp, out _))
         {
             (_, bool currHdr) = HdrService.GetState();
             if (_defaultHdr != currHdr)
             {
                 _defaultHdr = currHdr;
-                _profiles.WriteDefaultHdr(_defaultHdr);
+                _profiles.Hdr.WriteDefault(_defaultHdr);
             }
         }
     }
@@ -375,8 +378,15 @@ internal sealed class TrayApp : IDisposable
 
         (_, bool currHdr) = _hdrSupported ? HdrService.GetState() : (false, _defaultHdr);
 
-        string? dsxProfile = _profiles.ReadDsxProfile(app);
-        bool hasProfile = _profiles.HasRateProfile(app) || dsxProfile is not null;
+        // hasDsxProfile drives the Save-checkbox/delete-button state — only a
+        // per-app entry counts as "this app has its own profile". dsxProfile
+        // (what the dropdown preselects) additionally falls back to the default,
+        // same as preselectRate/preselectHdr below, so an app with no profile of
+        // its own still shows what's actually applied instead of "Not Managed".
+        bool    hasDsxProfile = _profiles.Dsx.TryReadProfile(app, out string dsxVal);
+        string  defaultDsx    = _profiles.Dsx.ReadDefault();
+        string? dsxProfile    = hasDsxProfile ? dsxVal : (defaultDsx.Length > 0 ? defaultDsx : null);
+        bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile;
 
         // If not in a profile, ensure defaults match reality
         if (!hasProfile)
@@ -384,12 +394,12 @@ internal sealed class TrayApp : IDisposable
             if (_defaultRate != _currentRate)
             {
                 _defaultRate = _currentRate;
-                _profiles.WriteDefaultRate(_defaultRate);
+                _profiles.Rate.WriteDefault(_defaultRate);
             }
             if (_hdrSupported && _defaultHdr != currHdr)
             {
                 _defaultHdr = currHdr;
-                _profiles.WriteDefaultHdr(_defaultHdr);
+                _profiles.Hdr.WriteDefault(_defaultHdr);
             }
         }
 
@@ -397,8 +407,8 @@ internal sealed class TrayApp : IDisposable
         // otherwise if the actual display has drifted from what the profile says
         // (e.g. mid-thrash, or anything external changed it), the overlay shows the
         // wrong thing and looks like the saved profile itself is wrong.
-        int  preselectRate = (hasProfile ? _profiles.ReadRateProfile(app) : null) ?? _currentRate;
-        bool preselectHdr  = (hasProfile && _hdrSupported ? _profiles.ReadHdrProfile(app) : null) ?? currHdr;
+        int  preselectRate = (hasProfile && _profiles.Rate.TryReadProfile(app, out int prRate)) ? prRate : _currentRate;
+        bool preselectHdr  = (hasProfile && _hdrSupported && _profiles.Hdr.TryReadProfile(app, out bool prHdr)) ? prHdr : currHdr;
 
         _overlay = new OverlayWindow(
             activeApp:      app,
@@ -412,9 +422,9 @@ internal sealed class TrayApp : IDisposable
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {
-            _profiles.DeleteRateProfile(app);
-            if (_hdrSupported) _profiles.DeleteHdrProfile(app);
-            _profiles.DeleteDsxProfile(app);
+            _profiles.Rate.DeleteProfile(app);
+            if (_hdrSupported) _profiles.Hdr.DeleteProfile(app);
+            _profiles.Dsx.DeleteProfile(app);
             ApplyDisplayState(_defaultRate, _defaultHdr);
         };
 
@@ -425,25 +435,20 @@ internal sealed class TrayApp : IDisposable
             bool    hdrVal      = _overlay.HdrEnabled;
             string? selDsx      = _overlay.SelectedDsxProfile;
 
-            if (saveProfile)
+            _defaultRate = SaveOrClear(_profiles.Rate, app, saveProfile, selRate, _defaultRate);
+            if (_hdrSupported)
+                _defaultHdr = SaveOrClear(_profiles.Hdr, app, saveProfile, hdrVal, _defaultHdr);
+
+            // Only touch DSX storage if the dropdown was actually live this session
+            // (DSX was reachable) — otherwise it was a grayed-out echo of whatever's
+            // saved, "nothing selected" doesn't mean the user chose to clear it, and
+            // writing here would wipe the saved profile just because DSX wasn't up yet.
+            if (_overlay.DsxProfileEditable)
             {
-                _profiles.WriteRateProfile(app, selRate);
-                if (_hdrSupported) _profiles.WriteHdrProfile(app, hdrVal);
-                if (selDsx is not null) _profiles.WriteDsxProfile(app, selDsx);
-                else _profiles.DeleteDsxProfile(app);
-            }
-            else
-            {
-                _profiles.DeleteRateProfile(app);
-                if (_hdrSupported) _profiles.DeleteHdrProfile(app);
-                _profiles.DeleteDsxProfile(app);
-                _defaultRate = selRate;
-                _profiles.WriteDefaultRate(selRate);
-                if (_hdrSupported)
-                {
-                    _defaultHdr = hdrVal;
-                    _profiles.WriteDefaultHdr(hdrVal);
-                }
+                // "— Not Managed —" (selDsx == null) always clears rather than saving/
+                // defaulting an empty selection — there's nothing meaningful to persist.
+                if (selDsx is not null) SaveOrClear(_profiles.Dsx, app, saveProfile, selDsx, _profiles.Dsx.ReadDefault());
+                else _profiles.Dsx.DeleteProfile(app);
             }
 
             ApplyDisplayState(selRate, hdrVal);
@@ -458,6 +463,27 @@ internal sealed class TrayApp : IDisposable
         };
 
         _overlay.Show();
+    }
+
+    /// <summary>
+    /// Shared save path for every setting type (rate, HDR, DSX profile): saved
+    /// per-app when saveProfile is set, otherwise persisted as the app-agnostic
+    /// default. Routing all settings through this one branch — instead of each
+    /// getting its own hand-written if/else — is what keeps "save as general"
+    /// from silently having no effect for a setting type that never wired up
+    /// its default half.
+    /// </summary>
+    private static T SaveOrClear<T>(ProfileSetting<T> setting, string app, bool saveProfile, T value, T currentDefault)
+    {
+        if (saveProfile)
+        {
+            setting.WriteProfile(app, value);
+            return currentDefault;
+        }
+
+        setting.DeleteProfile(app);
+        setting.WriteDefault(value);
+        return value;
     }
 
     /// <summary>Restores whatever window owned foreground before the overlay

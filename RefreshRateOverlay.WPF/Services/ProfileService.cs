@@ -1,82 +1,48 @@
-using System.Collections.Generic;
-
 namespace RefreshRateOverlay.WPF.Services;
 
 /// <summary>
-/// Manages per-app refresh-rate and HDR profiles persisted in the INI file.
+/// Owns the three per-app profile settings (rate, HDR, DSX controller profile)
+/// plus the hotkey. Each setting is a ProfileSetting&lt;T&gt; built the same
+/// way, so default + per-app persistence stays structurally identical across
+/// types instead of being hand-duplicated per setting.
 /// </summary>
 internal sealed class ProfileService
 {
-    private const string SecSettings    = "Settings";
-    private const string SecProfiles    = "Profiles";
-    private const string SecHdrProfiles = "HDRProfiles";
-    private const string SecDsxProfiles = "ControllerProfiles";
-    private const string KeyDefaultRate = "DefaultRefreshRate";
-    private const string KeyDefaultHdr  = "DefaultHDR";
-    private const string KeyHotkeyMods  = "HotkeyModifiers";
-    private const string KeyHotkeyVk    = "HotkeyKey";
+    private const string SecSettings   = "Settings";
+    private const string KeyHotkeyMods = "HotkeyModifiers";
+    private const string KeyHotkeyVk   = "HotkeyKey";
 
     private readonly IniStore _ini;
 
-    public ProfileService(IniStore ini) => _ini = ini;
+    public ProfileSetting<int>    Rate { get; }
+    public ProfileSetting<bool>   Hdr  { get; }
+    public ProfileSetting<string> Dsx  { get; }
 
-    // ---- defaults -----------------------------------------------------------
-
-    public int  ReadDefaultRate()           => _ini.ReadInt(SecSettings, KeyDefaultRate, 60);
-    public void WriteDefaultRate(int rate)  => _ini.WriteInt(SecSettings, KeyDefaultRate, rate);
-
-    public bool ReadDefaultHdr()            => _ini.ReadBool(SecSettings, KeyDefaultHdr, false);
-    public void WriteDefaultHdr(bool hdr)   => _ini.WriteBool(SecSettings, KeyDefaultHdr, hdr);
-
-    // ---- rate profiles ------------------------------------------------------
-
-    public bool HasRateProfile(string app) =>
-        _ini.ReadString(SecProfiles, app) != string.Empty;
-
-    public int? ReadRateProfile(string app)
+    public ProfileService(IniStore ini)
     {
-        string v = _ini.ReadString(SecProfiles, app);
-        return int.TryParse(v, out int n) ? n : null;
+        _ini = ini;
+
+        Rate = new ProfileSetting<int>(
+            ini, SecSettings, "DefaultRefreshRate", "Profiles",
+            parse: (string s, out int v) => int.TryParse(s, out v),
+            format: v => v.ToString(),
+            fallback: 60);
+
+        Hdr = new ProfileSetting<bool>(
+            ini, SecSettings, "DefaultHDR", "HDRProfiles",
+            parse: (string s, out bool v) => { v = s == "1"; return true; },
+            format: v => v ? "1" : "0",
+            fallback: false);
+
+        Dsx = new ProfileSetting<string>(
+            ini, SecSettings, "DefaultControllerProfile", "ControllerProfiles",
+            parse: (string s, out string v) => { v = s; return true; },
+            format: v => v,
+            fallback: "");
     }
-
-    public void WriteRateProfile(string app, int rate) =>
-        _ini.WriteInt(SecProfiles, app, rate);
-
-    public void DeleteRateProfile(string app) =>
-        _ini.DeleteKey(SecProfiles, app);
-
-    // ---- HDR profiles -------------------------------------------------------
-
-    public bool? ReadHdrProfile(string app)
-    {
-        string v = _ini.ReadString(SecHdrProfiles, app);
-        if (v == "") return null;
-        return v == "1";
-    }
-
-    public void WriteHdrProfile(string app, bool hdr) =>
-        _ini.WriteBool(SecHdrProfiles, app, hdr);
-
-    public void DeleteHdrProfile(string app) =>
-        _ini.DeleteKey(SecHdrProfiles, app);
-
-    // ---- controller (DSX) profiles ------------------------------------------
-    // Unlike rate/HDR, there's no meaningful "default" controller profile — an
-    // app with nothing saved here just means DSX is left alone on switch.
-
-    public string? ReadDsxProfile(string app)
-    {
-        string v = _ini.ReadString(SecDsxProfiles, app);
-        return v.Length > 0 ? v : null;
-    }
-
-    public void WriteDsxProfile(string app, string profile) =>
-        _ini.WriteString(SecDsxProfiles, app, profile);
-
-    public void DeleteDsxProfile(string app) =>
-        _ini.DeleteKey(SecDsxProfiles, app);
 
     // ---- hotkey ---------------------------------------------------------------
+    // Global-only (no per-app concept), so it doesn't fit ProfileSetting<T>.
 
     /// <summary>Returns the saved hotkey, or null if the user has never changed it.</summary>
     public (uint Modifiers, uint Vk)? ReadHotkey()
@@ -91,9 +57,4 @@ internal sealed class ProfileService
         _ini.WriteInt(SecSettings, KeyHotkeyMods, (int)modifiers);
         _ini.WriteInt(SecSettings, KeyHotkeyVk, (int)vk);
     }
-
-    // ---- convenience --------------------------------------------------------
-
-    public Dictionary<string, string> AllRateProfiles() =>
-        _ini.ReadSection(SecProfiles);
 }

@@ -22,9 +22,19 @@ public partial class OverlayWindow : Window
     public bool SaveProfile => SaveCheckBox.IsChecked == true;
     public bool HdrEnabled  => HdrCheckBox.IsChecked == true;
 
-    /// <summary>Null means "— Not Managed —" (index 0): leave DSX alone.</summary>
+    /// <summary>Null means "— Not Managed —" (index 0): leave DSX alone. Only
+    /// meaningful when DsxProfileEditable is true.</summary>
     public string? SelectedDsxProfile =>
         DsxProfileDropDown.SelectedIndex > 0 ? DsxProfileDropDown.SelectedItem as string : null;
+
+    /// <summary>
+    /// True if the controller dropdown reflects a live profile list from DSX this
+    /// session. False means DSX wasn't reachable and the row (if shown at all) is
+    /// just a grayed-out echo of whatever's already saved — callers must leave
+    /// the saved DSX profile untouched in that case rather than reading "nothing
+    /// selected" as "user cleared it".
+    /// </summary>
+    public bool DsxProfileEditable { get; private set; }
 
     /// <summary>Raised immediately on Apply click; does not close the window.</summary>
     public event EventHandler? ApplyRequested;
@@ -134,20 +144,29 @@ public partial class OverlayWindow : Window
 
     /// <summary>
     /// Populates the controller-profile dropdown from DSX itself (via
-    /// DSX_Console.exe) and reveals the row — stays hidden if DSX isn't
-    /// installed, isn't running, has no controller connected, or has no
-    /// profiles defined, since there's nothing useful to offer in that case.
+    /// DSX_Console.exe) and reveals the row as editable. DSX_Console round-trips
+    /// (ListDevicesAsync/ListProfilesAsync) can take a couple seconds each, so
+    /// ShowDsxLoading puts up a grayed placeholder first — synchronously, before
+    /// the first await — instead of leaving the row invisible and popping it in
+    /// once data lands. If DSX isn't installed, isn't running yet, has no
+    /// controller connected, or has no profiles defined, ShowDsxAsUnavailable
+    /// replaces that placeholder rather than just hiding the row — otherwise a
+    /// saved DSX profile silently gets wiped on Apply the moment DSX happens to
+    /// not be up yet (e.g. opened after the overlay).
     /// </summary>
     private async Task LoadDsxProfilesAsync(string? preselect)
     {
-        if (!DsxProfileService.IsAvailable) return;
+        if (!DsxProfileService.IsAvailable) { ShowDsxAsUnavailable(preselect); return; }
+
+        ShowDsxLoading(preselect);
 
         var devices = await DsxProfileService.ListDevicesAsync();
-        if (devices.Count == 0) return;
+        if (devices.Count == 0) { ShowDsxAsUnavailable(preselect); return; }
 
         var profiles = await DsxProfileService.ListProfilesAsync();
-        if (profiles.Count == 0) return;
+        if (profiles.Count == 0) { ShowDsxAsUnavailable(preselect); return; }
 
+        DsxProfileDropDown.Items.Clear();
         DsxProfileDropDown.Items.Add("— Not Managed —");
         int preIndex = 0;
         for (int i = 0; i < profiles.Count; i++)
@@ -156,6 +175,46 @@ public partial class OverlayWindow : Window
             if (profiles[i] == preselect) preIndex = i + 1;
         }
         DsxProfileDropDown.SelectedIndex = preIndex;
+        DsxProfileDropDown.IsEnabled = true;
+        DsxProfileRow.Visibility = Visibility.Visible;
+        DsxProfileEditable = true;
+    }
+
+    /// <summary>
+    /// Immediate, synchronous placeholder shown the instant we know DSX is
+    /// reachable, before the multi-second round trip to DSX_Console for the
+    /// actual device/profile list — fills the row's space right away instead of
+    /// a late pop-in. Grayed and disabled: not a real choice yet.
+    /// </summary>
+    private void ShowDsxLoading(string? preselect)
+    {
+        DsxProfileDropDown.Items.Clear();
+        DsxProfileDropDown.Items.Add(preselect ?? "Loading…");
+        DsxProfileDropDown.SelectedIndex = 0;
+        DsxProfileDropDown.IsEnabled = false;
+        DsxProfileRow.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// DSX isn't reachable (or turned out to have nothing to offer) this
+    /// session. If a profile is already saved for this app, show it as a
+    /// disabled, grayed-out entry — visible so the user can see it's still
+    /// assigned, but not a real choice, since DsxProfileEditable stays false
+    /// and callers must not touch DSX storage based on it. Otherwise collapses
+    /// the row (also undoes ShowDsxLoading's placeholder if that ran first).
+    /// </summary>
+    private void ShowDsxAsUnavailable(string? preselect)
+    {
+        DsxProfileDropDown.Items.Clear();
+        if (preselect is null)
+        {
+            DsxProfileRow.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        DsxProfileDropDown.Items.Add(preselect);
+        DsxProfileDropDown.SelectedIndex = 0;
+        DsxProfileDropDown.IsEnabled = false;
         DsxProfileRow.Visibility = Visibility.Visible;
     }
 }
