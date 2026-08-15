@@ -46,7 +46,7 @@ public partial class App : System.Windows.Application
         {
             KillExistingInstance();
             try { ownsMutex = _mutex.WaitOne(2000, exitContext: false); }
-            catch { /* ignore */ }
+            catch (AbandonedMutexException) { ownsMutex = true; }
 
             if (!ownsMutex)
             {
