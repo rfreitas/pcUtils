@@ -37,6 +37,9 @@ internal sealed class TrayApp : IDisposable
     private int  _currentRate;
     private int  _ignoreDisplayChangeUntil; // Environment.TickCount64 threshold
 
+    private GsyncGlobalMode _defaultGsyncMode;
+    private bool            _gsyncAvailable;
+
     private readonly NotifyIcon _tray;
     private Icon? _currentIcon;
 
@@ -79,6 +82,21 @@ internal sealed class TrayApp : IDisposable
 
         ApplyDisplayState(_defaultRate, _defaultHdr);
 
+        // Same reseed-from-live-state-at-startup treatment as HDR just above:
+        // NVIDIA's base profile is the "hardware" here. Confirmed by testing that
+        // VRR_MODE only ever behaves as a true global switch — no per-app NVIDIA
+        // write exists anywhere in this class, only ApplyGsyncMode below pushing
+        // whatever our own INI resolves to for the current app into that one
+        // base-profile setting.
+        _gsyncAvailable = NvidiaGsyncService.IsAvailable;
+        _defaultGsyncMode = _profiles.GsyncMode.ReadDefault();
+        if (_gsyncAvailable && NvidiaGsyncService.TryGetGlobalMode(out var liveGsyncMode))
+        {
+            _defaultGsyncMode = liveGsyncMode;
+            _profiles.GsyncMode.WriteDefault(_defaultGsyncMode);
+        }
+        if (_gsyncAvailable) NvidiaGsyncService.SetGlobalMode(_defaultGsyncMode);
+
         _tray = new NotifyIcon
         {
             Text    = "RefreshRateOverlay",
@@ -109,6 +127,7 @@ internal sealed class TrayApp : IDisposable
         Logger.Log($"ForegroundTracker: app changed -> '{app}'");
         ApplyProfile(app);
         ApplyDsxProfileForApp(app);
+        ApplyGsyncMode(app);
     }
 
     private void ApplyProfile(string app)
@@ -154,6 +173,26 @@ internal sealed class TrayApp : IDisposable
         }
         foreach (var device in devices)
             await DsxProfileService.ChangeProfileAsync(device.MacAddress, profileName);
+    }
+
+    // -------------------------------------------------------------------------
+    // G-SYNC application — our INI is the source of truth (ProfileService),
+    // NVIDIA's base-profile VRR_MODE is just the push target, exactly like
+    // DisplayService/HdrService are for rate/HDR. There is no per-app NVIDIA
+    // write: "per-app" behavior comes entirely from resolving (per-app override
+    // ?? default) here and reasserting that single value into the one base
+    // profile setting on every foreground switch, same as ApplyProfile does for
+    // rate/HDR against actual hardware.
+    // -------------------------------------------------------------------------
+    private void ApplyGsyncMode(string app)
+    {
+        if (!_gsyncAvailable) return;
+
+        GsyncGlobalMode target = _profiles.GsyncMode.TryReadProfile(app, out var profileMode)
+            ? profileMode
+            : _defaultGsyncMode;
+
+        NvidiaGsyncService.SetGlobalMode(target);
     }
 
     // -------------------------------------------------------------------------
@@ -386,7 +425,10 @@ internal sealed class TrayApp : IDisposable
         bool    hasDsxProfile = _profiles.Dsx.TryReadProfile(app, out string dsxVal);
         string  defaultDsx    = _profiles.Dsx.ReadDefault();
         string? dsxProfile    = hasDsxProfile ? dsxVal : (defaultDsx.Length > 0 ? defaultDsx : null);
-        bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile;
+
+        bool hasGsyncModeProfile = _gsyncAvailable && _profiles.GsyncMode.HasProfile(app);
+
+        bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile || hasGsyncModeProfile;
 
         // If not in a profile, ensure defaults match reality
         if (!hasProfile)
@@ -410,6 +452,13 @@ internal sealed class TrayApp : IDisposable
         int  preselectRate = (hasProfile && _profiles.Rate.TryReadProfile(app, out int prRate)) ? prRate : _currentRate;
         bool preselectHdr  = (hasProfile && _hdrSupported && _profiles.Hdr.TryReadProfile(app, out bool prHdr)) ? prHdr : currHdr;
 
+        // Same fallback shape as rate/HDR above: this app's own VRR_MODE override
+        // if it has one, otherwise the INI default. Null only when NVAPI isn't
+        // available at all this session — hides the row.
+        GsyncGlobalMode? gsyncMode = !_gsyncAvailable ? null
+            : hasGsyncModeProfile && _profiles.GsyncMode.TryReadProfile(app, out var pgm) ? pgm
+            : _defaultGsyncMode;
+
         _overlay = new OverlayWindow(
             activeApp:      app,
             availableRates: DisplayService.GetAvailableRates(),
@@ -418,14 +467,17 @@ internal sealed class TrayApp : IDisposable
             hdrEnabled:     preselectHdr,
             hasProfile:     hasProfile,
             windowMode:     windowMode,
-            preselectDsxProfile: dsxProfile);
+            preselectDsxProfile: dsxProfile,
+            gsyncMode:      gsyncMode);
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {
             _profiles.Rate.DeleteProfile(app);
             if (_hdrSupported) _profiles.Hdr.DeleteProfile(app);
             _profiles.Dsx.DeleteProfile(app);
+            if (_gsyncAvailable) _profiles.GsyncMode.DeleteProfile(app);
             ApplyDisplayState(_defaultRate, _defaultHdr);
+            if (_gsyncAvailable) ApplyGsyncMode(app);
         };
 
         _overlay.ApplyRequested += (_, _) =>
@@ -453,6 +505,17 @@ internal sealed class TrayApp : IDisposable
 
             ApplyDisplayState(selRate, hdrVal);
             if (selDsx is not null) _ = ApplyDsxProfileToDevicesAsync(selDsx);
+
+            // Same default/override split as rate/HDR above, and same "apply now
+            // regardless of save scope" — except what gets applied is always a
+            // push to NVIDIA's one base-profile VRR_MODE setting, never a per-app
+            // NVIDIA write (see NvidiaGsyncService remarks for why).
+            if (_overlay.SelectedGsyncMode is { } selGsync)
+            {
+                _defaultGsyncMode = SaveOrClear(_profiles.GsyncMode, app, saveProfile, selGsync, _defaultGsyncMode);
+                NvidiaGsyncService.SetGlobalMode(selGsync);
+            }
+
             _overlay.ReflectProfileState(saveProfile);
         };
 

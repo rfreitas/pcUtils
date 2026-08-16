@@ -1,10 +1,23 @@
+using System;
+
 namespace RefreshRateOverlay.WPF.Services;
 
 /// <summary>
-/// Owns the three per-app profile settings (rate, HDR, DSX controller profile)
-/// plus the hotkey. Each setting is a ProfileSetting&lt;T&gt; built the same
-/// way, so default + per-app persistence stays structurally identical across
-/// types instead of being hand-duplicated per setting.
+/// Owns the per-app profile settings (rate, HDR, DSX controller profile,
+/// G-SYNC mode) plus the hotkey. Each setting is a ProfileSetting&lt;T&gt;
+/// built the same way, so default + per-app persistence stays structurally
+/// identical across types instead of being hand-duplicated per setting.
+///
+/// GsyncMode is backed by this same INI, not NVIDIA's own DRS database — this
+/// INI is the source of truth for it too, exactly like Rate/Hdr. NVIDIA has no
+/// per-app concept for VRR_MODE that the driver actually honors (confirmed by
+/// testing: an app-profile override never took effect, only the base profile
+/// did) — so unlike a real per-app NVIDIA setting, "per-app" here works the
+/// same way HDR's per-app behavior does despite HDR having no per-app concept
+/// at the OS level either: TrayApp resolves (per-app override ?? default) on
+/// every foreground switch and reasserts that single resolved value into
+/// NVIDIA's one base-profile VRR_MODE setting (NvidiaGsyncService.SetGlobalMode)
+/// — never into a per-app NVIDIA profile.
 /// </summary>
 internal sealed class ProfileService
 {
@@ -17,6 +30,8 @@ internal sealed class ProfileService
     public ProfileSetting<int>    Rate { get; }
     public ProfileSetting<bool>   Hdr  { get; }
     public ProfileSetting<string> Dsx  { get; }
+
+    public ProfileSetting<GsyncGlobalMode> GsyncMode { get; }
 
     public ProfileService(IniStore ini)
     {
@@ -39,6 +54,12 @@ internal sealed class ProfileService
             parse: (string s, out string v) => { v = s; return true; },
             format: v => v,
             fallback: "");
+
+        GsyncMode = new ProfileSetting<GsyncGlobalMode>(
+            ini, SecSettings, "DefaultGsyncMode", "GsyncModeProfiles",
+            parse: (string s, out GsyncGlobalMode v) => Enum.TryParse(s, out v),
+            format: v => v.ToString(),
+            fallback: GsyncGlobalMode.FullscreenOnly);
     }
 
     // ---- hotkey ---------------------------------------------------------------

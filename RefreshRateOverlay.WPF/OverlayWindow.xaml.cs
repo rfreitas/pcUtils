@@ -36,6 +36,15 @@ public partial class OverlayWindow : Window
     /// </summary>
     public bool DsxProfileEditable { get; private set; }
 
+    /// <summary>Null when NVAPI wasn't available this session — row is hidden and
+    /// callers must not write anything. Otherwise always a real value: like
+    /// Rate/HDR, the tick decides whether this becomes the new default or this
+    /// app's own override — there's no "unmanaged" sentinel to pick from.</summary>
+    public GsyncGlobalMode? SelectedGsyncMode =>
+        GsyncModeRow.Visibility == Visibility.Visible
+            ? (GsyncGlobalMode)GsyncModeDropDown.SelectedIndex
+            : null;
+
     /// <summary>Raised immediately on Apply click; does not close the window.</summary>
     public event EventHandler? ApplyRequested;
 
@@ -50,7 +59,8 @@ public partial class OverlayWindow : Window
         bool       hdrEnabled,
         bool       hasProfile,
         WindowMode windowMode,
-        string?    preselectDsxProfile)
+        string?    preselectDsxProfile,
+        GsyncGlobalMode? gsyncMode)
     {
         InitializeComponent();
 
@@ -58,6 +68,18 @@ public partial class OverlayWindow : Window
         SubtitleText.Text = $"Active: {activeApp}";
 
         _ = LoadDsxProfilesAsync(preselectDsxProfile);
+
+        // Gated only on NVAPI availability, not on whether there's a "real"
+        // foreground app — same as Rate/HDR, which apply to Desktop too. A
+        // single dropdown whose persistence target (default vs. this app's own
+        // override) is decided by the Save tick, exactly like Rate/HDR.
+        if (gsyncMode is { } mode)
+        {
+            foreach (string label in new[] { "Disabled", "Fullscreen Only", "Fullscreen + Windowed" })
+                GsyncModeDropDown.Items.Add(label);
+            GsyncModeDropDown.SelectedIndex = (int)mode;
+            GsyncModeRow.Visibility = Visibility.Visible;
+        }
 
         bool canCheckPresentation = !string.IsNullOrEmpty(activeApp) && activeApp != "Desktop";
         if (canCheckPresentation)
