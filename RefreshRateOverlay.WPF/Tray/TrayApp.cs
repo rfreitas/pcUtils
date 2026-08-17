@@ -174,8 +174,8 @@ internal sealed class TrayApp : IDisposable
     /// one shared definition of "correct" instead of two that could disagree.</summary>
     private (int Rate, bool Hdr) ResolveTarget(string app) =>
         (
-            _profiles.Rate.TryReadProfile(app, out int profileRate) ? profileRate : _defaultRate,
-            _hdrSupported && _profiles.Hdr.TryReadProfile(app, out bool profileHdr) ? profileHdr : _defaultHdr
+            ReconcilePlanner.Resolve(_profiles.Rate.TryReadProfile(app, out int profileRate), profileRate, _defaultRate),
+            _hdrSupported && ReconcilePlanner.Resolve(_profiles.Hdr.TryReadProfile(app, out bool profileHdr), profileHdr, _defaultHdr)
         );
 
     // -------------------------------------------------------------------------
@@ -263,30 +263,29 @@ internal sealed class TrayApp : IDisposable
         string app = _tracker.LastApp;
         (int targetRate, bool targetHdr) = ResolveTarget(app);
 
-        if (_currentRate != targetRate)
+        switch (ReconcilePlanner.Plan(_currentRate, targetRate, _profiles.Rate.HasProfile(app)))
         {
-            if (_profiles.Rate.HasProfile(app))
-            {
+            case ReconcileAction.WriteProfile:
                 _profiles.Rate.WriteProfile(app, _currentRate);
-            }
-            else
-            {
+                break;
+            case ReconcileAction.WriteDefault:
                 _defaultRate = _currentRate;
                 _profiles.Rate.WriteDefault(_defaultRate);
-            }
+                break;
         }
 
         bool currHdr = _hdrSupported && HdrService.GetState().Enabled;
-        if (_hdrSupported && currHdr != targetHdr)
+        if (_hdrSupported)
         {
-            if (_profiles.Hdr.HasProfile(app))
+            switch (ReconcilePlanner.Plan(currHdr, targetHdr, _profiles.Hdr.HasProfile(app)))
             {
-                _profiles.Hdr.WriteProfile(app, currHdr);
-            }
-            else
-            {
-                _defaultHdr = currHdr;
-                _profiles.Hdr.WriteDefault(_defaultHdr);
+                case ReconcileAction.WriteProfile:
+                    _profiles.Hdr.WriteProfile(app, currHdr);
+                    break;
+                case ReconcileAction.WriteDefault:
+                    _defaultHdr = currHdr;
+                    _profiles.Hdr.WriteDefault(_defaultHdr);
+                    break;
             }
         }
 
@@ -330,7 +329,7 @@ internal sealed class TrayApp : IDisposable
     /// resolution shape as ResolveTarget, kept separate since it's a different
     /// setting with a different storage type (GsyncMode isn't Rate/Hdr).</summary>
     private GsyncGlobalMode ResolveGsyncTarget(string app) =>
-        _profiles.GsyncMode.TryReadProfile(app, out var profileMode) ? profileMode : _defaultGsyncMode;
+        ReconcilePlanner.Resolve(_profiles.GsyncMode.TryReadProfile(app, out var profileMode), profileMode, _defaultGsyncMode);
 
     /// <summary>Subscribed to HardwareChange, same shape and reasoning as
     /// ReconcileRateAndHdr: an external base-profile change (the user via NVCP,
@@ -344,17 +343,15 @@ internal sealed class TrayApp : IDisposable
         string app = _tracker.LastApp;
         GsyncGlobalMode target = ResolveGsyncTarget(app);
 
-        if (liveMode != target)
+        switch (ReconcilePlanner.Plan(liveMode, target, _profiles.GsyncMode.HasProfile(app)))
         {
-            if (_profiles.GsyncMode.HasProfile(app))
-            {
+            case ReconcileAction.WriteProfile:
                 _profiles.GsyncMode.WriteProfile(app, liveMode);
-            }
-            else
-            {
+                break;
+            case ReconcileAction.WriteDefault:
                 _defaultGsyncMode = liveMode;
                 _profiles.GsyncMode.WriteDefault(_defaultGsyncMode);
-            }
+                break;
         }
 
         // Same "push the overlay's own resolved target, not gated on app

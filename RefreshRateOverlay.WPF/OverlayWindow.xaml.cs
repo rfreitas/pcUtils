@@ -28,6 +28,12 @@ public partial class OverlayWindow : Window
     private SyncedField<bool> _hdrSync  = null!;
     private SyncedField<GsyncGlobalMode>? _gsyncSync;
 
+    // Test-facing only (RefreshRateOverlay.WPF.Tests, via InternalsVisibleTo) —
+    // production code never reads these, it goes through Refresh*LiveState.
+    internal SyncedField<int>  RateSync => _rateSync;
+    internal SyncedField<bool> HdrSync  => _hdrSync;
+    internal SyncedField<GsyncGlobalMode>? GsyncSync => _gsyncSync;
+
     public string ActiveApp { get; }
 
     public int SelectedRate =>
@@ -97,7 +103,7 @@ public partial class OverlayWindow : Window
             GsyncModeRow.Visibility = Visibility.Visible;
 
             var gsyncSync = new SyncedField<GsyncGlobalMode>(
-                GsyncSyncDot, GsyncModeDropDown, mode, () => (GsyncGlobalMode)GsyncModeDropDown.SelectedIndex);
+                GsyncSyncDot, GsyncModeDropDown, mode, () => (GsyncGlobalMode)GsyncModeDropDown.SelectedIndex, NotSyncedTip);
             _gsyncSync = gsyncSync;
             gsyncSync.Refresh();
 
@@ -142,9 +148,9 @@ public partial class OverlayWindow : Window
         // remarks. Constructed here (not earlier) since RateDropDown/HdrCheckBox
         // must already hold their initial values for the first Refresh() to be
         // meaningful.
-        _rateSync = new SyncedField<int>(RateSyncDot, RateDropDown, storedRate, () => SelectedRate);
+        _rateSync = new SyncedField<int>(RateSyncDot, RateDropDown, storedRate, () => SelectedRate, NotSyncedTip);
         _rateSync.Refresh();
-        _hdrSync = new SyncedField<bool>(HdrSyncDot, HdrCheckBox, storedHdr, () => HdrEnabled,
+        _hdrSync = new SyncedField<bool>(HdrSyncDot, HdrCheckBox, storedHdr, () => HdrEnabled, NotSyncedTip,
             isActive: () => HdrRow.Visibility == Visibility.Visible);
         _hdrSync.Refresh();
 
@@ -236,67 +242,6 @@ public partial class OverlayWindow : Window
             sync.UpdateStored(liveMode);
         }
         finally { _suppressTouchTracking = false; }
-    }
-
-    /// <summary>
-    /// Tracks one control's live value against a stored (saved) baseline and
-    /// keeps a sync-status dot in step with both — the user's own edits and a
-    /// background push (Refresh*LiveState) alike. One shared implementation
-    /// instead of hand-duplicating the touched/stored/dot pattern per setting;
-    /// Rate, HDR, and GsyncMode each own one instance.
-    /// </summary>
-    private sealed class SyncedField<T>
-    {
-        private readonly System.Windows.Shapes.Ellipse _dot;
-        private readonly FrameworkElement _control;
-        private readonly Func<T> _getLive;
-        private readonly Func<bool> _isActive;
-
-        /// <summary>True once the user has actually changed this control since
-        /// the overlay opened — callers (Refresh*LiveState) use this to avoid
-        /// overwriting a selection already in progress.</summary>
-        public bool Touched { get; private set; }
-
-        /// <summary>The actual currently-saved value (profile-or-default) this
-        /// field's live value is compared against.</summary>
-        public T Stored { get; private set; }
-
-        /// <param name="isActive">False means nothing meaningful to compare
-        /// right now (e.g. HDR's row hidden because it isn't supported) —
-        /// Refresh becomes a no-op rather than coloring a dot nobody sees.</param>
-        public SyncedField(System.Windows.Shapes.Ellipse dot, FrameworkElement control, T initialStored,
-            Func<T> getLive, Func<bool>? isActive = null)
-        {
-            _dot = dot;
-            _control = control;
-            _getLive = getLive;
-            _isActive = isActive ?? (() => true);
-            Stored = initialStored;
-        }
-
-        public void MarkTouched() => Touched = true;
-
-        /// <summary>Recomputes the dot from the current live value vs Stored —
-        /// call after any change to either side (a user edit, or UpdateStored
-        /// below).</summary>
-        public void Refresh()
-        {
-            if (!_isActive()) return;
-            bool synced = EqualityComparer<T>.Default.Equals(_getLive(), Stored);
-            _dot.Fill = synced ? System.Windows.Media.Brushes.LimeGreen : System.Windows.Media.Brushes.Red;
-            _control.ToolTip = synced ? null : NotSyncedTip;
-        }
-
-        /// <summary>A background reconciler observed a new stored value —
-        /// updates the baseline and refreshes the dot. Does not touch the
-        /// displayed value itself: "what to set the control to" differs per
-        /// control type (SelectedIndex vs. IsChecked), so callers still do that
-        /// bit themselves, gated on Touched, before calling this.</summary>
-        public void UpdateStored(T newStored)
-        {
-            Stored = newStored;
-            Refresh();
-        }
     }
 
     /// <summary>

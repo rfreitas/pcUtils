@@ -37,4 +37,11 @@
          used by NvidiaGsyncService. -->
     <PackageReference Include="NvAPIWrapper.Net" Version="0.8.1.101" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Lets the test project reach internal test-only surface (SyncedField,
+         OverlayWindow's RateSync/HdrSync/GsyncSync accessors, and the
+         XAML-named fields WPF generates as internal by default) without
+         widening any of it to public. -->
+    <InternalsVisibleTo Include="RefreshRateOverlay.WPF.Tests" />
+  </ItemGroup>
 </Project>

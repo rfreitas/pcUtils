@@ -24,6 +24,8 @@ TaskbarReveal.NET/obj/
 # RefreshRateOverlay.WPF build artifacts
 RefreshRateOverlay.WPF/bin/
 RefreshRateOverlay.WPF/obj/
+RefreshRateOverlay.WPF.Tests/bin/
+RefreshRateOverlay.WPF.Tests/obj/
 
 # LGTV_brightness.NET build artifacts
 LGTV_brightness.NET/bin/
