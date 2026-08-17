@@ -94,18 +94,20 @@
                 <ComboBox Grid.Column="4" x:Name="GsyncModeDropDown" FontSize="14" Height="30"/>
             </Grid>
 
-            <!-- Read-only: what NVIDIA's own per-app profile currently resolves
-                 VRR to for this app, distinct from the G-SYNC Mode setting above
-                 (which is the global/base-profile toggle this app controls).
-                 Never editable — informational only, no dot, no control. -->
+            <!-- NVIDIA's own per-app G-SYNC override for this app, distinct from
+                 the G-SYNC Mode setting above (the global/base-profile toggle
+                 this app controls). No default/global scope of its own to fall
+                 back to, so it's only ever editable while "Save for <app>" is
+                 ticked — grayed out otherwise, no sync dot (nothing reconciles
+                 this in the background the way Rate/HDR/GsyncMode do). -->
             <Grid Grid.Row="8" x:Name="AppVrrRow" Margin="0,8,0,0" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="8"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="App VRR:" Foreground="#AAAAAA" FontSize="13" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="2" x:Name="AppVrrValueText" Foreground="#CCCCCC" FontSize="13" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="0" Text="App VRR:" Foreground="White" FontSize="14" VerticalAlignment="Center"/>
+                <ComboBox Grid.Column="2" x:Name="AppVrrDropDown" FontSize="14" Height="30" IsEnabled="False"/>
             </Grid>
 
             <Grid Grid.Row="9" Margin="0,8,0,0">

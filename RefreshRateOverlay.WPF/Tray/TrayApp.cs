@@ -715,20 +715,11 @@ internal sealed class TrayApp : IDisposable
 
         bool hasGsyncModeProfile = _gsyncAvailable && _profiles.GsyncMode.HasProfile(app);
 
-        // Read-only — see OverlayWindow's AppVrrRow remarks. Null hides the
-        // row entirely rather than showing a misleading value if the read
-        // fails (NVAPI unavailable, app unknown to the driver, etc).
-        string? appVrrDescription = _gsyncAvailable && NvidiaGsyncService.TryGetAppVrrState(app, out var vrrState)
-            ? vrrState switch
-            {
-                VrrAppState.Allow        => "Allow (follows global)",
-                VrrAppState.ForceOff     => "Force Off",
-                VrrAppState.DisAllow     => "Disallow",
-                VrrAppState.FixedRefresh => "Fixed Refresh",
-                VrrAppState.ULMB         => "ULMB",
-                VrrAppState.NotSet       => "Not set (using global)",
-                _                        => "Unknown",
-            }
+        // See OverlayWindow's AppVrrRow remarks. Null hides the row entirely
+        // rather than showing a misleading value if the read fails (NVAPI
+        // unavailable, app unknown to the driver, etc).
+        VrrAppState? appVrrState = _gsyncAvailable && NvidiaGsyncService.TryGetAppVrrState(app, out var vrrState)
+            ? vrrState
             : null;
 
         bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile || hasGsyncModeProfile;
@@ -765,7 +756,7 @@ internal sealed class TrayApp : IDisposable
             windowMode:     windowMode,
             preselectDsxProfile: dsxProfile,
             gsyncMode:      gsyncMode,
-            appVrrDescription: appVrrDescription,
+            appVrrState:    appVrrState,
             storedRate:     storedRate,
             storedHdr:      storedHdr);
 
@@ -817,6 +808,15 @@ internal sealed class TrayApp : IDisposable
                 _defaultGsyncMode = SaveOrClear(_profiles.GsyncMode, app, saveProfile, selGsync, _defaultGsyncMode);
                 NvidiaGsyncService.SetGlobalMode(selGsync);
             }
+
+            // No default/global scope to fall back to (see NvidiaGsyncService.
+            // SetAppVrrOverride remarks) — only ever written while the dropdown
+            // was actually enabled, i.e. saveProfile ticked. Unlike every other
+            // setting here, there's deliberately no "clear on untick" path:
+            // unticking Save just stops offering this app's edits, it doesn't
+            // erase whatever NVIDIA's own per-app profile already has.
+            if (saveProfile && _overlay.SelectedAppVrrState is { } selAppVrr)
+                NvidiaGsyncService.SetAppVrrOverride(app, selAppVrr);
 
             _overlay.ReflectProfileState(saveProfile);
         };

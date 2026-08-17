@@ -65,6 +65,16 @@ public partial class OverlayWindow : Window
             ? (GsyncGlobalMode)GsyncModeDropDown.SelectedIndex
             : null;
 
+    /// <summary>Null when NVAPI wasn't available or the read failed this
+    /// session — row is hidden. Otherwise reflects the dropdown regardless of
+    /// whether it's currently enabled; callers must gate the actual write on
+    /// SaveProfile themselves (disabled just means "don't let the user touch
+    /// this," not "this value isn't meaningful").</summary>
+    public VrrAppState? SelectedAppVrrState =>
+        AppVrrRow.Visibility == Visibility.Visible
+            ? (VrrAppState)AppVrrDropDown.SelectedIndex
+            : null;
+
     /// <summary>Raised immediately on Apply click; does not close the window.</summary>
     public event EventHandler? ApplyRequested;
 
@@ -81,7 +91,7 @@ public partial class OverlayWindow : Window
         WindowMode windowMode,
         string?    preselectDsxProfile,
         GsyncGlobalMode? gsyncMode,
-        string?    appVrrDescription,
+        VrrAppState? appVrrState,
         int        storedRate,
         bool       storedHdr)
     {
@@ -115,13 +125,23 @@ public partial class OverlayWindow : Window
             };
         }
 
-        // Informational only — never offered as a setting, no dot, nothing
-        // this window writes back. Null just means "couldn't read it" or
-        // NVAPI unavailable, so the row stays hidden rather than showing a
-        // misleading value.
-        if (appVrrDescription is not null)
+        // No default/global scope of its own (see VrrAppState remarks) — only
+        // ever editable while this app is in per-app-profile mode (the Save
+        // tick), so it starts enabled/disabled from hasProfile and is kept in
+        // sync with the checkbox below rather than read once at open. Null
+        // just means "couldn't read it" or NVAPI unavailable, so the row
+        // stays hidden rather than showing a misleading value.
+        if (appVrrState is { } vrr)
         {
-            AppVrrValueText.Text = appVrrDescription;
+            foreach (string label in new[] { "Allow (follow global)", "Force Off", "Disallow", "ULMB", "Fixed Refresh" })
+                AppVrrDropDown.Items.Add(label);
+            // NotSet has no dropdown slot of its own — semantically equivalent
+            // to Allow (NVIDIA's own enum gives Allow and Default the same
+            // underlying 0), and picking anything else here is an explicit
+            // opt-in to a real override, same as Rate/HDR/GsyncMode never
+            // having an "unmanaged" sentinel to select.
+            AppVrrDropDown.SelectedIndex = (int)(vrr == VrrAppState.NotSet ? VrrAppState.Allow : vrr);
+            AppVrrDropDown.IsEnabled = hasProfile;
             AppVrrRow.Visibility = Visibility.Visible;
         }
 
@@ -167,6 +187,12 @@ public partial class OverlayWindow : Window
 
         SaveCheckBox.Content   = new TextBlock { Text = $"Save for {activeApp}", TextWrapping = TextWrapping.Wrap };
         SaveCheckBox.IsChecked = hasProfile;
+
+        // App VRR has no default/global scope of its own to write into (see
+        // VrrAppState remarks) — only ever editable while Save is ticked, and
+        // reactively so, since the user can flip that tick after opening.
+        SaveCheckBox.Checked   += (_, _) => AppVrrDropDown.IsEnabled = true;
+        SaveCheckBox.Unchecked += (_, _) => AppVrrDropDown.IsEnabled = false;
 
         DeleteProfileButton.Visibility = hasProfile ? Visibility.Visible : Visibility.Collapsed;
         DeleteProfileButton.Click += (_, _) =>

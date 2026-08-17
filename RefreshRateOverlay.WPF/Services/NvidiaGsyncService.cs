@@ -105,8 +105,8 @@ internal static class NvidiaGsyncService
     /// <summary>Reads what NVIDIA currently resolves the per-app G-SYNC
     /// override to for this specific app's own profile (via
     /// FindApplicationProfile, which falls back to the base profile when the
-    /// app has no profile of its own) — read-only, no write counterpart.
-    /// Purely for display; see VrrAppState remarks.</summary>
+    /// app has no profile of its own). See SetAppVrrOverride for the write
+    /// counterpart.</summary>
     public static bool TryGetAppVrrState(string app, out VrrAppState state)
     {
         state = VrrAppState.NotSet;
@@ -122,6 +122,43 @@ internal static class NvidiaGsyncService
             // read failure.
             var setting = profile?.GetSetting(VrrAppOverrideId);
             state = setting is null ? VrrAppState.NotSet : (VrrAppState)Convert.ToUInt32(setting.CurrentValue);
+            return true;
+        }
+        catch (Exception ex) { Logger.LogException(ex); return false; }
+    }
+
+    /// <summary>Writes the per-app G-SYNC override directly onto this app's
+    /// own NVIDIA profile — unlike every other write in this class, never the
+    /// base profile, since VRRApplicationOverride has no default/global scope
+    /// of its own to fall back to (see VrrAppState remarks). If the app has
+    /// no profile of its own yet (FindApplication finds nothing, or only
+    /// resolves to the predefined base profile), creates one named after the
+    /// exe and associates the exe with it first — the same thing NVIDIA
+    /// App/NVCP do the first time you customize a game there.</summary>
+    public static bool SetAppVrrOverride(string app, VrrAppState state)
+    {
+        if (!IsAvailable) return false;
+        try
+        {
+            using var session = DriverSettingsSession.CreateAndLoad();
+
+            DriverSettingsProfile? profile = null;
+            try
+            {
+                var existingApp = session.FindApplication(app);
+                if (!existingApp.Profile.IsPredefined) profile = existingApp.Profile;
+            }
+            catch { /* no existing association — fall through to create one */ }
+
+            if (profile is null)
+            {
+                profile = DriverSettingsProfile.CreateProfile(session, app, null);
+                ProfileApplication.CreateApplication(profile, app, app, "", Array.Empty<string>(), false, "");
+            }
+
+            profile.SetSetting(VrrAppOverrideId, (uint)state);
+            session.Save();
+            Logger.Log($"NvidiaGsyncService: app-specific VRR override for '{app}' -> {state} (profile='{profile.Name}').");
             return true;
         }
         catch (Exception ex) { Logger.LogException(ex); return false; }
