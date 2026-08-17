@@ -290,13 +290,22 @@ internal sealed class TrayApp : IDisposable
             }
         }
 
-        // Whatever branch ran above, the app's rate/HDR now match reality by
-        // construction (either they already did, or we just made them) — so if
-        // the overlay is open and showing this exact app, push the new stored
-        // baseline in rather than leaving it silently stale for as long as the
-        // window stays open (see OverlayWindow.RefreshLiveState).
-        if (_overlay is { } overlay && overlay.ActiveApp == app)
-            overlay.RefreshLiveState(_currentRate, currHdr);
+        // If the overlay is open, push it its OWN app's resolved target — not
+        // gated on overlay.ActiveApp == app (the app that was foreground when
+        // this reconcile ran). Reconciling can easily happen while a different
+        // app is focused than the overlay's — e.g. the write here just landed
+        // on the shared default, changed from within the NVIDIA app itself,
+        // which is a real foreground switch away from whatever the overlay is
+        // showing. A default-scope change is still relevant to the overlay's
+        // app whenever that app has no profile of its own; re-resolving here
+        // (rather than reusing app/_currentRate/currHdr from above) is what
+        // makes that fall out correctly instead of only handling the
+        // same-app-focused case.
+        if (_overlay is { } overlay)
+        {
+            (int overlayRate, bool overlayHdr) = ResolveTarget(overlay.ActiveApp);
+            overlay.RefreshLiveState(overlayRate, overlayHdr);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -348,12 +357,14 @@ internal sealed class TrayApp : IDisposable
             }
         }
 
-        // Same reasoning as ReconcileRateAndHdr's overlay push: rate/HDR and
-        // G-SYNC are reconciled by two independent HardwareChange subscribers,
-        // so the overlay needs its own push from each rather than one knowing
-        // about the other's setting.
-        if (_overlay is { } overlay && overlay.ActiveApp == app)
-            overlay.RefreshGsyncLiveState(liveMode);
+        // Same "push the overlay's own resolved target, not gated on app
+        // identity" reasoning as ReconcileRateAndHdr — see its remarks. Changing
+        // G-SYNC through the NVIDIA app is the clearest case this matters for:
+        // that's a real foreground switch away from whatever the overlay is
+        // showing, so app == "NVIDIA app.exe" here almost always, never the
+        // overlay's own app.
+        if (_overlay is { } overlay)
+            overlay.RefreshGsyncLiveState(ResolveGsyncTarget(overlay.ActiveApp));
     }
 
     // -------------------------------------------------------------------------
