@@ -131,19 +131,27 @@ internal static class NvidiaGsyncService
     /// own NVIDIA profile — unlike every other write in this class, never the
     /// base profile, since VRRApplicationOverride has no default/global scope
     /// of its own to fall back to (see VrrAppState remarks). If the app has
-    /// no profile of its own yet (FindApplicationProfile only resolves to the
-    /// predefined base profile), creates one named after the exe and
+    /// no profile of its own yet (FindApplicationProfile resolves all the way
+    /// back to the base profile itself), creates one named after the exe and
     /// associates the exe with it first — the same thing NVIDIA App/NVCP do
     /// the first time you customize a game there.
     ///
     /// Detection deliberately reuses FindApplicationProfile (the same method
     /// TryGetAppVrrState already reads through successfully) rather than
     /// FindApplication — an earlier version used FindApplication to probe for
-    /// an existing association, which failed to find one even for an app
+    /// an existing association and it failed to find one even for an app
     /// NVIDIA App had already registered, so this code went ahead and tried
-    /// to create a duplicate registration and got NVAPI_EXECUTABLE_ALREADY_
-    /// IN_USE back. FindApplicationProfile is the one proven to resolve the
-    /// exe correctly.</summary>
+    /// to create a duplicate registration (NVAPI_EXECUTABLE_ALREADY_IN_USE).
+    ///
+    /// A second earlier version checked profile.IsPredefined instead of
+    /// comparing against BaseProfile — also wrong, and for the same class of
+    /// reason: NVIDIA ships thousands of built-in per-game profiles (acs.exe
+    /// almost certainly resolves to NVIDIA's own predefined "Assetto Corsa"
+    /// profile), and those are real, already-associated profiles that happen
+    /// to be predefined, not the base/global fallback. IsPredefined answers
+    /// "did NVIDIA ship this profile," not "does this app have no profile of
+    /// its own" — comparing Name against BaseProfile is what actually answers
+    /// the second question.</summary>
     public static bool SetAppVrrOverride(string app, VrrAppState state)
     {
         if (!IsAvailable) return false;
@@ -152,9 +160,10 @@ internal static class NvidiaGsyncService
             using var session = DriverSettingsSession.CreateAndLoad();
 
             var profile = session.FindApplicationProfile(app);
-            if (profile.IsPredefined)
+            if (profile.Name == session.BaseProfile.Name)
             {
-                // No real per-app profile yet — only the base profile resolved.
+                // Resolved all the way back to the global base profile — no
+                // app-specific profile (predefined or custom) exists at all.
                 profile = DriverSettingsProfile.CreateProfile(session, app, null);
                 ProfileApplication.CreateApplication(profile, app, app, "", Array.Empty<string>(), false, "");
             }
