@@ -721,10 +721,13 @@ internal sealed class TrayApp : IDisposable
         string? appVrrDescription = _gsyncAvailable && NvidiaGsyncService.TryGetAppVrrState(app, out var vrrState)
             ? vrrState switch
             {
-                VrrAppState.Enabled  => "Enabled",
-                VrrAppState.Disabled => "Disabled",
-                VrrAppState.NotSet   => "Not set (using global)",
-                _                    => "Not supported",
+                VrrAppState.Allow        => "Allow (follows global)",
+                VrrAppState.ForceOff     => "Force Off",
+                VrrAppState.DisAllow     => "Disallow",
+                VrrAppState.FixedRefresh => "Fixed Refresh",
+                VrrAppState.ULMB         => "ULMB",
+                VrrAppState.NotSet       => "Not set (using global)",
+                _                        => "Unknown",
             }
             : null;
 

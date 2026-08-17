@@ -17,6 +17,35 @@ public enum GsyncGlobalMode
     FullscreenAndWindowed = 2,
 }
 
+/// <summary>NVIDIA's actual per-application G-SYNC override (DRS setting ID
+/// 0x10A879CF, NvAPIWrapper's KnownSettingId.VRRApplicationOverride) — what
+/// NVIDIA App/NVCP write when you set G-SYNC for one specific game, distinct
+/// from VRRMode (0x1194F158, global/base-profile only). Confirmed against
+/// NvAPIWrapper's own compiled SettingValues.VRRApplicationOverride enum,
+/// which matches NVIDIA's public NVAPI docs (VRR_APP_OVERRIDE_ALLOW/DEFAULT/
+/// DISALLOW/FIXED_REFRESH/FORCE_OFF) — Allow and Default share the same
+/// underlying 0, hence no separate Default case here.
+///
+/// An earlier version of this enum/ID (0x10A879CE, "VSyncVRRControl") was
+/// wrong — a neighboring but different setting, sourced from a scraped
+/// community reference rather than the library's own compiled constants.
+/// Read it back to NVIDIA App/NVCP's per-app VRR toggle before trusting this
+/// again if it's ever in doubt.</summary>
+public enum VrrAppState : uint
+{
+    Allow        = 0x00000000,
+    ForceOff     = 0x00000001,
+    DisAllow     = 0x00000002,
+    ULMB         = 0x00000003,
+    FixedRefresh = 0x00000004,
+
+    // Sentinel, not a real driver value: the resolved profile has never had
+    // this setting explicitly touched — the common case (most apps never get
+    // a per-app override), and a legitimate answer worth showing, not a
+    // failure to hide the row behind.
+    NotSet = 0xFFFFFFFE,
+}
+
 /// <summary>
 /// Writes G-SYNC's VRR_MODE into NVIDIA's own DRS driver-profile database — the
 /// same store the NVIDIA app, NVIDIA Control Panel, and Profile Inspector all
@@ -34,29 +63,10 @@ public enum GsyncGlobalMode
 /// while the NVIDIA app or NVCP also has one open risks one side's save
 /// silently dropping the other's concurrent edit.
 /// </summary>
-/// <summary>Per-application "Variable Refresh Rate - Control" DRS setting
-/// (0x10A879CE) — distinct from VRR_MODE (the base-profile-only global this
-/// app manages). Purely informational here: TryGetAppVrrState reads whatever
-/// NVIDIA's driver currently resolves for a specific app's own profile
-/// (falling back to the base profile if the app has none of its own), never
-/// written by this app.</summary>
-public enum VrrAppState : uint
-{
-    Disabled     = 0x00000000,
-    Enabled      = 0x00000001,
-    NotSupported = 0x9F95128E,
-
-    // Sentinel, not a real driver value: the resolved profile has never had
-    // this setting explicitly touched — the common case (most apps never get
-    // a per-app override), and a legitimate answer worth showing, not a
-    // failure to hide the row behind.
-    NotSet = 0xFFFFFFFE,
-}
-
 internal static class NvidiaGsyncService
 {
     private const uint VrrModeId = 0x1194F158;
-    private const uint VrrAppControlId = 0x10A879CE;
+    private const uint VrrAppOverrideId = 0x10A879CF;
 
     // Initialize() is ref-counted; deliberately never paired with Unload() so
     // NVAPI just stays loaded for the process lifetime once confirmed working,
@@ -92,13 +102,14 @@ internal static class NvidiaGsyncService
         catch (Exception ex) { Logger.LogException(ex); return false; }
     }
 
-    /// <summary>Reads what NVIDIA currently resolves VRR to for this specific
-    /// app's own profile (via FindApplicationProfile, which falls back to the
-    /// base profile when the app has no profile of its own) — read-only, no
-    /// write counterpart. Purely for display; see VrrAppState remarks.</summary>
+    /// <summary>Reads what NVIDIA currently resolves the per-app G-SYNC
+    /// override to for this specific app's own profile (via
+    /// FindApplicationProfile, which falls back to the base profile when the
+    /// app has no profile of its own) — read-only, no write counterpart.
+    /// Purely for display; see VrrAppState remarks.</summary>
     public static bool TryGetAppVrrState(string app, out VrrAppState state)
     {
-        state = VrrAppState.NotSupported;
+        state = VrrAppState.NotSet;
         if (!IsAvailable) return false;
         try
         {
@@ -106,10 +117,10 @@ internal static class NvidiaGsyncService
             var profile = session.FindApplicationProfile(app);
             // GetSetting returns null (not an exception) when the resolved
             // profile has never had this particular setting explicitly
-            // touched — common for 0x10A879CE specifically, unlike VRR_MODE
-            // which is set on essentially every profile. That's a real,
-            // displayable answer (NotSet), not a read failure.
-            var setting = profile?.GetSetting(VrrAppControlId);
+            // touched — the common case (most apps never get a per-app
+            // override), and a real, displayable answer (NotSet), not a
+            // read failure.
+            var setting = profile?.GetSetting(VrrAppOverrideId);
             state = setting is null ? VrrAppState.NotSet : (VrrAppState)Convert.ToUInt32(setting.CurrentValue);
             return true;
         }
