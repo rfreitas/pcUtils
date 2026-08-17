@@ -164,26 +164,12 @@ internal sealed class TrayApp : IDisposable
         Logger.Log($"ForegroundTracker: app changed -> '{app}'");
         // A real, debounced focus change is always authoritative — supersedes
         // any outstanding guess about who's about to take over (see
-        // _anticipatedApp remarks), whether it confirms that guess or not.
-        _anticipatedApp = null;
+        // AnticipatedAppTracker remarks), whether it confirms that guess or not.
+        _anticipatedApp.RealFocusChanged();
         ApplyAllProfiles(app);
     }
 
-    /// <summary>Set while OnProcessStarted's speculative push for an app is
-    /// still outstanding (cleared by ScheduleEarlyApplyRevertCheck's timeout,
-    /// or superseded by a real focus change in OnAppChanged, whichever comes
-    /// first). ReconcileRateAndHdr/ReconcileGsyncMode prefer this over
-    /// ForegroundTracker.LastApp — see their remarks for why: LastApp is
-    /// stale during this window (ForegroundTracker needs ~1s of stable focus
-    /// before it updates), so a hardware change that's actually the
-    /// anticipated app's own doing (its pipeline reasserting HDR at init,
-    /// exactly the scenario the early-apply feature front-runs) would
-    /// otherwise get attributed to whichever app used to be focused —
-    /// falling through to the shared default if that app has no profile of
-    /// its own, corrupting it for every app. Confirmed via log: launching
-    /// Doom pushed a default-HDR write attributed to 'explorer.exe' (the
-    /// stale LastApp) 4 seconds before ForegroundTracker caught up to Doom.</summary>
-    private string? _anticipatedApp;
+    private readonly AnticipatedAppTracker _anticipatedApp = new();
 
     /// <summary>Applies every per-app setting (rate/HDR, DSX, G-SYNC) for the
     /// given app in one call — the single "make hardware match this app's
@@ -252,7 +238,7 @@ internal sealed class TrayApp : IDisposable
         if (!_earlyApplyOnStart || !HasAnyProfile(app)) return;
 
         Logger.Log($"ProcessStartWatcher: '{app}' started, early-applying its profile ahead of focus.");
-        _anticipatedApp = app;
+        _anticipatedApp.Started(app);
         ApplyAllProfiles(app);
 
         ScheduleEarlyApplyRevertCheck(app);
@@ -280,10 +266,7 @@ internal sealed class TrayApp : IDisposable
             timer.Stop();
             timer.Dispose();
 
-            // Window's over either way — stop preferring this guess over
-            // LastApp, guarded so a newer anticipation (a second process
-            // started before this one's window closed) isn't clobbered.
-            if (_anticipatedApp == anticipatedApp) _anticipatedApp = null;
+            _anticipatedApp.WindowExpired(anticipatedApp);
 
             string actualApp = _tracker.LastApp;
             if (actualApp == anticipatedApp) return;
@@ -382,11 +365,8 @@ internal sealed class TrayApp : IDisposable
         UpdateTrayIcon(_currentRate);
 
         // Prefers the anticipated app (if any) over LastApp — see
-        // _anticipatedApp remarks: LastApp can be stale for a few seconds
-        // after a process-start early-apply, and attributing drift to the
-        // wrong app during that window is how a game's own HDR pipeline
-        // init once got written into the shared default instead of nothing.
-        string app = _anticipatedApp ?? _tracker.LastApp;
+        // AnticipatedAppTracker remarks.
+        string app = _anticipatedApp.ResolveApp(_tracker.LastApp);
         (int targetRate, bool targetHdr) = ResolveTarget(app);
 
         var ratePlan = ReconcilePlanner.Plan(_currentRate, targetRate, _profiles.Rate.HasProfile(app));
@@ -478,8 +458,8 @@ internal sealed class TrayApp : IDisposable
         if (!_gsyncAvailable) return;
         if (!NvidiaGsyncService.TryGetGlobalMode(out var liveMode)) return;
 
-        // See ReconcileRateAndHdr's remarks on _anticipatedApp — same reasoning.
-        string app = _anticipatedApp ?? _tracker.LastApp;
+        // See ReconcileRateAndHdr's remarks on AnticipatedAppTracker — same reasoning.
+        string app = _anticipatedApp.ResolveApp(_tracker.LastApp);
         GsyncGlobalMode target = ResolveGsyncTarget(app);
 
         var plan = ReconcilePlanner.Plan(liveMode, target, _profiles.GsyncMode.HasProfile(app));
