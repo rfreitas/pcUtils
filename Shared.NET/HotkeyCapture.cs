@@ -94,7 +94,7 @@ internal sealed class HotkeyCapture : IDisposable
                 else if (vk == VK_LMENU || vk == VK_RMENU) _altDown = state;
             }
 
-            if (isDown && !isModifier && vk != VK_ESCAPE)
+            if (isDown && !isModifier && vk != VK_ESCAPE && IsPlausibleKey(vk))
             {
                 uint mods = 0;
                 if (_winDown)   mods |= HotkeyService.MOD_WIN;
@@ -113,6 +113,23 @@ internal sealed class HotkeyCapture : IDisposable
         }
         return CallNextHookEx(_hookHandle, nCode, wParam, lParam);
     }
+
+    /// <summary>Rejects vk codes Microsoft's own Virtual-Key table documents as
+    /// reserved/never assigned to a real key — this hook sees synthetic/injected
+    /// key events the same as physical ones (SendInput/keybd_event, exactly what
+    /// a controller-to-keyboard mapping layer or a game's own input handling can
+    /// emit), and capturing one of these as "the hotkey" produces a binding that
+    /// can never correspond to an actual keypress again. Confirmed in the wild:
+    /// vk=0xFF (reserved) got captured as a binding, and whatever kept emitting
+    /// it during gameplay then fired WM_HOTKEY repeatedly, reopening the overlay
+    /// dozens of times.</summary>
+    private static bool IsPlausibleKey(int vk) => vk switch
+    {
+        0x00 => false, // undefined
+        0x07 => false, // reserved
+        0xFF => false, // reserved
+        _ => true,
+    };
 
     public void Dispose() => Stop();
 }
