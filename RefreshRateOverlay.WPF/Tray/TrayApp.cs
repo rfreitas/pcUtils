@@ -25,11 +25,12 @@ internal sealed class TrayApp : IDisposable
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     private const int SW_RESTORE = 9;
 
-    private readonly IniStore          _ini;
-    private readonly ProfileService    _profiles;
-    private readonly ForegroundTracker _tracker;
-    private readonly SystemMessageSink _msgSink;
-    private readonly HotkeyService     _hotkey;
+    private readonly IniStore            _ini;
+    private readonly ProfileService      _profiles;
+    private readonly ForegroundTracker   _tracker;
+    private readonly ProcessStartWatcher _processStartWatcher;
+    private readonly SystemMessageSink   _msgSink;
+    private readonly HotkeyService       _hotkey;
 
     private int  _defaultRate;
     private bool _defaultHdr;
@@ -132,6 +133,13 @@ internal sealed class TrayApp : IDisposable
         _tracker.AppChanged += OnAppChanged;
         _tracker.Start();
 
+        // Early-HDR path for games whose render pipeline queries HDR once at
+        // startup, well before their window ever gets focus — see
+        // OnProcessStarted remarks.
+        _processStartWatcher = new ProcessStartWatcher();
+        _processStartWatcher.ProcessStarted += OnProcessStarted;
+        _processStartWatcher.Start();
+
         _msgSink = new SystemMessageSink(OnDisplayChange);
 
         (uint hkMods, uint hkVk) = _profiles.ReadHotkey()
@@ -177,6 +185,62 @@ internal sealed class TrayApp : IDisposable
             ReconcilePlanner.Resolve(_profiles.Rate.TryReadProfile(app, out int profileRate), profileRate, _defaultRate),
             _hdrSupported && ReconcilePlanner.Resolve(_profiles.Hdr.TryReadProfile(app, out bool profileHdr), profileHdr, _defaultHdr)
         );
+
+    // -------------------------------------------------------------------------
+    // Early HDR (process start, ahead of focus)
+    // -------------------------------------------------------------------------
+
+    /// <summary>Only apps the user has explicitly given an HDR profile are worth
+    /// front-running focus for — anything else waits for OnAppChanged like normal.
+    /// Rate is deliberately left alone here: unlike HDR, it isn't something games
+    /// cache once at pipeline init, and forcing it this early would flicker the
+    /// desktop for no benefit while the app is still loading in the background.
+    /// Passing _currentRate as ApplyDisplayState's target keeps ApplyRate's
+    /// no-op guard from touching it, while still reusing its settling/reconcile
+    /// machinery for the HDR push (so a WM_DISPLAYCHANGE the toggle itself
+    /// causes isn't mistaken for external drift).
+    ///
+    /// This is a speculative push — the process starting doesn't guarantee it
+    /// ever takes foreground focus (a helper/updater process, a launcher that
+    /// spawns a differently-named child, a crash on boot). ScheduleEarlyHdrRevertCheck
+    /// is what corrects a wrong guess; nothing here needs to coordinate with
+    /// OnAppChanged directly — both funnel through the same ApplyDisplayState,
+    /// which already treats a fresh call as superseding whatever came before.</summary>
+    private void OnProcessStarted(object? sender, string app)
+    {
+        if (!_hdrSupported || !_profiles.Hdr.HasProfile(app)) return;
+
+        bool targetHdr = ResolveTarget(app).Hdr;
+        Logger.Log($"ProcessStartWatcher: '{app}' started, early-applying HDR={targetHdr} ahead of focus.");
+        ApplyDisplayState(_currentRate, targetHdr);
+
+        ScheduleEarlyHdrRevertCheck(app);
+    }
+
+    /// <summary>If the anticipated app never actually takes foreground focus
+    /// within this window, the early push above was a wrong guess — re-resolve
+    /// and reapply for whatever app is really focused (ForegroundTracker.LastApp,
+    /// possibly "" for none yet/desktop) to undo it. If the anticipated app did
+    /// take focus in the meantime, OnAppChanged already reapplied for it — this
+    /// is then a no-op re-confirmation, not a correction.</summary>
+    private void ScheduleEarlyHdrRevertCheck(string anticipatedApp)
+    {
+        const int windowMs = 9000; // generous for slow game boot, short enough not to strand a wrong guess
+
+        var timer = new System.Windows.Forms.Timer { Interval = windowMs };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            timer.Dispose();
+
+            string actualApp = _tracker.LastApp;
+            if (actualApp == anticipatedApp) return;
+
+            Logger.Log($"ProcessStartWatcher: '{anticipatedApp}' never took focus (actual='{actualApp}') — reverting early HDR push.");
+            ApplyProfile(actualApp);
+        };
+        timer.Start();
+    }
 
     // -------------------------------------------------------------------------
     // DSX controller-profile application
@@ -739,6 +803,7 @@ internal sealed class TrayApp : IDisposable
         _gsyncPollTimer.Stop();
         _gsyncPollTimer.Dispose();
         _tracker.Dispose();
+        _processStartWatcher.Dispose();
         _msgSink.Dispose();
         _hotkey.Dispose();
         _ini.Dispose();

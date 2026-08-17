@@ -36,6 +36,8 @@
          the QueryInterface/versioning dance for the DRS (driver settings) API
          used by NvidiaGsyncService. -->
     <PackageReference Include="NvAPIWrapper.Net" Version="0.8.1.101" />
+    <!-- Win32_ProcessStartTrace (ProcessStartWatcher) is only exposed via WMI. -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup>
     <!-- Lets the test project reach internal test-only surface (SyncedField,
