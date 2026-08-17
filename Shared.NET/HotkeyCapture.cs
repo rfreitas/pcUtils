@@ -114,20 +114,26 @@ internal sealed class HotkeyCapture : IDisposable
         return CallNextHookEx(_hookHandle, nCode, wParam, lParam);
     }
 
-    /// <summary>Rejects vk codes Microsoft's own Virtual-Key table documents as
-    /// reserved/never assigned to a real key — this hook sees synthetic/injected
-    /// key events the same as physical ones (SendInput/keybd_event, exactly what
-    /// a controller-to-keyboard mapping layer or a game's own input handling can
-    /// emit), and capturing one of these as "the hotkey" produces a binding that
-    /// can never correspond to an actual keypress again. Confirmed in the wild:
-    /// vk=0xFF (reserved) got captured as a binding, and whatever kept emitting
-    /// it during gameplay then fired WM_HOTKEY repeatedly, reopening the overlay
-    /// dozens of times.</summary>
+    /// <summary>Rejects vk codes no real keyboard ever reports — this hook sees
+    /// synthetic/injected key events the same as physical ones (SendInput/
+    /// keybd_event, exactly what a controller-to-keyboard mapping layer or a
+    /// game's own input handling can emit), and capturing one of these as "the
+    /// hotkey" produces a binding that can never correspond to an actual
+    /// keypress again.
+    ///
+    /// 0xFF was deliberately left off this list after getting it wrong once:
+    /// Microsoft's Virtual-Key table documents it as "reserved," but a MacBook
+    /// keyboard's Windows driver evidently maps a real key to it (confirmed
+    /// directly), so rejecting it here would have blocked legitimate hardware,
+    /// not just synthetic input. If something during a game also happens to
+    /// emit synthetic events on the same vk a user's real keyboard uses, no
+    /// capture-time filter can distinguish the two — that's a genuine
+    /// collision, not invalid input, and the fix is picking a different key,
+    /// not rejecting the value here.</summary>
     private static bool IsPlausibleKey(int vk) => vk switch
     {
-        0x00 => false, // undefined
+        0x00 => false, // undefined — no real keyboard hook ever reports this
         0x07 => false, // reserved
-        0xFF => false, // reserved
         _ => true,
     };
 
