@@ -331,7 +331,12 @@ internal sealed class TrayApp : IDisposable
     // -------------------------------------------------------------------------
     private void OnDisplayChange()
     {
-        if (_settling) return;
+        if (_settling)
+        {
+            Logger.Log("OnDisplayChange: ignored (still settling from our own apply).");
+            return;
+        }
+        Logger.Log("OnDisplayChange: not settling, treating as external — invoking HardwareChange.");
         HardwareChange?.Invoke();
     }
 
@@ -353,7 +358,13 @@ internal sealed class TrayApp : IDisposable
         string app = _tracker.LastApp;
         (int targetRate, bool targetHdr) = ResolveTarget(app);
 
-        switch (ReconcilePlanner.Plan(_currentRate, targetRate, _profiles.Rate.HasProfile(app)))
+        var ratePlan = ReconcilePlanner.Plan(_currentRate, targetRate, _profiles.Rate.HasProfile(app));
+        if (ratePlan != ReconcileAction.None)
+        {
+            Logger.Log($"ReconcileRateAndHdr: rate drifted to {_currentRate} (target was {targetRate}) for app='{app}' -> {ratePlan}.");
+            NotifyReconciled("Refresh rate", $"{_currentRate} Hz", app, ratePlan);
+        }
+        switch (ratePlan)
         {
             case ReconcileAction.WriteProfile:
                 _profiles.Rate.WriteProfile(app, _currentRate);
@@ -367,7 +378,13 @@ internal sealed class TrayApp : IDisposable
         bool currHdr = _hdrSupported && HdrService.GetState().Enabled;
         if (_hdrSupported)
         {
-            switch (ReconcilePlanner.Plan(currHdr, targetHdr, _profiles.Hdr.HasProfile(app)))
+            var hdrPlan = ReconcilePlanner.Plan(currHdr, targetHdr, _profiles.Hdr.HasProfile(app));
+            if (hdrPlan != ReconcileAction.None)
+            {
+                Logger.Log($"ReconcileRateAndHdr: HDR drifted to {currHdr} (target was {targetHdr}) for app='{app}' -> {hdrPlan}.");
+                NotifyReconciled("HDR", currHdr ? "On" : "Off", app, hdrPlan);
+            }
+            switch (hdrPlan)
             {
                 case ReconcileAction.WriteProfile:
                     _profiles.Hdr.WriteProfile(app, currHdr);
@@ -433,7 +450,13 @@ internal sealed class TrayApp : IDisposable
         string app = _tracker.LastApp;
         GsyncGlobalMode target = ResolveGsyncTarget(app);
 
-        switch (ReconcilePlanner.Plan(liveMode, target, _profiles.GsyncMode.HasProfile(app)))
+        var plan = ReconcilePlanner.Plan(liveMode, target, _profiles.GsyncMode.HasProfile(app));
+        if (plan != ReconcileAction.None)
+        {
+            Logger.Log($"ReconcileGsyncMode: VRR_MODE drifted to {liveMode} (target was {target}) for app='{app}' -> {plan}.");
+            NotifyReconciled("G-SYNC", liveMode.ToString(), app, plan);
+        }
+        switch (plan)
         {
             case ReconcileAction.WriteProfile:
                 _profiles.GsyncMode.WriteProfile(app, liveMode);
@@ -547,6 +570,19 @@ internal sealed class TrayApp : IDisposable
         _currentIcon = TrayIconRenderer.CreateTextIcon(rate.ToString());
         _tray.Icon = _currentIcon;
         old?.Dispose();
+    }
+
+    /// <summary>Surfaces a reconciliation write (hardware drifted, ini updated
+    /// to match) as a tray balloon — the log lines at each ReconcileXxx call
+    /// site already record the technical detail; this is the same event made
+    /// visible without having to go dig through the log file.</summary>
+    private void NotifyReconciled(string setting, string valueDescription, string app, ReconcileAction action)
+    {
+        string scope = action == ReconcileAction.WriteProfile ? $"'{app}' profile" : "default (no profile for this app)";
+        _tray.BalloonTipTitle = "RefreshRateOverlay";
+        _tray.BalloonTipText  = $"{setting} changed to {valueDescription} outside the overlay — saved to {scope}.";
+        _tray.BalloonTipIcon  = ToolTipIcon.Info;
+        _tray.ShowBalloonTip(4000);
     }
 
     // -------------------------------------------------------------------------
@@ -718,6 +754,7 @@ internal sealed class TrayApp : IDisposable
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {
+            Logger.Log($"Overlay: profile deleted for app='{app}'.");
             _profiles.Rate.DeleteProfile(app);
             if (_hdrSupported) _profiles.Hdr.DeleteProfile(app);
             _profiles.Dsx.DeleteProfile(app);
@@ -732,6 +769,8 @@ internal sealed class TrayApp : IDisposable
             bool    saveProfile = _overlay.SaveProfile;
             bool    hdrVal      = _overlay.HdrEnabled;
             string? selDsx      = _overlay.SelectedDsxProfile;
+
+            Logger.Log($"Overlay: Apply clicked for app='{app}' rate={selRate} hdr={hdrVal} dsx='{selDsx}' gsync={_overlay.SelectedGsyncMode} saveProfile={saveProfile}.");
 
             _defaultRate = SaveOrClear(_profiles.Rate, app, saveProfile, selRate, _defaultRate);
             if (_hdrSupported)
