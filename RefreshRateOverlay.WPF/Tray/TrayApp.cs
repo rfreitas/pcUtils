@@ -43,8 +43,10 @@ internal sealed class TrayApp : IDisposable
     // external change.
     private bool _settling;
 
-    private GsyncGlobalMode _defaultGsyncMode;
-    private bool            _gsyncAvailable;
+    private GsyncGlobalMode  _defaultGsyncMode;
+    private bool             _gsyncAvailable;
+    private GsyncGlobalMode  _lastPolledGsyncMode;
+    private readonly System.Windows.Forms.Timer _gsyncPollTimer;
 
     private readonly NotifyIcon _tray;
     private Icon? _currentIcon;
@@ -102,6 +104,20 @@ internal sealed class TrayApp : IDisposable
             _profiles.GsyncMode.WriteDefault(_defaultGsyncMode);
         }
         if (_gsyncAvailable) NvidiaGsyncService.SetGlobalMode(_defaultGsyncMode);
+        _lastPolledGsyncMode = _defaultGsyncMode;
+
+        // HardwareChange subscribers — see its own remarks. Each reconciler owns
+        // its own setting; wiring a new integration in later means adding its
+        // own detector + subscriber pair here, not editing these.
+        HardwareChange += ReconcileRateAndHdr;
+        HardwareChange += ReconcileGsyncMode;
+
+        // NVIDIA's DRS database has no change notification to hook, unlike
+        // WM_DISPLAYCHANGE — 2s balances catching an external change reasonably
+        // promptly against the cost of a DRS session open/read every tick.
+        _gsyncPollTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+        _gsyncPollTimer.Tick += PollGsyncMode;
+        if (_gsyncAvailable) _gsyncPollTimer.Start();
 
         _tray = new NotifyIcon
         {
@@ -199,31 +215,48 @@ internal sealed class TrayApp : IDisposable
     private void ApplyGsyncMode(string app)
     {
         if (!_gsyncAvailable) return;
-
-        GsyncGlobalMode target = _profiles.GsyncMode.TryReadProfile(app, out var profileMode)
-            ? profileMode
-            : _defaultGsyncMode;
-
-        NvidiaGsyncService.SetGlobalMode(target);
+        NvidiaGsyncService.SetGlobalMode(ResolveGsyncTarget(app));
     }
 
     // -------------------------------------------------------------------------
-    // Display change sync — while _settling is true, this is our own apply
+    // HardwareChange — a generic "something external changed, go check for
+    // drift" signal, deliberately decoupled from what detected it. Today it has
+    // one raiser (OnDisplayChange, below) and one subscriber
+    // (ReconcileRateAndHdr) for the display, plus a second raiser/subscriber
+    // pair (PollGsyncMode/ReconcileGsyncMode) proving a second, unrelated
+    // integration can plug into the same signal without touching this one.
+    // Adding another integration later (DSX, say) means adding its own
+    // detector that raises this event and its own subscriber — never editing
+    // an existing reconciler to know about a new source.
+    // -------------------------------------------------------------------------
+    private event Action? HardwareChange;
+
+    // -------------------------------------------------------------------------
+    // Display change detection — while _settling is true, this is our own apply
     // still riding out the driver/TV's negotiation delay (see ApplyDisplayState/
     // ReconcileAsync, which own that flag), not an external change, so it's
-    // ignored entirely. Once settled, any further display change means
-    // something outside the overlay changed it — the user via Windows Settings,
-    // or the app itself re-asserting its own preference. Either way this
-    // doesn't fight it: it records the observed value as the new truth, into
-    // whichever slot is currently active for the foreground app (its own
-    // profile if it has one, otherwise the shared default) — same rule
-    // regardless of which one applies, since both cases are "something changed
-    // outside the overlay" and get written back the same way.
+    // ignored entirely. _settling is specific to the display (HDMI/TV settling
+    // time) — a future raiser with its own settling semantics would own its own
+    // guard rather than share this one.
     // -------------------------------------------------------------------------
     private void OnDisplayChange()
     {
         if (_settling) return;
+        HardwareChange?.Invoke();
+    }
 
+    /// <summary>
+    /// Subscribed to HardwareChange. Any external display change means
+    /// something outside the overlay changed it — the user via Windows
+    /// Settings, or the app itself re-asserting its own preference. Either way
+    /// this doesn't fight it: it records the observed value as the new truth,
+    /// into whichever slot is currently active for the foreground app (its own
+    /// profile if it has one, otherwise the shared default) — same rule
+    /// regardless of which one applies, since both cases are "something changed
+    /// outside the overlay" and get written back the same way.
+    /// </summary>
+    private void ReconcileRateAndHdr()
+    {
         _currentRate = DisplayService.GetCurrentRate();
         UpdateTrayIcon(_currentRate);
 
@@ -264,6 +297,55 @@ internal sealed class TrayApp : IDisposable
         // window stays open (see OverlayWindow.RefreshLiveState).
         if (_overlay is { } overlay && overlay.ActiveApp == app)
             overlay.RefreshLiveState(_currentRate, currHdr);
+    }
+
+    // -------------------------------------------------------------------------
+    // G-SYNC change detection — NVIDIA's DRS database has no equivalent of
+    // WM_DISPLAYCHANGE to hook, so this polls the base profile instead. Only
+    // raises HardwareChange when the polled value actually differs from the
+    // last poll, same "detect, then let the shared reconciler re-derive truth
+    // independently" split OnDisplayChange/ReconcileRateAndHdr use — this
+    // method never writes anything itself.
+    // -------------------------------------------------------------------------
+    private void PollGsyncMode(object? sender, EventArgs e)
+    {
+        if (!_gsyncAvailable) return;
+        if (!NvidiaGsyncService.TryGetGlobalMode(out var liveMode)) return;
+        if (liveMode == _lastPolledGsyncMode) return;
+
+        _lastPolledGsyncMode = liveMode;
+        HardwareChange?.Invoke();
+    }
+
+    /// <summary>What VRR_MODE *should* be right now for the given app — same
+    /// resolution shape as ResolveTarget, kept separate since it's a different
+    /// setting with a different storage type (GsyncMode isn't Rate/Hdr).</summary>
+    private GsyncGlobalMode ResolveGsyncTarget(string app) =>
+        _profiles.GsyncMode.TryReadProfile(app, out var profileMode) ? profileMode : _defaultGsyncMode;
+
+    /// <summary>Subscribed to HardwareChange, same shape and reasoning as
+    /// ReconcileRateAndHdr: an external base-profile change (the user via NVCP,
+    /// or the NVIDIA app) gets recorded as the new truth into whichever slot is
+    /// active for the foreground app, rather than fought.</summary>
+    private void ReconcileGsyncMode()
+    {
+        if (!_gsyncAvailable) return;
+        if (!NvidiaGsyncService.TryGetGlobalMode(out var liveMode)) return;
+
+        string app = _tracker.LastApp;
+        GsyncGlobalMode target = ResolveGsyncTarget(app);
+
+        if (liveMode == target) return;
+
+        if (_profiles.GsyncMode.HasProfile(app))
+        {
+            _profiles.GsyncMode.WriteProfile(app, liveMode);
+        }
+        else
+        {
+            _defaultGsyncMode = liveMode;
+            _profiles.GsyncMode.WriteDefault(_defaultGsyncMode);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -638,6 +720,8 @@ internal sealed class TrayApp : IDisposable
         if (_disposed) return;
         _disposed = true;
         _reconcileCts?.Cancel();
+        _gsyncPollTimer.Stop();
+        _gsyncPollTimer.Dispose();
         _tracker.Dispose();
         _msgSink.Dispose();
         _hotkey.Dispose();
