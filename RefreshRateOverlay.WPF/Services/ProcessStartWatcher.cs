@@ -49,8 +49,18 @@ internal sealed class ProcessStartWatcher : IDisposable
     private void OnEventArrived(object sender, EventArrivedEventArgs e)
     {
         if (e.NewEvent.Properties["ProcessName"]?.Value is string name)
-            _dispatcher.BeginInvoke(() => ProcessStarted?.Invoke(this, name));
+            RaiseProcessStarted(name);
     }
+
+    /// <summary>The actual fix under test lives here: marshaling onto the
+    /// dispatcher captured at construction, regardless of which thread calls
+    /// this. Internal (not private) so a test can call it directly from a
+    /// background thread to simulate WMI's own delivery thread — a real
+    /// EventArrivedEventArgs can't practically be constructed outside a live
+    /// WMI callback, but this marshaling behavior doesn't depend on WMI at
+    /// all, so it doesn't need one to verify.</summary>
+    internal void RaiseProcessStarted(string processName) =>
+        _dispatcher.BeginInvoke(() => ProcessStarted?.Invoke(this, processName));
 
     public void Dispose()
     {
