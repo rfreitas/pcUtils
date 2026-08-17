@@ -723,6 +723,7 @@ internal sealed class TrayApp : IDisposable
             {
                 VrrAppState.Enabled  => "Enabled",
                 VrrAppState.Disabled => "Disabled",
+                VrrAppState.NotSet   => "Not set (using global)",
                 _                    => "Not supported",
             }
             : null;

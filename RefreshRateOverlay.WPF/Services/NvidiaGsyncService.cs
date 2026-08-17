@@ -45,6 +45,12 @@ public enum VrrAppState : uint
     Disabled     = 0x00000000,
     Enabled      = 0x00000001,
     NotSupported = 0x9F95128E,
+
+    // Sentinel, not a real driver value: the resolved profile has never had
+    // this setting explicitly touched — the common case (most apps never get
+    // a per-app override), and a legitimate answer worth showing, not a
+    // failure to hide the row behind.
+    NotSet = 0xFFFFFFFE,
 }
 
 internal static class NvidiaGsyncService
@@ -98,8 +104,13 @@ internal static class NvidiaGsyncService
         {
             using var session = DriverSettingsSession.CreateAndLoad();
             var profile = session.FindApplicationProfile(app);
-            var setting = profile.GetSetting(VrrAppControlId);
-            state = (VrrAppState)Convert.ToUInt32(setting.CurrentValue);
+            // GetSetting returns null (not an exception) when the resolved
+            // profile has never had this particular setting explicitly
+            // touched — common for 0x10A879CE specifically, unlike VRR_MODE
+            // which is set on essentially every profile. That's a real,
+            // displayable answer (NotSet), not a read failure.
+            var setting = profile?.GetSetting(VrrAppControlId);
+            state = setting is null ? VrrAppState.NotSet : (VrrAppState)Convert.ToUInt32(setting.CurrentValue);
             return true;
         }
         catch (Exception ex) { Logger.LogException(ex); return false; }
