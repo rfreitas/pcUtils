@@ -87,7 +87,23 @@ Write-Host " RELOADING: $assemblyName"
 Write-Host "=============================================="
 
 Write-Host "`n[1/3] Stopping running instance..."
-Stop-Process -Name $assemblyName -Force -ErrorAction SilentlyContinue
+$runningProc = Get-Process -Name $assemblyName -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($runningProc) {
+    try {
+        Stop-Process -Id $runningProc.Id -Force -ErrorAction Stop
+    } catch {
+        # Access denied means the running instance is elevated (e.g. an
+        # app.manifest requireAdministrator app) and this shell isn't — a plain
+        # Stop-Process can't open a handle to it. Escalate via a one-shot
+        # elevated helper instead of silently giving up, which used to leave
+        # the exe locked and the build failing right after.
+        Write-Host "  Access denied — requesting elevation to stop it..."
+        Start-Process powershell -Verb RunAs -Wait -ArgumentList @(
+            "-NoProfile", "-Command",
+            "Stop-Process -Id $($runningProc.Id) -Force -ErrorAction SilentlyContinue"
+        )
+    }
+}
 Start-Sleep -Milliseconds 400
 
 # ---------------------------------------------------------------------------
