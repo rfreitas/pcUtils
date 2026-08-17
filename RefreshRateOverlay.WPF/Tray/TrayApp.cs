@@ -35,7 +35,13 @@ internal sealed class TrayApp : IDisposable
     private bool _defaultHdr;
     private bool _hdrSupported;
     private int  _currentRate;
-    private int  _ignoreDisplayChangeUntil; // Environment.TickCount64 threshold
+
+    // True from the moment ApplyDisplayState issues a change until ReconcileAsync
+    // confirms hardware landed on the target (or times out) — see ReconcileAsync
+    // and OnDisplayChange remarks. While true, OnDisplayChange treats any
+    // WM_DISPLAYCHANGE as expected settling noise from our own apply, not an
+    // external change.
+    private bool _settling;
 
     private GsyncGlobalMode _defaultGsyncMode;
     private bool            _gsyncAvailable;
@@ -139,16 +145,22 @@ internal sealed class TrayApp : IDisposable
         // stale and ApplyRate's no-op guard would wrongly skip re-applying it.
         _currentRate = DisplayService.GetCurrentRate();
 
-        bool hasProfileRate = _profiles.Rate.TryReadProfile(app, out int profileRate);
-        int  targetRate     = hasProfileRate ? profileRate : _defaultRate;
-        bool targetHdr      = _hdrSupported && _profiles.Hdr.TryReadProfile(app, out bool profileHdr)
-            ? profileHdr
-            : _defaultHdr;
+        (int targetRate, bool targetHdr) = ResolveTarget(app);
 
-        Logger.Log($"ApplyProfile: app='{app}' savedProfileRate={(hasProfileRate ? profileRate.ToString() : "none")} defaultRate={_defaultRate} target={targetRate} hwRateBefore={_currentRate}");
+        Logger.Log($"ApplyProfile: app='{app}' target={targetRate} hwRateBefore={_currentRate}");
 
         ApplyDisplayState(targetRate, targetHdr);
     }
+
+    /// <summary>What rate/HDR *should* be right now for the given app: its own
+    /// profile if it has one, otherwise the shared default. Same resolution used
+    /// both to apply (ApplyProfile) and to detect drift (OnDisplayChange) —
+    /// one shared definition of "correct" instead of two that could disagree.</summary>
+    private (int Rate, bool Hdr) ResolveTarget(string app) =>
+        (
+            _profiles.Rate.TryReadProfile(app, out int profileRate) ? profileRate : _defaultRate,
+            _hdrSupported && _profiles.Hdr.TryReadProfile(app, out bool profileHdr) ? profileHdr : _defaultHdr
+        );
 
     // -------------------------------------------------------------------------
     // DSX controller-profile application
@@ -196,34 +208,55 @@ internal sealed class TrayApp : IDisposable
     }
 
     // -------------------------------------------------------------------------
-    // Display change sync
+    // Display change sync — while _settling is true, this is our own apply
+    // still riding out the driver/TV's negotiation delay (see ApplyDisplayState/
+    // ReconcileAsync, which own that flag), not an external change, so it's
+    // ignored entirely. Once settled, any further display change means
+    // something outside the overlay changed it — the user via Windows Settings,
+    // or the app itself re-asserting its own preference. Either way this
+    // doesn't fight it: it records the observed value as the new truth, into
+    // whichever slot is currently active for the foreground app (its own
+    // profile if it has one, otherwise the shared default) — same rule
+    // regardless of which one applies, since both cases are "something changed
+    // outside the overlay" and get written back the same way.
     // -------------------------------------------------------------------------
     private void OnDisplayChange()
     {
-        if (Environment.TickCount64 < _ignoreDisplayChangeUntil)
-            return;
+        if (_settling) return;
 
         _currentRate = DisplayService.GetCurrentRate();
         UpdateTrayIcon(_currentRate);
 
-        string lastApp = _tracker.LastApp;
+        string app = _tracker.LastApp;
+        (int targetRate, bool targetHdr) = ResolveTarget(app);
 
-        if (!_profiles.Rate.TryReadProfile(lastApp, out _))
+        if (_currentRate != targetRate)
         {
-            if (_defaultRate != _currentRate)
+            if (_profiles.Rate.HasProfile(app))
+            {
+                _profiles.Rate.WriteProfile(app, _currentRate);
+            }
+            else
             {
                 _defaultRate = _currentRate;
                 _profiles.Rate.WriteDefault(_defaultRate);
             }
         }
 
-        if (_hdrSupported && !_profiles.Hdr.TryReadProfile(lastApp, out _))
+        if (_hdrSupported)
         {
-            (_, bool currHdr) = HdrService.GetState();
-            if (_defaultHdr != currHdr)
+            bool currHdr = HdrService.GetState().Enabled;
+            if (currHdr != targetHdr)
             {
-                _defaultHdr = currHdr;
-                _profiles.Hdr.WriteDefault(_defaultHdr);
+                if (_profiles.Hdr.HasProfile(app))
+                {
+                    _profiles.Hdr.WriteProfile(app, currHdr);
+                }
+                else
+                {
+                    _defaultHdr = currHdr;
+                    _profiles.Hdr.WriteDefault(_defaultHdr);
+                }
             }
         }
     }
@@ -235,7 +268,6 @@ internal sealed class TrayApp : IDisposable
     {
         if (_currentRate == rate) return;
 
-        _ignoreDisplayChangeUntil = (int)(Environment.TickCount64 + 2000);
         if (DisplayService.SetRate(rate))
         {
             _currentRate = rate;
@@ -263,6 +295,7 @@ internal sealed class TrayApp : IDisposable
         _reconcileCts?.Cancel();
         var cts = new CancellationTokenSource();
         _reconcileCts = cts;
+        _settling = true;
 
         if (_hdrSupported) HdrService.SetState(hdrEnabled);
         ApplyRate(rate);
@@ -275,7 +308,10 @@ internal sealed class TrayApp : IDisposable
     /// re-applies (HDR then rate) if it ever finds a mismatch against the target —
     /// absorbs the driver/TV's asynchronous HDMI settling delay instead of hoping
     /// the first attempt landed. Stops as soon as hardware matches the target, or
-    /// if superseded by a newer ApplyDisplayState call (via the passed token).
+    /// if superseded by a newer ApplyDisplayState call (via the passed token) —
+    /// clears _settling on the way out (guarded by the token so a superseded pass
+    /// can't clear it out from under the newer one that replaced it), which is
+    /// what lets OnDisplayChange start treating further changes as external.
     /// </summary>
     private async Task ReconcileAsync(int targetRate, bool targetHdr, CancellationToken token)
     {
@@ -295,13 +331,18 @@ internal sealed class TrayApp : IDisposable
             bool rateOk = hwRate == targetRate;
 
             if (rateOk && hwHdr)
+            {
+                if (!token.IsCancellationRequested) _settling = false;
                 return; // converged
+            }
 
             Logger.Log($"Reconcile: mismatch (hwRate={hwRate} target={targetRate}, hdrOk={hwHdr}) — re-applying.");
             if (_hdrSupported) HdrService.SetState(targetHdr);
             _currentRate = hwRate; // resync so ApplyRate's no-op guard doesn't skip the needed reapply
             ApplyRate(targetRate);
         }
+
+        if (!token.IsCancellationRequested) _settling = false;
     }
 
     // -------------------------------------------------------------------------
@@ -430,20 +471,17 @@ internal sealed class TrayApp : IDisposable
 
         bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile || hasGsyncModeProfile;
 
-        // If not in a profile, ensure defaults match reality
-        if (!hasProfile)
-        {
-            if (_defaultRate != _currentRate)
-            {
-                _defaultRate = _currentRate;
-                _profiles.Rate.WriteDefault(_defaultRate);
-            }
-            if (_hdrSupported && _defaultHdr != currHdr)
-            {
-                _defaultHdr = currHdr;
-                _profiles.Hdr.WriteDefault(_defaultHdr);
-            }
-        }
+        // Opening the overlay never writes the INI — that's OnDisplayChange's job
+        // now (see its remarks). But the preselect below can still legitimately
+        // disagree with what's actually stored (hardware drifted and no display
+        // event has reconciled it yet — most likely still mid-settling), so flag
+        // that rather than silently showing a value Apply would treat as already
+        // saved. Checked per-setting (not the bundled hasProfile above, which
+        // also covers Dsx/GsyncMode) since preselectRate only falls back to live
+        // hardware when Rate specifically has no profile — an app with only a
+        // Dsx profile would otherwise be wrongly marked synced.
+        bool rateSynced = _profiles.Rate.HasProfile(app) || _defaultRate == _currentRate;
+        bool hdrSynced  = _profiles.Hdr.HasProfile(app) || !_hdrSupported || _defaultHdr == currHdr;
 
         // Preselect from the saved profile when one exists, not live hardware state —
         // otherwise if the actual display has drifted from what the profile says
@@ -468,7 +506,9 @@ internal sealed class TrayApp : IDisposable
             hasProfile:     hasProfile,
             windowMode:     windowMode,
             preselectDsxProfile: dsxProfile,
-            gsyncMode:      gsyncMode);
+            gsyncMode:      gsyncMode,
+            rateSynced:     rateSynced,
+            hdrSynced:      hdrSynced);
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {

@@ -60,7 +60,9 @@ public partial class OverlayWindow : Window
         bool       hasProfile,
         WindowMode windowMode,
         string?    preselectDsxProfile,
-        GsyncGlobalMode? gsyncMode)
+        GsyncGlobalMode? gsyncMode,
+        bool       rateSynced = true,
+        bool       hdrSynced  = true)
     {
         InitializeComponent();
 
@@ -110,6 +112,16 @@ public partial class OverlayWindow : Window
         {
             HdrCheckBox.Visibility = Visibility.Collapsed;
         }
+
+        // Not synced means this app has no profile of its own and hardware has
+        // drifted from the stored default (most likely still mid-settling from a
+        // recent apply) — what's shown here is live hardware, not what Apply
+        // would currently be overwriting. A tooltip rather than inline text:
+        // keeps every other unsynced-app render (the common case) identical to
+        // today, only differs when it's actually relevant.
+        const string notSyncedTip = "Not synced with the saved default yet (still settling from a recent change) — Apply will save what's shown here as the new default.";
+        if (!rateSynced) RateDropDown.ToolTip = notSyncedTip;
+        if (!hdrSynced)  HdrCheckBox.ToolTip   = notSyncedTip;
 
         SaveCheckBox.Content   = new TextBlock { Text = $"Save for {activeApp}", TextWrapping = TextWrapping.Wrap };
         SaveCheckBox.IsChecked = hasProfile;
