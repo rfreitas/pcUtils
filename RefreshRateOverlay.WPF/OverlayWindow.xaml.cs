@@ -14,6 +14,18 @@ namespace RefreshRateOverlay.WPF;
 /// </summary>
 public partial class OverlayWindow : Window
 {
+    private const string NotSyncedTip =
+        "Not synced with the saved default yet (still settling from a recent change) — Apply will save what's shown here as the new default.";
+
+    // Set true the first time the user actually interacts with the
+    // corresponding control, so RefreshLiveState (a background sync arriving
+    // while this window is still open) never clobbers a selection already
+    // in progress. Guarded against by _suppressTouchTracking while
+    // RefreshLiveState itself is writing to the controls programmatically.
+    private bool _suppressTouchTracking;
+    private bool _rateTouched;
+    private bool _hdrTouched;
+
     public string ActiveApp { get; }
 
     public int SelectedRate =>
@@ -116,12 +128,9 @@ public partial class OverlayWindow : Window
         // Not synced means this app has no profile of its own and hardware has
         // drifted from the stored default (most likely still mid-settling from a
         // recent apply) — what's shown here is live hardware, not what Apply
-        // would currently be overwriting. A tooltip rather than inline text:
-        // keeps every other unsynced-app render (the common case) identical to
-        // today, only differs when it's actually relevant.
-        const string notSyncedTip = "Not synced with the saved default yet (still settling from a recent change) — Apply will save what's shown here as the new default.";
-        if (!rateSynced) RateDropDown.ToolTip = notSyncedTip;
-        if (!hdrSynced)  HdrCheckBox.ToolTip   = notSyncedTip;
+        // would currently be overwriting.
+        SetSyncIndicator(RateSyncDot, RateDropDown, rateSynced);
+        SetSyncIndicator(HdrSyncDot, HdrCheckBox, hdrSynced);
 
         SaveCheckBox.Content   = new TextBlock { Text = $"Save for {activeApp}", TextWrapping = TextWrapping.Wrap };
         SaveCheckBox.IsChecked = hasProfile;
@@ -136,11 +145,64 @@ public partial class OverlayWindow : Window
 
         ApplyButton.Click  += (_, _) => ApplyRequested?.Invoke(this, EventArgs.Empty);
         CancelButton.Click += (_, _) => Close();
+
+        // Wired last, after every initial value above is already set — only
+        // marks a control "touched" (see RefreshLiveState) on a change the user
+        // actually made, not the constructor's own initial selection.
+        RateDropDown.SelectionChanged += (_, _) => { if (!_suppressTouchTracking) _rateTouched = true; };
+        HdrCheckBox.Checked           += (_, _) => { if (!_suppressTouchTracking) _hdrTouched  = true; };
+        HdrCheckBox.Unchecked         += (_, _) => { if (!_suppressTouchTracking) _hdrTouched  = true; };
     }
 
     /// <summary>Reflects a profile save/delete that just happened via ApplyRequested.</summary>
     public void ReflectProfileState(bool hasProfile) =>
         DeleteProfileButton.Visibility = hasProfile ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>
+    /// Called by TrayApp whenever a background reconciliation (OnDisplayChange)
+    /// updates the INI for the app this overlay is currently showing, so the
+    /// dialog doesn't sit there silently stale for as long as it stays open.
+    /// Never touches a control the user has already interacted with since
+    /// opening — a background sync landing mid-decision shouldn't overwrite an
+    /// in-progress choice out from under them.
+    /// </summary>
+    public void RefreshLiveState(int currentRate, bool rateSynced, bool currHdr, bool hdrSynced)
+    {
+        _suppressTouchTracking = true;
+        try
+        {
+            if (!_rateTouched)
+            {
+                string target = $"{currentRate} Hz";
+                for (int i = 0; i < RateDropDown.Items.Count; i++)
+                {
+                    if (RateDropDown.Items[i] is string s && s == target)
+                    {
+                        RateDropDown.SelectedIndex = i;
+                        break;
+                    }
+                }
+                SetSyncIndicator(RateSyncDot, RateDropDown, rateSynced);
+            }
+
+            if (!_hdrTouched && HdrCheckBox.Visibility == Visibility.Visible)
+            {
+                HdrCheckBox.IsChecked = currHdr;
+                SetSyncIndicator(HdrSyncDot, HdrCheckBox, hdrSynced);
+            }
+        }
+        finally { _suppressTouchTracking = false; }
+    }
+
+    /// <summary>Green dot + no tooltip when synced; red dot + explanatory tooltip
+    /// when not — one shared definition so the constructor's initial render and
+    /// RefreshLiveState's later updates can never disagree on what "synced"
+    /// looks like.</summary>
+    private static void SetSyncIndicator(System.Windows.Shapes.Ellipse dot, FrameworkElement control, bool synced)
+    {
+        dot.Fill = synced ? System.Windows.Media.Brushes.LimeGreen : System.Windows.Media.Brushes.Red;
+        control.ToolTip = synced ? null : NotSyncedTip;
+    }
 
     /// <summary>
     /// Runs automatically whenever the overlay opens for a real app — no button,

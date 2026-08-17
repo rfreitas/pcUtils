@@ -243,22 +243,27 @@ internal sealed class TrayApp : IDisposable
             }
         }
 
-        if (_hdrSupported)
+        bool currHdr = _hdrSupported && HdrService.GetState().Enabled;
+        if (_hdrSupported && currHdr != targetHdr)
         {
-            bool currHdr = HdrService.GetState().Enabled;
-            if (currHdr != targetHdr)
+            if (_profiles.Hdr.HasProfile(app))
             {
-                if (_profiles.Hdr.HasProfile(app))
-                {
-                    _profiles.Hdr.WriteProfile(app, currHdr);
-                }
-                else
-                {
-                    _defaultHdr = currHdr;
-                    _profiles.Hdr.WriteDefault(_defaultHdr);
-                }
+                _profiles.Hdr.WriteProfile(app, currHdr);
+            }
+            else
+            {
+                _defaultHdr = currHdr;
+                _profiles.Hdr.WriteDefault(_defaultHdr);
             }
         }
+
+        // Whatever branch ran above, the app's rate/HDR now match reality by
+        // construction (either they already did, or we just made them) — so if
+        // the overlay is open and showing this exact app, push the refreshed
+        // state in rather than leaving it silently stale for as long as the
+        // window stays open.
+        if (_overlay is { } overlay && overlay.ActiveApp == app)
+            overlay.RefreshLiveState(_currentRate, rateSynced: true, currHdr, hdrSynced: true);
     }
 
     // -------------------------------------------------------------------------
