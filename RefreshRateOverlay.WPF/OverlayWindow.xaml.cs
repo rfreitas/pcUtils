@@ -26,6 +26,14 @@ public partial class OverlayWindow : Window
     private bool _rateTouched;
     private bool _hdrTouched;
 
+    // The actual currently-saved value (profile-or-default) for this app, per
+    // TrayApp.ResolveTarget — the baseline the sync dots compare the live
+    // control value against. Updated by RefreshLiveState whenever a background
+    // reconciliation changes what's actually stored, so the dots stay correct
+    // even without the user touching anything.
+    private int  _storedRate;
+    private bool _storedHdr;
+
     public string ActiveApp { get; }
 
     public int SelectedRate =>
@@ -73,8 +81,8 @@ public partial class OverlayWindow : Window
         WindowMode windowMode,
         string?    preselectDsxProfile,
         GsyncGlobalMode? gsyncMode,
-        bool       rateSynced = true,
-        bool       hdrSynced  = true)
+        int        storedRate,
+        bool       storedHdr)
     {
         InitializeComponent();
 
@@ -122,15 +130,17 @@ public partial class OverlayWindow : Window
         }
         else
         {
-            HdrCheckBox.Visibility = Visibility.Collapsed;
+            HdrRow.Visibility = Visibility.Collapsed;
         }
 
-        // Not synced means this app has no profile of its own and hardware has
-        // drifted from the stored default (most likely still mid-settling from a
-        // recent apply) — what's shown here is live hardware, not what Apply
-        // would currently be overwriting.
-        SetSyncIndicator(RateSyncDot, RateDropDown, rateSynced);
-        SetSyncIndicator(HdrSyncDot, HdrCheckBox, hdrSynced);
+        // The sync dots compare against these — see field remarks. Set before
+        // the initial UpdateXSyncIndicator calls below and before the
+        // change-event wiring, so both react correctly from the start.
+        _storedRate = storedRate;
+        _storedHdr  = storedHdr;
+
+        UpdateRateSyncIndicator();
+        UpdateHdrSyncIndicator();
 
         SaveCheckBox.Content   = new TextBlock { Text = $"Save for {activeApp}", TextWrapping = TextWrapping.Wrap };
         SaveCheckBox.IsChecked = hasProfile;
@@ -146,12 +156,20 @@ public partial class OverlayWindow : Window
         ApplyButton.Click  += (_, _) => ApplyRequested?.Invoke(this, EventArgs.Empty);
         CancelButton.Click += (_, _) => Close();
 
-        // Wired last, after every initial value above is already set — only
-        // marks a control "touched" (see RefreshLiveState) on a change the user
-        // actually made, not the constructor's own initial selection.
-        RateDropDown.SelectionChanged += (_, _) => { if (!_suppressTouchTracking) _rateTouched = true; };
-        HdrCheckBox.Checked           += (_, _) => { if (!_suppressTouchTracking) _hdrTouched  = true; };
-        HdrCheckBox.Unchecked         += (_, _) => { if (!_suppressTouchTracking) _hdrTouched  = true; };
+        // Wired last, after every initial value above is already set. Marks a
+        // control "touched" on a change the user actually made (not the
+        // constructor's own initial selection, nor RefreshLiveState writing
+        // programmatically — both guarded by _suppressTouchTracking), and
+        // always recomputes that control's dot against the stored baseline —
+        // this is what makes the dot react to the user's own edits, not just
+        // to background reconciliation.
+        RateDropDown.SelectionChanged += (_, _) =>
+        {
+            if (!_suppressTouchTracking) _rateTouched = true;
+            UpdateRateSyncIndicator();
+        };
+        HdrCheckBox.Checked   += (_, _) => { if (!_suppressTouchTracking) _hdrTouched = true; UpdateHdrSyncIndicator(); };
+        HdrCheckBox.Unchecked += (_, _) => { if (!_suppressTouchTracking) _hdrTouched = true; UpdateHdrSyncIndicator(); };
     }
 
     /// <summary>Reflects a profile save/delete that just happened via ApplyRequested.</summary>
@@ -162,12 +180,19 @@ public partial class OverlayWindow : Window
     /// Called by TrayApp whenever a background reconciliation (OnDisplayChange)
     /// updates the INI for the app this overlay is currently showing, so the
     /// dialog doesn't sit there silently stale for as long as it stays open.
-    /// Never touches a control the user has already interacted with since
-    /// opening — a background sync landing mid-decision shouldn't overwrite an
-    /// in-progress choice out from under them.
+    /// currentRate/currHdr are the new stored baseline (see _storedRate/_storedHdr
+    /// remarks), always applied. The displayed control value only follows it if
+    /// the user hasn't touched that control since opening — a background sync
+    /// landing mid-decision shouldn't overwrite an in-progress choice — but the
+    /// dot still gets recomputed either way, since "touched" only protects the
+    /// selection, not whether it still matches the (possibly just-changed)
+    /// baseline.
     /// </summary>
-    public void RefreshLiveState(int currentRate, bool rateSynced, bool currHdr, bool hdrSynced)
+    public void RefreshLiveState(int currentRate, bool currHdr)
     {
+        _storedRate = currentRate;
+        _storedHdr  = currHdr;
+
         _suppressTouchTracking = true;
         try
         {
@@ -182,22 +207,34 @@ public partial class OverlayWindow : Window
                         break;
                     }
                 }
-                SetSyncIndicator(RateSyncDot, RateDropDown, rateSynced);
             }
+            UpdateRateSyncIndicator();
 
-            if (!_hdrTouched && HdrCheckBox.Visibility == Visibility.Visible)
+            if (!_hdrTouched && HdrRow.Visibility == Visibility.Visible)
             {
                 HdrCheckBox.IsChecked = currHdr;
-                SetSyncIndicator(HdrSyncDot, HdrCheckBox, hdrSynced);
             }
+            UpdateHdrSyncIndicator();
         }
         finally { _suppressTouchTracking = false; }
     }
 
+    /// <summary>Compares the live dropdown value against the stored baseline —
+    /// called on every rate change (user-driven or programmatic) so the dot
+    /// reacts to your own edits, not just to background reconciliation.</summary>
+    private void UpdateRateSyncIndicator() =>
+        SetSyncIndicator(RateSyncDot, RateDropDown, SelectedRate == _storedRate);
+
+    /// <summary>Same as UpdateRateSyncIndicator but for HDR; no-ops when HDR
+    /// isn't supported (row hidden, nothing meaningful to compare).</summary>
+    private void UpdateHdrSyncIndicator()
+    {
+        if (HdrRow.Visibility != Visibility.Visible) return;
+        SetSyncIndicator(HdrSyncDot, HdrCheckBox, HdrEnabled == _storedHdr);
+    }
+
     /// <summary>Green dot + no tooltip when synced; red dot + explanatory tooltip
-    /// when not — one shared definition so the constructor's initial render and
-    /// RefreshLiveState's later updates can never disagree on what "synced"
-    /// looks like.</summary>
+    /// when not.</summary>
     private static void SetSyncIndicator(System.Windows.Shapes.Ellipse dot, FrameworkElement control, bool synced)
     {
         dot.Fill = synced ? System.Windows.Media.Brushes.LimeGreen : System.Windows.Media.Brushes.Red;

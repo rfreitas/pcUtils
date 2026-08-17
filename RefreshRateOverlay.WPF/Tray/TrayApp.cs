@@ -259,11 +259,11 @@ internal sealed class TrayApp : IDisposable
 
         // Whatever branch ran above, the app's rate/HDR now match reality by
         // construction (either they already did, or we just made them) — so if
-        // the overlay is open and showing this exact app, push the refreshed
-        // state in rather than leaving it silently stale for as long as the
-        // window stays open.
+        // the overlay is open and showing this exact app, push the new stored
+        // baseline in rather than leaving it silently stale for as long as the
+        // window stays open (see OverlayWindow.RefreshLiveState).
         if (_overlay is { } overlay && overlay.ActiveApp == app)
-            overlay.RefreshLiveState(_currentRate, rateSynced: true, currHdr, hdrSynced: true);
+            overlay.RefreshLiveState(_currentRate, currHdr);
     }
 
     // -------------------------------------------------------------------------
@@ -477,16 +477,12 @@ internal sealed class TrayApp : IDisposable
         bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile || hasGsyncModeProfile;
 
         // Opening the overlay never writes the INI — that's OnDisplayChange's job
-        // now (see its remarks). But the preselect below can still legitimately
-        // disagree with what's actually stored (hardware drifted and no display
-        // event has reconciled it yet — most likely still mid-settling), so flag
-        // that rather than silently showing a value Apply would treat as already
-        // saved. Checked per-setting (not the bundled hasProfile above, which
-        // also covers Dsx/GsyncMode) since preselectRate only falls back to live
-        // hardware when Rate specifically has no profile — an app with only a
-        // Dsx profile would otherwise be wrongly marked synced.
-        bool rateSynced = _profiles.Rate.HasProfile(app) || _defaultRate == _currentRate;
-        bool hdrSynced  = _profiles.Hdr.HasProfile(app) || !_hdrSupported || _defaultHdr == currHdr;
+        // now (see its remarks). What's actually stored (profile-or-default, same
+        // resolution ApplyProfile/OnDisplayChange use) is handed to the overlay
+        // as the sync dots' baseline — it compares that against whatever's live
+        // in each control itself, including your own edits, not just what got
+        // preselected here.
+        (int storedRate, bool storedHdr) = ResolveTarget(app);
 
         // Preselect from the saved profile when one exists, not live hardware state —
         // otherwise if the actual display has drifted from what the profile says
@@ -512,8 +508,8 @@ internal sealed class TrayApp : IDisposable
             windowMode:     windowMode,
             preselectDsxProfile: dsxProfile,
             gsyncMode:      gsyncMode,
-            rateSynced:     rateSynced,
-            hdrSynced:      hdrSynced);
+            storedRate:     storedRate,
+            storedHdr:      storedHdr);
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {
