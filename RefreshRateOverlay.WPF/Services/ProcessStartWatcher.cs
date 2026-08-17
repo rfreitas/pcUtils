@@ -1,4 +1,5 @@
 using System.Management;
+using System.Windows.Threading;
 
 namespace RefreshRateOverlay.WPF.Services;
 
@@ -13,15 +14,32 @@ namespace RefreshRateOverlay.WPF.Services;
 ///
 /// Win32_ProcessStartTrace requires the watching process to be elevated —
 /// this app already runs as administrator (see app.manifest), so that's free.
+///
+/// ManagementEventWatcher.EventArrived fires on a ThreadPool thread by
+/// default, unlike every other event source in this app (ForegroundTracker's
+/// Timer, SystemMessageSink's WndProc, NotifyIcon) which all run on the main
+/// UI thread's message pump. Left unmarshaled, this caused a real bug: a
+/// game whose process starts around the same moment it takes foreground
+/// focus (exactly Content Manager launching Assetto Corsa) could fire
+/// OnProcessStarted and OnAppChanged concurrently on two different threads,
+/// racing unsynchronized on TrayApp's shared reconciliation state
+/// (_currentRate, _settling, _reconcileCts) and corrupting it — observed as
+/// a saved rate profile silently reverting a few seconds after being set
+/// correctly. Capturing the UI Dispatcher at construction (this class is
+/// always constructed from TrayApp's constructor, itself on that thread) and
+/// marshaling through it puts ProcessStarted on the same thread as every
+/// other event source, eliminating the race entirely.
 /// </summary>
 internal sealed class ProcessStartWatcher : IDisposable
 {
     public event EventHandler<string>? ProcessStarted;
 
     private readonly ManagementEventWatcher _watcher;
+    private readonly Dispatcher _dispatcher;
 
     public ProcessStartWatcher()
     {
+        _dispatcher = Dispatcher.CurrentDispatcher;
         _watcher = new ManagementEventWatcher(new WqlEventQuery("SELECT * FROM Win32_ProcessStartTrace"));
         _watcher.EventArrived += OnEventArrived;
     }
@@ -31,7 +49,7 @@ internal sealed class ProcessStartWatcher : IDisposable
     private void OnEventArrived(object sender, EventArrivedEventArgs e)
     {
         if (e.NewEvent.Properties["ProcessName"]?.Value is string name)
-            ProcessStarted?.Invoke(this, name);
+            _dispatcher.BeginInvoke(() => ProcessStarted?.Invoke(this, name));
     }
 
     public void Dispose()
