@@ -37,6 +37,11 @@ internal sealed class TrayApp : IDisposable
     private bool _hdrSupported;
     private int  _currentRate;
 
+    // Tray-menu-togglable: whether OnProcessStarted speculatively applies a
+    // profile ahead of focus at all. Persisted so the user's choice survives
+    // a restart.
+    private bool _earlyApplyOnStart;
+
     // True from the moment ApplyDisplayState issues a change until ReconcileAsync
     // confirms hardware landed on the target (or times out) — see ReconcileAsync
     // and OnDisplayChange remarks. While true, OnDisplayChange treats any
@@ -71,6 +76,8 @@ internal sealed class TrayApp : IDisposable
         string iniPath = Path.Combine(AppContext.BaseDirectory, "RefreshSettings.ini");
         _ini      = new IniStore(iniPath);
         _profiles = new ProfileService(_ini);
+
+        _earlyApplyOnStart = _profiles.ReadEarlyApplyOnStart();
 
         (_hdrSupported, bool hdrEnabled) = HdrService.GetState();
 
@@ -155,6 +162,17 @@ internal sealed class TrayApp : IDisposable
     private void OnAppChanged(object? sender, string app)
     {
         Logger.Log($"ForegroundTracker: app changed -> '{app}'");
+        ApplyAllProfiles(app);
+    }
+
+    /// <summary>Applies every per-app setting (rate/HDR, DSX, G-SYNC) for the
+    /// given app in one call — the single "make hardware match this app's
+    /// profile" entry point shared by focus-change (OnAppChanged), the
+    /// speculative early-start push (OnProcessStarted), and that push's own
+    /// revert (ScheduleEarlyApplyRevertCheck). One shared definition of "apply
+    /// this app" instead of each caller picking its own subset.</summary>
+    private void ApplyAllProfiles(string app)
+    {
         ApplyProfile(app);
         ApplyDsxProfileForApp(app);
         ApplyGsyncMode(app);
@@ -187,35 +205,43 @@ internal sealed class TrayApp : IDisposable
         );
 
     // -------------------------------------------------------------------------
-    // Early HDR (process start, ahead of focus)
+    // Early apply (process start, ahead of focus)
     // -------------------------------------------------------------------------
 
-    /// <summary>Only apps the user has explicitly given an HDR profile are worth
-    /// front-running focus for — anything else waits for OnAppChanged like normal.
-    /// Rate is deliberately left alone here: unlike HDR, it isn't something games
-    /// cache once at pipeline init, and forcing it this early would flicker the
-    /// desktop for no benefit while the app is still loading in the background.
-    /// Passing _currentRate as ApplyDisplayState's target keeps ApplyRate's
-    /// no-op guard from touching it, while still reusing its settling/reconcile
-    /// machinery for the HDR push (so a WM_DISPLAYCHANGE the toggle itself
-    /// causes isn't mistaken for external drift).
+    /// <summary>Front-runs focus for apps the user has configured a profile
+    /// for — same ApplyAllProfiles call OnAppChanged makes, just triggered by
+    /// the process existing rather than by it taking foreground focus. Exists
+    /// because some games' render pipelines query HDR once at startup, well
+    /// before their window ever shows, so waiting for focus is too late for
+    /// those specifically — but once acting early at all, there's no reason
+    /// to apply it narrowly: rate/DSX/G-SYNC all already go through this same
+    /// per-app resolution on a normal focus change, so a second trigger that
+    /// only forwarded a subset of them would just be a second, inconsistent
+    /// application model to reason about. User-togglable via the tray menu
+    /// (_earlyApplyOnStart) since it's a guess, not a certainty — see below.
     ///
     /// This is a speculative push — the process starting doesn't guarantee it
     /// ever takes foreground focus (a helper/updater process, a launcher that
-    /// spawns a differently-named child, a crash on boot). ScheduleEarlyHdrRevertCheck
+    /// spawns a differently-named child, a crash on boot). ScheduleEarlyApplyRevertCheck
     /// is what corrects a wrong guess; nothing here needs to coordinate with
-    /// OnAppChanged directly — both funnel through the same ApplyDisplayState,
-    /// which already treats a fresh call as superseding whatever came before.</summary>
+    /// OnAppChanged directly — both funnel through the same ApplyAllProfiles/
+    /// ApplyDisplayState, which already treats a fresh call as superseding
+    /// whatever came before.</summary>
     private void OnProcessStarted(object? sender, string app)
     {
-        if (!_hdrSupported || !_profiles.Hdr.HasProfile(app)) return;
+        if (!_earlyApplyOnStart || !HasAnyProfile(app)) return;
 
-        bool targetHdr = ResolveTarget(app).Hdr;
-        Logger.Log($"ProcessStartWatcher: '{app}' started, early-applying HDR={targetHdr} ahead of focus.");
-        ApplyDisplayState(_currentRate, targetHdr);
+        Logger.Log($"ProcessStartWatcher: '{app}' started, early-applying its profile ahead of focus.");
+        ApplyAllProfiles(app);
 
-        ScheduleEarlyHdrRevertCheck(app);
+        ScheduleEarlyApplyRevertCheck(app);
     }
+
+    private bool HasAnyProfile(string app) =>
+        _profiles.Rate.HasProfile(app) ||
+        _profiles.Hdr.HasProfile(app) ||
+        _profiles.Dsx.HasProfile(app) ||
+        _profiles.GsyncMode.HasProfile(app);
 
     /// <summary>If the anticipated app never actually takes foreground focus
     /// within this window, the early push above was a wrong guess — re-resolve
@@ -223,7 +249,7 @@ internal sealed class TrayApp : IDisposable
     /// possibly "" for none yet/desktop) to undo it. If the anticipated app did
     /// take focus in the meantime, OnAppChanged already reapplied for it — this
     /// is then a no-op re-confirmation, not a correction.</summary>
-    private void ScheduleEarlyHdrRevertCheck(string anticipatedApp)
+    private void ScheduleEarlyApplyRevertCheck(string anticipatedApp)
     {
         const int windowMs = 9000; // generous for slow game boot, short enough not to strand a wrong guess
 
@@ -236,8 +262,8 @@ internal sealed class TrayApp : IDisposable
             string actualApp = _tracker.LastApp;
             if (actualApp == anticipatedApp) return;
 
-            Logger.Log($"ProcessStartWatcher: '{anticipatedApp}' never took focus (actual='{actualApp}') — reverting early HDR push.");
-            ApplyProfile(actualApp);
+            Logger.Log($"ProcessStartWatcher: '{anticipatedApp}' never took focus (actual='{actualApp}') — reverting early apply.");
+            ApplyAllProfiles(actualApp);
         };
         timer.Start();
     }
@@ -576,6 +602,23 @@ internal sealed class TrayApp : IDisposable
         };
 
         menu.Items.Add(startupItem);
+
+        // Apply Settings on Program Start (speculative early apply — see
+        // OnProcessStarted)
+        var earlyApplyItem = new ToolStripMenuItem((_earlyApplyOnStart ? check : space) + "Apply Settings on Program Start")
+        {
+            CheckOnClick = true,
+            Checked      = _earlyApplyOnStart,
+        };
+        earlyApplyItem.CheckedChanged += (sender, _) =>
+        {
+            if (sender is not ToolStripMenuItem item) return;
+            _earlyApplyOnStart = item.Checked;
+            item.Text = (item.Checked ? check : space) + "Apply Settings on Program Start";
+            _profiles.WriteEarlyApplyOnStart(_earlyApplyOnStart);
+        };
+        menu.Items.Add(earlyApplyItem);
+
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(space + "Exit", null, (_, _) => ExitApp());
 

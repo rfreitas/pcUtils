@@ -21,9 +21,10 @@ namespace RefreshRateOverlay.WPF.Services;
 /// </summary>
 internal sealed class ProfileService
 {
-    private const string SecSettings   = "Settings";
-    private const string KeyHotkeyMods = "HotkeyModifiers";
-    private const string KeyHotkeyVk   = "HotkeyKey";
+    private const string SecSettings         = "Settings";
+    private const string KeyHotkeyMods       = "HotkeyModifiers";
+    private const string KeyHotkeyVk         = "HotkeyKey";
+    private const string KeyEarlyApplyOnStart = "EarlyApplyOnStart";
 
     private readonly IniStore _ini;
 
@@ -78,4 +79,11 @@ internal sealed class ProfileService
         _ini.WriteInt(SecSettings, KeyHotkeyMods, (int)modifiers);
         _ini.WriteInt(SecSettings, KeyHotkeyVk, (int)vk);
     }
+
+    // ---- early-apply-on-start toggle -------------------------------------------
+    // Global-only, same reasoning as the hotkey above.
+
+    public bool ReadEarlyApplyOnStart() => _ini.ReadBool(SecSettings, KeyEarlyApplyOnStart, defaultValue: true);
+
+    public void WriteEarlyApplyOnStart(bool value) => _ini.WriteBool(SecSettings, KeyEarlyApplyOnStart, value);
 }
