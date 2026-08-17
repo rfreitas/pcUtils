@@ -23,6 +23,7 @@ public class OverlayWindowLayoutTests
             windowMode: WindowMode.Windowed,
             preselectDsxProfile: null,
             gsyncMode: gsyncMode,
+            appVrrDescription: null,
             storedRate: 60,
             storedHdr: false);
 

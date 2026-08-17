@@ -34,9 +34,23 @@ public enum GsyncGlobalMode
 /// while the NVIDIA app or NVCP also has one open risks one side's save
 /// silently dropping the other's concurrent edit.
 /// </summary>
+/// <summary>Per-application "Variable Refresh Rate - Control" DRS setting
+/// (0x10A879CE) — distinct from VRR_MODE (the base-profile-only global this
+/// app manages). Purely informational here: TryGetAppVrrState reads whatever
+/// NVIDIA's driver currently resolves for a specific app's own profile
+/// (falling back to the base profile if the app has none of its own), never
+/// written by this app.</summary>
+public enum VrrAppState : uint
+{
+    Disabled     = 0x00000000,
+    Enabled      = 0x00000001,
+    NotSupported = 0x9F95128E,
+}
+
 internal static class NvidiaGsyncService
 {
     private const uint VrrModeId = 0x1194F158;
+    private const uint VrrAppControlId = 0x10A879CE;
 
     // Initialize() is ref-counted; deliberately never paired with Unload() so
     // NVAPI just stays loaded for the process lifetime once confirmed working,
@@ -67,6 +81,25 @@ internal static class NvidiaGsyncService
             using var session = DriverSettingsSession.CreateAndLoad();
             var setting = session.BaseProfile.GetSetting(VrrModeId);
             mode = (GsyncGlobalMode)Convert.ToUInt32(setting.CurrentValue);
+            return true;
+        }
+        catch (Exception ex) { Logger.LogException(ex); return false; }
+    }
+
+    /// <summary>Reads what NVIDIA currently resolves VRR to for this specific
+    /// app's own profile (via FindApplicationProfile, which falls back to the
+    /// base profile when the app has no profile of its own) — read-only, no
+    /// write counterpart. Purely for display; see VrrAppState remarks.</summary>
+    public static bool TryGetAppVrrState(string app, out VrrAppState state)
+    {
+        state = VrrAppState.NotSupported;
+        if (!IsAvailable) return false;
+        try
+        {
+            using var session = DriverSettingsSession.CreateAndLoad();
+            var profile = session.FindApplicationProfile(app);
+            var setting = profile.GetSetting(VrrAppControlId);
+            state = (VrrAppState)Convert.ToUInt32(setting.CurrentValue);
             return true;
         }
         catch (Exception ex) { Logger.LogException(ex); return false; }

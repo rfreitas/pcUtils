@@ -715,6 +715,18 @@ internal sealed class TrayApp : IDisposable
 
         bool hasGsyncModeProfile = _gsyncAvailable && _profiles.GsyncMode.HasProfile(app);
 
+        // Read-only — see OverlayWindow's AppVrrRow remarks. Null hides the
+        // row entirely rather than showing a misleading value if the read
+        // fails (NVAPI unavailable, app unknown to the driver, etc).
+        string? appVrrDescription = _gsyncAvailable && NvidiaGsyncService.TryGetAppVrrState(app, out var vrrState)
+            ? vrrState switch
+            {
+                VrrAppState.Enabled  => "Enabled",
+                VrrAppState.Disabled => "Disabled",
+                _                    => "Not supported",
+            }
+            : null;
+
         bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile || hasGsyncModeProfile;
 
         // Opening the overlay never writes the INI — that's OnDisplayChange's job
@@ -749,6 +761,7 @@ internal sealed class TrayApp : IDisposable
             windowMode:     windowMode,
             preselectDsxProfile: dsxProfile,
             gsyncMode:      gsyncMode,
+            appVrrDescription: appVrrDescription,
             storedRate:     storedRate,
             storedHdr:      storedHdr);
 

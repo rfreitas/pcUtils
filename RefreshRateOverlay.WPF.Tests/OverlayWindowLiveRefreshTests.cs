@@ -30,6 +30,7 @@ public class OverlayWindowLiveRefreshTests
             windowMode: WindowMode.Windowed,
             preselectDsxProfile: null,
             gsyncMode: gsyncMode,
+            appVrrDescription: null,
             storedRate: storedRate,
             storedHdr: storedHdr);
 

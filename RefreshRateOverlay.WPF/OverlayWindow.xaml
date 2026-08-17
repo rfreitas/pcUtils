@@ -25,6 +25,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Text="Refresh Rate Overlay"
@@ -93,7 +94,21 @@
                 <ComboBox Grid.Column="4" x:Name="GsyncModeDropDown" FontSize="14" Height="30"/>
             </Grid>
 
-            <Grid Grid.Row="8" Margin="0,8,0,0">
+            <!-- Read-only: what NVIDIA's own per-app profile currently resolves
+                 VRR to for this app, distinct from the G-SYNC Mode setting above
+                 (which is the global/base-profile toggle this app controls).
+                 Never editable — informational only, no dot, no control. -->
+            <Grid Grid.Row="8" x:Name="AppVrrRow" Margin="0,8,0,0" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="App VRR:" Foreground="#AAAAAA" FontSize="13" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="2" x:Name="AppVrrValueText" Foreground="#CCCCCC" FontSize="13" VerticalAlignment="Center"/>
+            </Grid>
+
+            <Grid Grid.Row="9" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -107,7 +122,7 @@
                 </Button>
             </Grid>
 
-            <Grid Grid.Row="9" Margin="0,8,0,0">
+            <Grid Grid.Row="10" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="8"/>

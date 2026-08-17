@@ -81,6 +81,7 @@ public partial class OverlayWindow : Window
         WindowMode windowMode,
         string?    preselectDsxProfile,
         GsyncGlobalMode? gsyncMode,
+        string?    appVrrDescription,
         int        storedRate,
         bool       storedHdr)
     {
@@ -112,6 +113,16 @@ public partial class OverlayWindow : Window
                 if (!_suppressTouchTracking) gsyncSync.MarkTouched();
                 gsyncSync.Refresh();
             };
+        }
+
+        // Informational only — never offered as a setting, no dot, nothing
+        // this window writes back. Null just means "couldn't read it" or
+        // NVAPI unavailable, so the row stays hidden rather than showing a
+        // misleading value.
+        if (appVrrDescription is not null)
+        {
+            AppVrrValueText.Text = appVrrDescription;
+            AppVrrRow.Visibility = Visibility.Visible;
         }
 
         bool canCheckPresentation = !string.IsNullOrEmpty(activeApp) && activeApp != "Desktop";
