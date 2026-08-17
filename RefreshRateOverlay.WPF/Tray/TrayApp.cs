@@ -151,7 +151,7 @@ internal sealed class TrayApp : IDisposable
 
         (uint hkMods, uint hkVk) = _profiles.ReadHotkey()
             ?? (HotkeyService.MOD_WIN | HotkeyService.MOD_ALT | HotkeyService.MOD_SHIFT, 0x52 /* R */);
-        _hotkey = new HotkeyService(ShowOverlay, hkMods, hkVk, Logger.Log);
+        _hotkey = new HotkeyService(() => ShowOverlay(), hkMods, hkVk, Logger.Log);
 
         Logger.Log($"TrayApp started. Rate={_currentRate} HDR={_hdrSupported}");
     }
@@ -685,15 +685,44 @@ internal sealed class TrayApp : IDisposable
     // -------------------------------------------------------------------------
     // Overlay
     // -------------------------------------------------------------------------
-    private void ShowOverlay()
+    // Carries the ORIGINAL pre-overlay foreground window across an app-picker
+    // switch (see ShowOverlay's forcedApp remarks) — a switch closes and
+    // reopens a fresh OverlayWindow, and by then GetForegroundWindow() would
+    // return the overlay itself, not whatever was focused before it ever
+    // opened. Only meaningful while _overlay is non-null.
+    private IntPtr _overlayPriorForeground;
+
+    // True only for the brief Close()-then-reopen inside an app-picker
+    // switch — guards the Closed handler so it doesn't hand focus back to
+    // _overlayPriorForeground mid-switch, which would yank focus away from
+    // the overlay the user is still actively using.
+    private bool _switchingOverlayApp;
+
+    /// <summary>Opens the overlay for whatever's actually focused, or — when
+    /// forcedApp is given — for a specific app instead, regardless of focus.
+    /// forcedApp exists for the app picker (see OverlayWindow.AppSwitchRequested):
+    /// some games capture keyboard input exclusively while focused, blocking
+    /// the global hotkey no matter which combo is bound (confirmed: Doom: The
+    /// Dark Ages), so picking their settings from the dropdown while a
+    /// different app is genuinely focused is the only way to reach them.
+    ///
+    /// A picker switch closes the current OverlayWindow and opens a fresh one
+    /// for the new app rather than retargeting the same instance in place —
+    /// simpler than threading a "reload for a different app" path through
+    /// every field OverlayWindow's constructor already resolves once, and
+    /// this method already recomputes everything fresh on every call.</summary>
+    private void ShowOverlay(string? forcedApp = null)
     {
-        if (_overlay is not null)
+        bool wasOpen = _overlay is not null;
+        if (wasOpen)
         {
-            _overlay.Close();
-            return;
+            if (forcedApp is null) { _overlay!.Close(); return; }
+            _switchingOverlayApp = true;
+            _overlay!.Close();
+            _switchingOverlayApp = false;
         }
 
-        string app = _tracker.LastApp;
+        string app = forcedApp ?? _tracker.LastApp;
         if (string.IsNullOrEmpty(app)) app = "Desktop";
 
         // Remember whatever currently owns foreground/focus (typically the game)
@@ -702,13 +731,21 @@ internal sealed class TrayApp : IDisposable
         // what — that's unavoidable for an interactive dialog — and a fullscreen
         // app losing activation can drop behind other windows (or get minimized,
         // for apps using an exclusive-fullscreen swapchain) as a result. Windows
-        // won't restore it on its own, so we do it ourselves.
-        IntPtr priorForeground = GetForegroundWindow();
+        // won't restore it on its own, so we do it ourselves. On a picker switch
+        // the overlay itself is already foreground, so the ORIGINAL prior window
+        // carries over instead of being recomputed.
+        IntPtr priorForeground = wasOpen ? _overlayPriorForeground : GetForegroundWindow();
+        _overlayPriorForeground = priorForeground;
 
         // Must be detected now, before the overlay ever shows: SHQueryUserNotificationState
         // (inside WindowModeService) reports on whatever is currently the actual foreground
-        // window system-wide, so it has to run while that's still the game, not our overlay.
-        WindowMode windowMode = WindowModeService.Detect(priorForeground);
+        // window system-wide, so it has to run while that's still the game, not our overlay —
+        // and only means anything for the app priorForeground actually belongs to. During a
+        // picker switch to a non-focused app, priorForeground is neither, so detecting against
+        // it would describe the wrong app's window entirely; Unknown is the honest answer.
+        WindowMode windowMode = ForegroundTracker.GetProcessName(priorForeground) == app
+            ? WindowModeService.Detect(priorForeground)
+            : WindowMode.Unknown;
 
         // Sync reality before opening
         _currentRate = DisplayService.GetCurrentRate();
@@ -769,8 +806,11 @@ internal sealed class TrayApp : IDisposable
             preselectDsxProfile: dsxProfile,
             gsyncMode:      gsyncMode,
             appVrrState:    appVrrState,
+            runningApps:    RunningAppsService.GetRunningApps(),
             storedRate:     storedRate,
             storedHdr:      storedHdr);
+
+        _overlay.AppSwitchRequested += (_, newApp) => ShowOverlay(forcedApp: newApp);
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {
@@ -836,7 +876,7 @@ internal sealed class TrayApp : IDisposable
         _overlay.Closed += (_, _) =>
         {
             _overlay = null;
-            RestoreForeground(priorForeground);
+            if (!_switchingOverlayApp) RestoreForeground(priorForeground);
         };
 
         _overlay.Show();

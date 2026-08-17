@@ -81,6 +81,17 @@ public partial class OverlayWindow : Window
     /// <summary>Raised immediately on trash-icon click; does not close the window.</summary>
     public event EventHandler? ProfileDeleteRequested;
 
+    /// <summary>Raised when the app picker is changed to something other than
+    /// ActiveApp — this window never retargets itself in place, the caller
+    /// is expected to close it and open a fresh one for the new app (see
+    /// TrayApp.ShowOverlay's forcedApp parameter).</summary>
+    public event EventHandler<string>? AppSwitchRequested;
+
+    // Guards AppPickerDropDown.SelectionChanged during the constructor's own
+    // initial population — only a change the user actually made should raise
+    // AppSwitchRequested, same pattern as _suppressTouchTracking.
+    private bool _suppressAppPickerEvents;
+
     public OverlayWindow(
         string     activeApp,
         List<int>  availableRates,
@@ -92,13 +103,29 @@ public partial class OverlayWindow : Window
         string?    preselectDsxProfile,
         GsyncGlobalMode? gsyncMode,
         VrrAppState? appVrrState,
+        List<string> runningApps,
         int        storedRate,
         bool       storedHdr)
     {
         InitializeComponent();
 
         ActiveApp = activeApp;
-        SubtitleText.Text = $"Active: {activeApp}";
+
+        _suppressAppPickerEvents = true;
+        var pickerItems = new List<string>(runningApps);
+        if (!pickerItems.Contains(activeApp, StringComparer.OrdinalIgnoreCase))
+            pickerItems.Add(activeApp);
+        pickerItems.Sort(StringComparer.OrdinalIgnoreCase);
+        foreach (string a in pickerItems) AppPickerDropDown.Items.Add(a);
+        AppPickerDropDown.SelectedItem = activeApp;
+        _suppressAppPickerEvents = false;
+
+        AppPickerDropDown.SelectionChanged += (_, _) =>
+        {
+            if (_suppressAppPickerEvents) return;
+            if (AppPickerDropDown.SelectedItem is string selected && selected != ActiveApp)
+                AppSwitchRequested?.Invoke(this, selected);
+        };
 
         _ = LoadDsxProfilesAsync(preselectDsxProfile);
 

@@ -24,6 +24,7 @@ public class OverlayWindowLayoutTests
             preselectDsxProfile: null,
             gsyncMode: gsyncMode,
             appVrrState: null,
+            runningApps: new List<string>(),
             storedRate: 60,
             storedHdr: false);
 

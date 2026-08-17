@@ -31,6 +31,7 @@ public class OverlayWindowLiveRefreshTests
             preselectDsxProfile: null,
             gsyncMode: gsyncMode,
             appVrrState: null,
+            runningApps: new List<string>(),
             storedRate: storedRate,
             storedHdr: storedHdr);
 

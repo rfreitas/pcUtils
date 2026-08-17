@@ -32,9 +32,22 @@
                        Foreground="White" FontSize="16"
                        HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
 
-            <TextBlock Grid.Row="1" x:Name="SubtitleText"
-                       Foreground="#888888" FontSize="13" Margin="0,4,0,0"
-                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+            <!-- Editing target — defaults to whatever's actually focused, but
+                 switchable to any other running app with a window. Exists
+                 because some games (confirmed: Doom: The Dark Ages) capture
+                 keyboard input exclusively while focused, blocking this app's
+                 global hotkey no matter which combo is bound — the only way
+                 to reach their settings is to pick them here instead. -->
+            <Grid Grid.Row="1" Margin="0,4,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Editing:" Foreground="#888888" FontSize="13" VerticalAlignment="Center"/>
+                <ComboBox Grid.Column="2" x:Name="AppPickerDropDown" FontSize="13" Height="26"
+                          ToolTip="Pick a different running app to edit its settings — useful when a game's own input capture blocks the hotkey while it's focused."/>
+            </Grid>
 
             <TextBlock Grid.Row="2" x:Name="PresentationText"
                        Foreground="#888888" FontSize="12" Margin="0,6,0,0"
