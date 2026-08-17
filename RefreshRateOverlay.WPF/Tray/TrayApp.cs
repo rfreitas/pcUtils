@@ -335,17 +335,25 @@ internal sealed class TrayApp : IDisposable
         string app = _tracker.LastApp;
         GsyncGlobalMode target = ResolveGsyncTarget(app);
 
-        if (liveMode == target) return;
+        if (liveMode != target)
+        {
+            if (_profiles.GsyncMode.HasProfile(app))
+            {
+                _profiles.GsyncMode.WriteProfile(app, liveMode);
+            }
+            else
+            {
+                _defaultGsyncMode = liveMode;
+                _profiles.GsyncMode.WriteDefault(_defaultGsyncMode);
+            }
+        }
 
-        if (_profiles.GsyncMode.HasProfile(app))
-        {
-            _profiles.GsyncMode.WriteProfile(app, liveMode);
-        }
-        else
-        {
-            _defaultGsyncMode = liveMode;
-            _profiles.GsyncMode.WriteDefault(_defaultGsyncMode);
-        }
+        // Same reasoning as ReconcileRateAndHdr's overlay push: rate/HDR and
+        // G-SYNC are reconciled by two independent HardwareChange subscribers,
+        // so the overlay needs its own push from each rather than one knowing
+        // about the other's setting.
+        if (_overlay is { } overlay && overlay.ActiveApp == app)
+            overlay.RefreshGsyncLiveState(liveMode);
     }
 
     // -------------------------------------------------------------------------

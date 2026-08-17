@@ -81,11 +81,16 @@
             <Grid Grid.Row="7" x:Name="GsyncModeRow" Margin="0,8,0,0" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="8"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="G-SYNC Mode:" Foreground="White" FontSize="14" VerticalAlignment="Center"/>
-                <ComboBox Grid.Column="2" x:Name="GsyncModeDropDown" FontSize="14" Height="30"/>
+                <Ellipse Grid.Column="0" x:Name="GsyncSyncDot" Width="8" Height="8"
+                         Fill="LimeGreen" VerticalAlignment="Center"
+                         ToolTip="Green: matches the saved value. Red: hasn't been reconciled into storage yet — Apply will save what's shown."/>
+                <TextBlock Grid.Column="2" Text="G-SYNC Mode:" Foreground="White" FontSize="14" VerticalAlignment="Center"/>
+                <ComboBox Grid.Column="4" x:Name="GsyncModeDropDown" FontSize="14" Height="30"/>
             </Grid>
 
             <Grid Grid.Row="8" Margin="0,8,0,0">
