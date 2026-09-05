@@ -11,12 +11,12 @@ namespace AggressiveScreensaver.Forms;
 /// Checkbox list of all apps that have ever requested DISPLAY power.
 /// Checked = ignored by overlay logic.
 /// </summary>
-internal partial class BlacklistWindow : Window
+internal partial class IgnoreListWindow : Window
 {
     private readonly PowercfgService _powercfg;
     private readonly IniStore        _ini;
 
-    public BlacklistWindow(PowercfgService powercfg, IniStore ini)
+    public IgnoreListWindow(PowercfgService powercfg, IniStore ini)
     {
         InitializeComponent();
         _powercfg = powercfg;
@@ -43,26 +43,26 @@ internal partial class BlacklistWindow : Window
             {
                 Content    = appName,
                 Foreground = lightGray,
-                IsChecked  = _powercfg.BlacklistedApps.ContainsKey(appName),
+                IsChecked  = _powercfg.IgnoredApps.ContainsKey(appName),
                 Margin     = new Thickness(0, 0, 0, 4),
             };
-            cb.Checked   += (_, _) => SetBlacklisted(appName, true);
-            cb.Unchecked += (_, _) => SetBlacklisted(appName, false);
+            cb.Checked   += (_, _) => SetIgnored(appName, true);
+            cb.Unchecked += (_, _) => SetIgnored(appName, false);
             AppsPanel.Children.Add(cb);
         }
     }
 
-    private void SetBlacklisted(string appName, bool blacklisted)
+    private void SetIgnored(string appName, bool ignored)
     {
-        if (blacklisted)
+        if (ignored)
         {
-            _powercfg.BlacklistedApps[appName] = true;
-            _ini.WriteString("Blacklist", appName, "1");
+            _powercfg.IgnoredApps[appName] = true;
+            _ini.WriteString("IgnoreList", appName, "1");
         }
         else
         {
-            _powercfg.BlacklistedApps.Remove(appName);
-            _ini.DeleteKey("Blacklist", appName);
+            _powercfg.IgnoredApps.Remove(appName);
+            _ini.DeleteKey("IgnoreList", appName);
         }
 
         // Force immediate refresh

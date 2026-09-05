@@ -11,7 +11,7 @@ namespace AggressiveScreensaver.Forms;
 internal static class TrayMenuFactory
 {
     /// <param name="startAtLogin">Initial checked state of the "Start at Login" item.</param>
-    /// <param name="onBlacklist">Callback for "Blacklist Apps…". Pass null for render-only tests.</param>
+    /// <param name="onIgnoreList">Callback for "Ignore List…". Pass null for render-only tests.</param>
     /// <param name="onDebug">Callback for "Show Details (Debug)". Pass null for render-only tests.</param>
     /// <param name="onStartupChanged">
     ///   Called when the "Start at Login" checkbox changes.
@@ -21,13 +21,15 @@ internal static class TrayMenuFactory
     /// <param name="onExit">Callback for "Exit". Pass null for render-only tests.</param>
     public static ContextMenuStrip Build(
         bool       startAtLogin,
-        bool       suppressFullscreen      = false,
-        bool       ignoreUnfocusedBlockers = true,
-        Action?    onBlacklist             = null,
-        Action?    onDebug                 = null,
+        bool       suppressFullscreen       = false,
+        bool       ignoreUnfocusedBlockers  = true,
+        bool       ignoreNonvisibleBlockers = false,
+        Action?    onIgnoreList             = null,
+        Action?    onDebug                  = null,
         Func<bool, bool>? onStartupChanged         = null,
         Func<bool, bool>? onSuppressFullscreenChanged = null,
         Func<bool, bool>? onIgnoreUnfocusedBlockersChanged = null,
+        Func<bool, bool>? onIgnoreNonvisibleBlockersChanged = null,
         Action?    onExit                  = null)
     {
         var menu = new ContextMenuStrip
@@ -46,7 +48,7 @@ internal static class TrayMenuFactory
         menu.Items.Add(new ToolStripMenuItem(" Power Request Monitor") { Enabled = false });
         menu.Items.Add(new ToolStripSeparator());
 
-        menu.Items.Add(space + "Blacklist Apps…",    null, (_, _) => onBlacklist?.Invoke());
+        menu.Items.Add(space + "Ignore List…",    null, (_, _) => onIgnoreList?.Invoke());
         menu.Items.Add(space + "Show Details (Debug)", null, (_, _) => onDebug?.Invoke());
         menu.Items.Add(new ToolStripSeparator());
 
@@ -125,6 +127,16 @@ internal static class TrayMenuFactory
 
         menu.Items.Add(fullscreenItem);
 
+        // Ignore Nonvisible Blockers checkbox — declared first so the sibling
+        // "Ignore Unfocused Blockers" toggle below can gray it out; it has no
+        // effect unless that one is also on (see IsScreenBlocked in TrayApp).
+        var nonvisibleBlockersItem = new ToolStripMenuItem((ignoreNonvisibleBlockers ? check : space) + "Ignore Nonvisible Blockers")
+        {
+            CheckOnClick = true,
+            Checked      = ignoreNonvisibleBlockers,
+            Enabled      = ignoreUnfocusedBlockers,
+        };
+
         // Ignore Unfocused Blockers checkbox
         var unfocusedBlockersItem = new ToolStripMenuItem((ignoreUnfocusedBlockers ? check : space) + "Ignore Unfocused Blockers")
         {
@@ -140,6 +152,7 @@ internal static class TrayMenuFactory
                 if (reverting || sender is not ToolStripMenuItem item) return;
 
                 item.Text = (item.Checked ? check : space) + "Ignore Unfocused Blockers";
+                nonvisibleBlockersItem.Enabled = item.Checked;
 
                 bool ok = onIgnoreUnfocusedBlockersChanged(item.Checked);
                 if (!ok)
@@ -147,6 +160,7 @@ internal static class TrayMenuFactory
                     reverting = true;
                     item.Checked = !item.Checked;
                     item.Text = (item.Checked ? check : space) + "Ignore Unfocused Blockers";
+                    nonvisibleBlockersItem.Enabled = item.Checked;
                     reverting = false;
                 }
             };
@@ -156,11 +170,44 @@ internal static class TrayMenuFactory
             unfocusedBlockersItem.CheckedChanged += (sender, _) =>
             {
                 if (sender is ToolStripMenuItem item)
+                {
                     item.Text = (item.Checked ? check : space) + "Ignore Unfocused Blockers";
+                    nonvisibleBlockersItem.Enabled = item.Checked;
+                }
             };
         }
 
         menu.Items.Add(unfocusedBlockersItem);
+
+        if (onIgnoreNonvisibleBlockersChanged is not null)
+        {
+            bool reverting = false;
+            nonvisibleBlockersItem.CheckedChanged += (sender, _) =>
+            {
+                if (reverting || sender is not ToolStripMenuItem item) return;
+
+                item.Text = (item.Checked ? check : space) + "Ignore Nonvisible Blockers";
+
+                bool ok = onIgnoreNonvisibleBlockersChanged(item.Checked);
+                if (!ok)
+                {
+                    reverting = true;
+                    item.Checked = !item.Checked;
+                    item.Text = (item.Checked ? check : space) + "Ignore Nonvisible Blockers";
+                    reverting = false;
+                }
+            };
+        }
+        else
+        {
+            nonvisibleBlockersItem.CheckedChanged += (sender, _) =>
+            {
+                if (sender is ToolStripMenuItem item)
+                    item.Text = (item.Checked ? check : space) + "Ignore Nonvisible Blockers";
+            };
+        }
+
+        menu.Items.Add(nonvisibleBlockersItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(space + "Exit", null, (_, _) => onExit?.Invoke());
 

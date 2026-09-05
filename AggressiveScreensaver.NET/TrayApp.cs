@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -38,6 +39,7 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     private int  _blankThresholdSec;
     private bool _suppressFullscreen;
     private bool _ignoreUnfocusedBlockers;
+    private bool _ignoreNonvisibleBlockers;
     private static readonly int[] TimeoutSteps = [15, 30, 60, 120, 180, 300, 600, 900, 1200, 1800];
 
     // -------------------------------------------------------------------------
@@ -55,7 +57,8 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
 
         _blankThresholdSec       = _ini.ReadInt("Settings", "BlankThreshold",    30);
         _suppressFullscreen      = _ini.ReadInt("Settings", "SuppressFullscreen", 0) != 0;
-        _ignoreUnfocusedBlockers = _ini.ReadInt("Settings", "IgnoreUnfocusedBlockers", 1) != 0;
+        _ignoreUnfocusedBlockers  = _ini.ReadInt("Settings", "IgnoreUnfocusedBlockers", 1) != 0;
+        _ignoreNonvisibleBlockers = _ini.ReadInt("Settings", "IgnoreNonvisibleBlockers", 0) != 0;
 
         // Input
         var idleTimers  = new IdleTimers();
@@ -129,33 +132,72 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
 
     /// <summary>
     /// Whether a DISPLAY power request should currently hold off blanking.
-    /// When <see cref="_ignoreUnfocusedBlockers"/> is set, a blocking app only
-    /// counts while it is the foreground window — a blocker running unfocused in
-    /// the background is ignored, so the idle timer keeps ticking and blanking
-    /// still happens.
+    /// Apps on the Ignore List never count, regardless of focus or visibility —
+    /// same as an unfocused/invisible blocker, they're excluded before either
+    /// check runs. Of what's left: when <see cref="_ignoreUnfocusedBlockers"/> is
+    /// set, a blocking app only counts while it is the foreground window — a
+    /// blocker running unfocused in the background is ignored, so the idle timer
+    /// keeps ticking and blanking still happens. <see cref="_ignoreNonvisibleBlockers"/>
+    /// only has an effect while that's set: it relaxes the requirement from
+    /// "focused" to merely having a visible, non-minimized window — the blocker
+    /// need not be focused, just on screen. (The tray menu grays it out
+    /// otherwise, since it would be a no-op.)
     /// </summary>
     private bool IsScreenBlocked()
     {
-        if (string.IsNullOrEmpty(_powercfg.BlockingScreenApps))
+        var activeFilenames = GetActiveBlockerFilenames();
+        if (activeFilenames.Count == 0)
             return false;
 
-        return !_ignoreUnfocusedBlockers || IsBlockingAppForeground();
+        if (!_ignoreUnfocusedBlockers)
+            return true;
+
+        return _ignoreNonvisibleBlockers ? IsBlockingAppVisible(activeFilenames) : IsBlockingAppForeground(activeFilenames);
     }
 
     /// <summary>
-    /// True if the current foreground window belongs to one of the apps currently
-    /// holding a DISPLAY power request.
+    /// Filenames of current DISPLAY blockers, minus anything on the Ignore List.
     /// </summary>
-    private bool IsBlockingAppForeground() =>
-        BlockerFocusMatcher.IsBlockerFocused(_powercfg.BlockingScreenAppFilenames, GetForegroundProcessFilename());
+    private IReadOnlyList<string> GetActiveBlockerFilenames() =>
+        BlockerFocusMatcher.ExcludeIgnored(_powercfg.BlockingScreenAppFilenames, _powercfg.IgnoredApps);
+
+    /// <summary>
+    /// True if the current foreground window belongs to one of <paramref name="blockerFilenames"/>.
+    /// </summary>
+    private bool IsBlockingAppForeground(IReadOnlyList<string> blockerFilenames) =>
+        BlockerFocusMatcher.IsBlockerFocused(blockerFilenames, GetForegroundProcessFilename());
+
+    /// <summary>
+    /// True if any of <paramref name="blockerFilenames"/> owns a visible,
+    /// non-minimized top-level window (it need not be focused).
+    /// </summary>
+    private bool IsBlockingAppVisible(IReadOnlyList<string> blockerFilenames) =>
+        BlockerFocusMatcher.IsBlockerVisible(blockerFilenames, GetVisibleProcessFilenames());
 
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    private const int DWMWA_CLOAKED = 14;
 
-    private static string? GetForegroundProcessFilename()
+    /// <summary>
+    /// True if the window is DWM-cloaked — invisible to the user despite having
+    /// WS_VISIBLE set. This covers windows on an inactive virtual desktop (Task
+    /// View moves them to another desktop without hiding the window itself) and
+    /// suspended UWP apps, both of which <see cref="IsWindowVisible"/> alone
+    /// cannot detect.
+    /// </summary>
+    private static bool IsWindowCloaked(IntPtr hwnd) =>
+        DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0;
+
+    private static string? GetForegroundProcessFilename() => GetProcessFilename(GetForegroundWindow());
+
+    private static string? GetProcessFilename(IntPtr hwnd)
     {
         try
         {
-            IntPtr hwnd = GetForegroundWindow();
             if (hwnd == IntPtr.Zero) return null;
 
             GetWindowThreadProcessId(hwnd, out uint pid);
@@ -163,6 +205,22 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
             return Path.GetFileName(proc.MainModule?.FileName) is { Length: > 0 } name ? name : proc.ProcessName + ".exe";
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Process filenames owning a currently visible, non-minimized top-level window
+    /// on the active virtual desktop.
+    /// </summary>
+    private static System.Collections.Generic.IEnumerable<string?> GetVisibleProcessFilenames()
+    {
+        var filenames = new System.Collections.Generic.List<string?>();
+        EnumWindows((hwnd, _) =>
+        {
+            if (IsWindowVisible(hwnd) && !IsIconic(hwnd) && !IsWindowCloaked(hwnd))
+                filenames.Add(GetProcessFilename(hwnd));
+            return true;
+        }, IntPtr.Zero);
+        return filenames;
     }
 
     // -------------------------------------------------------------------------
@@ -221,9 +279,15 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // -------------------------------------------------------------------------
     private void UpdateTooltip()
     {
+        string screenLine = string.IsNullOrEmpty(_powercfg.BlockingScreenApps)
+            ? "None"
+            : IsScreenBlocked()
+                ? _powercfg.BlockingScreenApps
+                : $"{_powercfg.BlockingScreenApps} (ignoring)";
+
         string tip =
             $"True Idle: {_agentIdle?.AgentIdleSeconds ?? 0}s (Goal: {_blankThresholdSec}s)\n" +
-            $"SCREEN: {(string.IsNullOrEmpty(_powercfg.BlockingScreenApps) ? "None" : _powercfg.BlockingScreenApps)}\n" +
+            $"SCREEN: {screenLine}\n" +
             $"SLEEP: {(string.IsNullOrEmpty(_powercfg.BlockingSleepApps) ? "None" : _powercfg.BlockingSleepApps)}";
 
         // Win32 tray tip limit is 127 chars
@@ -245,11 +309,13 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
             startAtLogin:                     StartupTaskService.IsInstalled(TaskName),
             suppressFullscreen:               _suppressFullscreen,
             ignoreUnfocusedBlockers:          _ignoreUnfocusedBlockers,
-            onBlacklist:                      ShowBlacklistForm,
+            ignoreNonvisibleBlockers:         _ignoreNonvisibleBlockers,
+            onIgnoreList:                     ShowIgnoreListForm,
             onDebug:                          ShowDebugForm,
             onStartupChanged:                 HandleStartupToggle,
             onSuppressFullscreenChanged:      HandleSuppressFullscreenToggle,
             onIgnoreUnfocusedBlockersChanged: HandleIgnoreUnfocusedBlockersToggle,
+            onIgnoreNonvisibleBlockersChanged: HandleIgnoreNonvisibleBlockersToggle,
             onExit:                           ExitApp);
 
     private bool HandleSuppressFullscreenToggle(bool wantEnabled)
@@ -263,6 +329,13 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     {
         _ignoreUnfocusedBlockers = wantEnabled;
         _ini.DebouncedSave(() => _ini.WriteInt("Settings", "IgnoreUnfocusedBlockers", _ignoreUnfocusedBlockers ? 1 : 0));
+        return true;
+    }
+
+    private bool HandleIgnoreNonvisibleBlockersToggle(bool wantEnabled)
+    {
+        _ignoreNonvisibleBlockers = wantEnabled;
+        _ini.DebouncedSave(() => _ini.WriteInt("Settings", "IgnoreNonvisibleBlockers", _ignoreNonvisibleBlockers ? 1 : 0));
         return true;
     }
 
@@ -315,9 +388,9 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // -------------------------------------------------------------------------
     // Sub-dialogs
     // -------------------------------------------------------------------------
-    private void ShowBlacklistForm()
+    private void ShowIgnoreListForm()
     {
-        var w = new BlacklistWindow(_powercfg, _ini);
+        var w = new IgnoreListWindow(_powercfg, _ini);
         w.ShowDialog();
     }
 

@@ -161,4 +161,129 @@ public class TrayMenuBehaviorTests
         Assert.True(item.Checked);
         Assert.StartsWith("✓", item.Text);
     }
+
+    // -------------------------------------------------------------------------
+    // Ignore Nonvisible Blockers — initial state
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_ItemExists()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false);
+        Assert.NotNull(Item(menu, "Ignore Nonvisible Blockers"));
+    }
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_DefaultsToUnchecked()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false);
+        var item = Item(menu, "Ignore Nonvisible Blockers");
+        Assert.False(item.Checked);
+        Assert.StartsWith("   ", item.Text);
+    }
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_True_ItemChecked()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, ignoreNonvisibleBlockers: true);
+        var item = Item(menu, "Ignore Nonvisible Blockers");
+        Assert.True(item.Checked);
+        Assert.StartsWith("✓", item.Text);
+    }
+
+    // -------------------------------------------------------------------------
+    // Ignore Nonvisible Blockers — toggling
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_Toggle_InvokesCallbackWithNewState()
+    {
+        bool? received = null;
+        using var menu = TrayMenuFactory.Build(
+            startAtLogin: false,
+            ignoreUnfocusedBlockers: true,
+            ignoreNonvisibleBlockers: false,
+            onIgnoreNonvisibleBlockersChanged: v => { received = v; return true; });
+
+        Item(menu, "Ignore Nonvisible Blockers").Checked = true;
+
+        Assert.True(received);
+    }
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_Toggle_UpdatesTextPrefix()
+    {
+        using var menu = TrayMenuFactory.Build(
+            startAtLogin: false,
+            ignoreUnfocusedBlockers: true,
+            ignoreNonvisibleBlockers: false,
+            onIgnoreNonvisibleBlockersChanged: _ => true);
+
+        var item = Item(menu, "Ignore Nonvisible Blockers");
+        item.Checked = true;
+        Assert.StartsWith("✓", item.Text);
+
+        item.Checked = false;
+        Assert.StartsWith("   ", item.Text);
+    }
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_Toggle_CallbackReturnsFalse_Reverts()
+    {
+        using var menu = TrayMenuFactory.Build(
+            startAtLogin: false,
+            ignoreUnfocusedBlockers: true,
+            ignoreNonvisibleBlockers: false,
+            onIgnoreNonvisibleBlockersChanged: _ => false);
+
+        var item = Item(menu, "Ignore Nonvisible Blockers");
+        item.Checked = true;
+
+        Assert.False(item.Checked);
+        Assert.StartsWith("   ", item.Text);
+    }
+
+    // -------------------------------------------------------------------------
+    // Ignore Nonvisible Blockers — grayed out when Ignore Unfocused Blockers is off
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_Disabled_WhenUnfocusedBlockersOff()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, ignoreUnfocusedBlockers: false);
+        Assert.False(Item(menu, "Ignore Nonvisible Blockers").Enabled);
+    }
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_Enabled_WhenUnfocusedBlockersOn()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, ignoreUnfocusedBlockers: true);
+        Assert.True(Item(menu, "Ignore Nonvisible Blockers").Enabled);
+    }
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_BecomesDisabled_WhenUnfocusedBlockersToggledOff()
+    {
+        using var menu = TrayMenuFactory.Build(
+            startAtLogin: false,
+            ignoreUnfocusedBlockers: true,
+            onIgnoreUnfocusedBlockersChanged: _ => true);
+
+        Item(menu, "Ignore Unfocused Blockers").Checked = false;
+
+        Assert.False(Item(menu, "Ignore Nonvisible Blockers").Enabled);
+    }
+
+    [Fact]
+    public void IgnoreNonvisibleBlockers_BecomesEnabled_WhenUnfocusedBlockersToggledOn()
+    {
+        using var menu = TrayMenuFactory.Build(
+            startAtLogin: false,
+            ignoreUnfocusedBlockers: false,
+            onIgnoreUnfocusedBlockersChanged: _ => true);
+
+        Item(menu, "Ignore Unfocused Blockers").Checked = true;
+
+        Assert.True(Item(menu, "Ignore Nonvisible Blockers").Enabled);
+    }
 }

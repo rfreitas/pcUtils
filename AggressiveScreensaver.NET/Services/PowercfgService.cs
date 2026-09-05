@@ -24,14 +24,17 @@ internal sealed class PowercfgService : IDisposable
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Comma-separated DISPLAY blockers (excluding blacklisted apps). Empty = none.
+    /// Comma-separated DISPLAY blockers, including apps on the Ignore List — the
+    /// UI shows them (with an "(ignoring)" indicator) rather than hiding them
+    /// outright. Empty = none. Whether an app actually counts as blocking is
+    /// decided by TrayApp, which cross-references <see cref="IgnoredApps"/>.
     /// </summary>
     public string BlockingScreenApps { get; private set; } = "";
 
     /// <summary>
     /// Identity filenames (e.g. "vlc.exe") of the current DISPLAY blockers, in the
-    /// same order/filtering as <see cref="BlockingScreenApps"/>. Used to check
-    /// whether a blocking app is the foreground window.
+    /// same order as <see cref="BlockingScreenApps"/>. Used to check whether a
+    /// blocking app is the foreground window.
     /// </summary>
     public IReadOnlyList<string> BlockingScreenAppFilenames { get; private set; } = Array.Empty<string>();
 
@@ -43,8 +46,8 @@ internal sealed class PowercfgService : IDisposable
     /// <summary>Apps that have ever blocked DISPLAY (History). Case-insensitive.</summary>
     public Dictionary<string, bool> HistoryApps { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Apps the user chose to ignore (Blacklist). Case-insensitive.</summary>
-    public Dictionary<string, bool> BlacklistedApps { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Apps the user chose to ignore (Ignore List). Case-insensitive.</summary>
+    public Dictionary<string, bool> IgnoredApps { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public long LastCheckTick { get; private set; }
 
@@ -64,14 +67,14 @@ internal sealed class PowercfgService : IDisposable
 
     public void Start()
     {
-        LoadHistoryAndBlacklist();
+        LoadHistoryAndIgnoreList();
         Poll();
         _timer.Start();
     }
 
     public void Stop() => _timer.Stop();
 
-    /// <summary>Force an immediate poll (e.g., after blacklist change).</summary>
+    /// <summary>Force an immediate poll (e.g., after an Ignore List change).</summary>
     public void Refresh() => Poll();
 
     // -------------------------------------------------------------------------
@@ -94,7 +97,9 @@ internal sealed class PowercfgService : IDisposable
             string output = RunPowercfg();
             var parsed = PowercfgParser.Parse(output);
 
-            // Process DISPLAY results
+            // Process DISPLAY results. Ignore-listed apps are kept in the output —
+            // TrayApp filters them out when deciding whether to actually block, but
+            // the UI still shows them (annotated) rather than hiding them outright.
             var screenTexts     = new List<string>();
             var screenFilenames = new List<string>();
             foreach (var app in parsed.Screen)
@@ -106,12 +111,8 @@ internal sealed class PowercfgService : IDisposable
                     _ini.WriteString("History", app.Filename, "1");
                 }
 
-                // Filter by blacklist
-                if (!BlacklistedApps.ContainsKey(app.Filename))
-                {
-                    screenTexts.Add(app.Text);
-                    screenFilenames.Add(app.Filename);
-                }
+                screenTexts.Add(app.Text);
+                screenFilenames.Add(app.Filename);
             }
 
             // Process SLEEP results
@@ -172,15 +173,15 @@ internal sealed class PowercfgService : IDisposable
         catch { return false; }
     }
 
-    private void LoadHistoryAndBlacklist()
+    private void LoadHistoryAndIgnoreList()
     {
         var history = _ini.ReadSection("History");
         foreach (var key in history.Keys)
             HistoryApps[key] = true;
 
-        var blacklist = _ini.ReadSection("Blacklist");
-        foreach (var key in blacklist.Keys)
-            BlacklistedApps[key] = true;
+        var ignoreList = _ini.ReadSection("IgnoreList");
+        foreach (var key in ignoreList.Keys)
+            IgnoredApps[key] = true;
     }
 
     public void Dispose() => _timer.Dispose();

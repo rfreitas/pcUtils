@@ -8,7 +8,7 @@ public class FormRenderTest
 {
     [Theory]
     [MemberData(nameof(RenderHelper.ScaleFactors), MemberType = typeof(RenderHelper))]
-    public void Render_BlacklistWindow_SavesToPng(float scale, string dpiLabel)
+    public void Render_IgnoreListWindow_SavesToPng(float scale, string dpiLabel)
     {
         string tempIni = Path.GetTempFileName();
         File.WriteAllText(tempIni, "[Settings]\nBlockingScreenApps=vlc.exe,chrome.exe\n");
@@ -17,7 +17,7 @@ public class FormRenderTest
         powercfg.HistoryApps.TryAdd("vlc.exe", true);
         powercfg.HistoryApps.TryAdd("chrome.exe", true);
 
-        string path = RenderHelper.CaptureWpfWindow(() => new BlacklistWindow(powercfg, ini), $"blacklist_window_render_{dpiLabel}", scaleFactor: scale);
+        string path = RenderHelper.CaptureWpfWindow(() => new IgnoreListWindow(powercfg, ini), $"ignore_list_window_render_{dpiLabel}", scaleFactor: scale);
 
         Assert.True(File.Exists(path));
         Console.WriteLine($"View: {path}");
