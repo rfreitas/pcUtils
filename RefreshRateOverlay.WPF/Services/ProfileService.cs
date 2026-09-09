@@ -25,6 +25,8 @@ internal sealed class ProfileService
     private const string KeyHotkeyMods       = "HotkeyModifiers";
     private const string KeyHotkeyVk         = "HotkeyKey";
     private const string KeyEarlyApplyOnStart = "EarlyApplyOnStart";
+    private const string KeyStickyProfiles    = "StickyProfiles";
+    private const string KeyReconciliation    = "ReconciliationEnabled";
 
     private readonly IniStore _ini;
 
@@ -86,4 +88,25 @@ internal sealed class ProfileService
     public bool ReadEarlyApplyOnStart() => _ini.ReadBool(SecSettings, KeyEarlyApplyOnStart, defaultValue: true);
 
     public void WriteEarlyApplyOnStart(bool value) => _ini.WriteBool(SecSettings, KeyEarlyApplyOnStart, value);
+
+    // ---- sticky profiles toggle -------------------------------------------
+    // Global-only, same reasoning as the hotkey/early-apply toggles above.
+    // Off by default — it changes existing focus-switch behavior, so it's an
+    // opt-in rather than a silent behavior change for upgrading users.
+
+    public bool ReadStickyProfilesEnabled() => _ini.ReadBool(SecSettings, KeyStickyProfiles, defaultValue: false);
+
+    public void WriteStickyProfilesEnabled(bool value) => _ini.WriteBool(SecSettings, KeyStickyProfiles, value);
+
+    // ---- reconciliation toggle -------------------------------------------
+    // Global-only, same reasoning as the hotkey/early-apply toggles above. On
+    // by default — it's the app's existing behavior (absorb external changes
+    // into the INI), so this is an opt-OUT rather than a silent behavior
+    // change for upgrading users. Turned off, the INI becomes the sole source
+    // of truth: TrayApp reasserts it onto hardware instead of learning from
+    // whatever changed the setting externally.
+
+    public bool ReadReconciliationEnabled() => _ini.ReadBool(SecSettings, KeyReconciliation, defaultValue: true);
+
+    public void WriteReconciliationEnabled(bool value) => _ini.WriteBool(SecSettings, KeyReconciliation, value);
 }

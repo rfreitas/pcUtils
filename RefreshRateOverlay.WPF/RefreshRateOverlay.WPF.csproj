@@ -24,13 +24,41 @@
       <DependentUpon>HotkeySettingsWindow.xaml</DependentUpon>
     </Compile>
   </ItemGroup>
+  <PropertyGroup>
+    <!-- Not on NuGet — GameTechDev only ships PresentMon as GitHub release
+         assets, so this is the raw-file-dependency equivalent: pinned
+         version/URL/hash here instead of committing the exe to the repo.
+         Bump PresentMonVersion + PresentMonSha256 together to upgrade;
+         fetch the new hash from the release's "digest" field using the
+         GitHub CLI's "release view" command against GameTechDev/PresentMon
+         with a JSON-formatted assets field. -->
+    <PresentMonVersion>2.5.1</PresentMonVersion>
+    <PresentMonFileName>PresentMon-$(PresentMonVersion)-x64.exe</PresentMonFileName>
+    <PresentMonPath>$(MSBuildProjectDirectory)\Tools\$(PresentMonFileName)</PresentMonPath>
+    <PresentMonUrl>https://github.com/GameTechDev/PresentMon/releases/download/v$(PresentMonVersion)/$(PresentMonFileName)</PresentMonUrl>
+    <PresentMonSha256>9bec3083069f58f911e6a512f4806db51a27bd096103087bc1d05ef54c80a191</PresentMonSha256>
+  </PropertyGroup>
+
   <ItemGroup>
-    <!-- Bundled so "Check Presentation Mode" works out of the box. Official
-         build from https://github.com/GameTechDev/PresentMon releases. -->
-    <Content Include="Tools\PresentMon-2.5.1-x64.exe">
+    <!-- Lets "Check Presentation Mode" work out of the box — EnsurePresentMon
+         (below) downloads the file the first time it's missing. -->
+    <Content Include="Tools\$(PresentMonFileName)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
+  <!-- Runs before the Content item above is copied to the output dir. Skips
+       the network entirely once the file's already present locally (every
+       build after the first) — only a version bump or a deleted local copy
+       triggers a re-download. Hash-verified rather than trusted on faith:
+       this exe runs alongside a driver-privileged app, so silently trusting
+       whatever a URL happens to serve is the wrong default. -->
+  <Target Name="EnsurePresentMon" BeforeTargets="BeforeBuild" Condition="!Exists('$(PresentMonPath)')">
+    <MakeDir Directories="$(MSBuildProjectDirectory)\Tools" />
+    <Message Importance="high" Text="Downloading $(PresentMonFileName) from $(PresentMonUrl) ..." />
+    <DownloadFile SourceUrl="$(PresentMonUrl)" DestinationFolder="$(MSBuildProjectDirectory)\Tools" DestinationFileName="$(PresentMonFileName)" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Tools\VerifyHash.ps1&quot; -Path &quot;$(PresentMonPath)&quot; -ExpectedSha256 $(PresentMonSha256)" />
+  </Target>
   <ItemGroup>
     <!-- Only exported symbol in nvapi64.dll is nvapi_QueryInterface; this wraps
          the QueryInterface/versioning dance for the DRS (driver settings) API

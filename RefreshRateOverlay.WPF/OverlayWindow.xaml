@@ -26,11 +26,22 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Text="Refresh Rate Overlay"
                        Foreground="White" FontSize="16"
                        HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+
+            <!-- Shown when reconciliation is off and an enforcement bucket has
+                 given up on a setting that won't stick — see
+                 TrayApp.RefreshOverlayApplyWarning/SetApplyWarning. Collapsed
+                 (no reserved space) whenever nothing's wrong. -->
+            <TextBlock Grid.Row="1" x:Name="ApplyWarningText"
+                       Foreground="#FFB84D" FontSize="12" Margin="0,6,0,0"
+                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                       Visibility="Collapsed"/>
 
             <!-- Editing target — defaults to whatever's actually focused, but
                  switchable to any other running app with a window. Exists
@@ -38,7 +49,7 @@
                  keyboard input exclusively while focused, blocking this app's
                  global hotkey no matter which combo is bound — the only way
                  to reach their settings is to pick them here instead. -->
-            <Grid Grid.Row="1" Margin="0,4,0,0">
+            <Grid Grid.Row="2" Margin="0,4,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="6"/>
@@ -49,15 +60,15 @@
                           ToolTip="Pick a different running app to edit its settings — useful when a game's own input capture blocks the hotkey while it's focused."/>
             </Grid>
 
-            <TextBlock Grid.Row="2" x:Name="PresentationText"
+            <TextBlock Grid.Row="3" x:Name="PresentationText"
                        Foreground="#888888" FontSize="12" Margin="0,6,0,0"
                        HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
 
-            <TextBlock Grid.Row="3" x:Name="RecommendationText"
+            <TextBlock Grid.Row="4" x:Name="RecommendationText"
                        Foreground="#AAAAAA" FontSize="12" Margin="0,2,0,0"
                        HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
 
-            <Grid Grid.Row="4" Margin="0,8,0,0">
+            <Grid Grid.Row="5" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="6"/>
@@ -69,7 +80,7 @@
                 <ComboBox Grid.Column="2" x:Name="RateDropDown" FontSize="14" Height="30"/>
             </Grid>
 
-            <Grid Grid.Row="5" x:Name="HdrRow" Margin="0,8,0,0">
+            <Grid Grid.Row="6" x:Name="HdrRow" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="6"/>
@@ -82,17 +93,22 @@
                           Foreground="White" FontSize="14" VerticalAlignment="Center"/>
             </Grid>
 
-            <Grid Grid.Row="6" x:Name="DsxProfileRow" Margin="0,8,0,0" Visibility="Collapsed">
+            <Grid Grid.Row="7" x:Name="DsxProfileRow" Margin="0,8,0,0" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="6"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="8"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Controller:" Foreground="White" FontSize="14" VerticalAlignment="Center"/>
-                <ComboBox Grid.Column="2" x:Name="DsxProfileDropDown" FontSize="14" Height="30"/>
+                <Ellipse Grid.Column="0" x:Name="DsxSyncDot" Width="8" Height="8"
+                         Fill="Gray" VerticalAlignment="Center"
+                         ToolTip="Green: matches DSX's actual active profile. Red: hasn't been reconciled into storage yet — Apply will save what's shown."/>
+                <TextBlock Grid.Column="2" Text="Controller:" Foreground="White" FontSize="14" VerticalAlignment="Center"/>
+                <ComboBox Grid.Column="4" x:Name="DsxProfileDropDown" FontSize="14" Height="30"/>
             </Grid>
 
-            <Grid Grid.Row="7" x:Name="GsyncModeRow" Margin="0,8,0,0" Visibility="Collapsed">
+            <Grid Grid.Row="8" x:Name="GsyncModeRow" Margin="0,8,0,0" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="6"/>
@@ -113,17 +129,43 @@
                  back to, so it's only ever editable while "Save for <app>" is
                  ticked — grayed out otherwise, no sync dot (nothing reconciles
                  this in the background the way Rate/HDR/GsyncMode do). -->
-            <Grid Grid.Row="8" x:Name="AppVrrRow" Margin="0,8,0,0" Visibility="Collapsed">
+            <Grid Grid.Row="9" x:Name="AppVrrRow" Margin="0,8,0,0" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="6"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="8"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="App VRR:" Foreground="White" FontSize="14" VerticalAlignment="Center"/>
-                <ComboBox Grid.Column="2" x:Name="AppVrrDropDown" FontSize="14" Height="30" IsEnabled="False"/>
+                <Ellipse Grid.Column="0" x:Name="AppVrrSyncDot" Width="8" Height="8"
+                         Fill="LimeGreen" VerticalAlignment="Center"
+                         ToolTip="Green: matches what NVIDIA reported when this dialog opened. Red: hasn't been reconciled into storage yet — Apply will save what's shown."/>
+                <TextBlock Grid.Column="2" Text="App VRR:" Foreground="White" FontSize="14" VerticalAlignment="Center"/>
+                <ComboBox Grid.Column="4" x:Name="AppVrrDropDown" FontSize="14" Height="30" IsEnabled="False"/>
             </Grid>
 
-            <Grid Grid.Row="9" Margin="0,8,0,0">
+            <!-- Same no-default/global-scope shape as App VRR above (see its
+                 comment) — NVIDIA's per-app Frame Rate Limiter (FRL_FPS, NVCP's
+                 "Max Frame Rate"), only ever editable while "Save for <app>" is
+                 ticked. Plain numeric entry (0-1000, or blank for Not Set) —
+                 no dropdown/preset list. -->
+            <Grid Grid.Row="10" x:Name="FrameCapRow" Margin="0,8,0,0" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Ellipse Grid.Column="0" x:Name="FrameCapSyncDot" Width="8" Height="8"
+                         Fill="LimeGreen" VerticalAlignment="Center"
+                         ToolTip="Green: matches what NVIDIA reported when this dialog opened. Red: hasn't been reconciled into storage yet — Apply will save what's shown."/>
+                <TextBlock Grid.Column="2" Text="Frame Cap:" Foreground="White" FontSize="14" VerticalAlignment="Center"/>
+                <TextBox Grid.Column="4" x:Name="FrameCapTextBox" FontSize="14" Height="30" IsEnabled="False"
+                         ToolTip="FPS, 0-1000. Blank for Not Set."/>
+            </Grid>
+
+            <Grid Grid.Row="11" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -137,7 +179,7 @@
                 </Button>
             </Grid>
 
-            <Grid Grid.Row="10" Margin="0,8,0,0">
+            <Grid Grid.Row="12" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="8"/>

@@ -57,3 +57,60 @@ concurrently, whichever side saves last silently drops the other's edit. This
 is why every `NvidiaGsyncService` method opens a session, does one thing,
 saves, and disposes immediately rather than holding one open across the
 overlay's lifetime — minimizes, doesn't eliminate, that window.
+
+## Refresh rate must be persisted, not just set live
+
+`DisplayService.SetRate` calls `ChangeDisplaySettingsW` with `CDS_UPDATEREGISTRY`
+— **not optional**. Without that flag, `ChangeDisplaySettingsW` only changes
+the live/dynamic mode for the current session; it never touches Windows' own
+persisted "current settings" for the display (what Settings > Display shows,
+what survives logoff/reboot). Found and fixed after a real, reproducible bug:
+with the rate left un-persisted, the display would visibly flash black on
+transitions that had nothing to do with this app's own reconciliation logic —
+alt-tabbing away from and back to a game, switching virtual desktops. Root
+cause, confirmed by hand: Windows' persisted display config still said 60Hz
+(this app had only ever changed the live mode), so some of those transitions
+made Windows/the driver transiently fall back toward that still-60Hz
+persisted value, which this app's own settle/reconcile loop then dutifully
+detected as drift and corrected back — a second, avoidable mode-set stacked
+on top of whatever caused the first one, both visible as a flash. Confirmed
+by manually setting Windows' own display settings to match this app's target
+rate: the transitions stopped immediately, with this app's code completely
+unchanged. The two were never disagreeing on the *value* — they were reading
+from two different sources of truth for what "the" refresh rate even is.
+
+## Routine re-assertion must no-op when nothing's actually changing
+
+`ApplyAllProfiles` re-resolves and re-pushes rate/HDR/G-SYNC on every single
+foreground-app change — including Sticky Profiles resolving back to the SAME
+app when focus briefly passes through something unrelated (see
+`StickyProfileTracker`/`ResolveStickyApp`). That means "nothing changed" is
+the *common* case for these pushes, not the exception, so every push path
+needs its own honest answer to "do we actually need to do anything" — a gap
+that shipped as a real bug for two of the three settings this pushes:
+
+- **Rate** (`TrayApp.ApplyRate`) always had this: `if (_currentRate == rate)
+  return;` before ever touching `DisplayService.SetRate`.
+- **HDR** (`HdrService.SetState`) didn't — it unconditionally called
+  `DisplayConfigSetDeviceInfo` + `SetDisplayConfig(..., SDC_APPLY)` on every
+  call. `SDC_APPLY` reprograms the display path — enough on its own to cause
+  a visible flash even when the value being written was already active. Now
+  reads `GetState().Enabled` first and no-ops if it already matches.
+- **G-SYNC** (`NvidiaGsyncService.SetGlobalMode`) didn't either — it
+  unconditionally opens a DRS session and `Save()`s. Re-saving the base
+  profile is enough to make the driver retrain/blank the link, identical
+  value or not.
+
+G-SYNC's guard is shaped differently from HDR's on purpose: it does **not**
+read NVIDIA's live state first to decide whether to push (unlike HDR's
+`GetState()` check). A live DRS read is comparatively expensive (a full
+session open/load, not a cheap Win32 call) and reading-then-conditionally-
+writing opens a real time-of-check-to-time-of-use gap — if something external
+changes G-SYNC in between our read and our (skipped) write, we'd wrongly
+believe hardware still matches. Instead `TrayApp` tracks
+`_lastAppliedGsyncMode` — what *this app itself* last successfully pushed —
+and `ReconcilePlanner.ShouldPush` (`Services/ReconcilePlanner.cs`) is the
+pure, unit-tested comparison behind that gate. Real external drift is still
+caught independently by `PollGsyncMode`/`ReconcileAll`, which always re-read
+NVIDIA's live state and never consult this cache — so the cache can only ever
+elide a redundant re-push, never mask a genuine external change.

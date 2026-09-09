@@ -85,9 +85,20 @@ internal static class HdrService
         return (false, false);
     }
 
-    /// <summary>Enables or disables HDR on the primary monitor.</summary>
+    /// <summary>Enables or disables HDR on the primary monitor. No-ops if
+    /// already at the requested state — SetDisplayConfig(SDC_APPLY) below
+    /// reprograms the display path unconditionally whenever it's actually
+    /// called, which is enough to cause a visible black flash on many
+    /// GPU/monitor combos even when the value being written hasn't changed.
+    /// Every ApplyProfile call (including a routine re-assertion on a plain
+    /// focus change, e.g. Sticky Profiles resolving back to the same app)
+    /// used to call this unconditionally, so alt-tabbing away from and back
+    /// to an HDR app produced a black flash for no reason — nothing about
+    /// HDR was ever actually changing.</summary>
     public static void SetState(bool enable)
     {
+        if (GetState().Enabled == enable) return;
+
         if (!QueryPaths(out int numPaths, out IntPtr paths, out IntPtr modes))
             return;
 

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -32,40 +34,106 @@ internal sealed class TrayApp : IDisposable
     private readonly SystemMessageSink   _msgSink;
     private readonly HotkeyService       _hotkey;
 
-    private int  _defaultRate;
-    private bool _defaultHdr;
     private bool _hdrSupported;
     private int  _currentRate;
+
+    // One SyncableSetting per default+profile setting with a live readback —
+    // see SyncableSetting remarks. _syncables is what ReconcileAll walks;
+    // adding a fourth setting of this shape means constructing one more
+    // instance and appending it here, not writing a new ReconcileXxx method.
+    private readonly SyncableSetting<int>             _rateSetting;
+    private readonly SyncableSetting<bool>            _hdrSetting;
+    private readonly SyncableSetting<GsyncGlobalMode> _gsyncSetting;
+    private readonly List<ISyncableSetting>           _syncables;
 
     // Tray-menu-togglable: whether OnProcessStarted speculatively applies a
     // profile ahead of focus at all. Persisted so the user's choice survives
     // a restart.
     private bool _earlyApplyOnStart;
 
-    // True from the moment ApplyDisplayState issues a change until ReconcileAsync
-    // confirms hardware landed on the target (or times out) — see ReconcileAsync
+    // Tray-menu-togglable: whether a profiled app that has gained focus stays
+    // the effective app (ResolveStickyApp) even after focus moves elsewhere,
+    // until its process actually exits — see StickyProfileTracker remarks.
+    // Persisted so the user's choice survives a restart.
+    private bool _stickyProfilesEnabled;
+    private readonly StickyProfileTracker _stickyProfiles = new();
+
+    // Tray-menu-togglable: whether ReconcileAll absorbs an external change
+    // into the INI (on, the default) or reasserts the INI's own target back
+    // onto hardware instead, undoing the external change — see ReconcileAll
+    // remarks. Persisted so the user's choice survives a restart.
+    private bool _reconciliationEnabled;
+
+    // Backoff state for reconciliation-off enforcement — one per push bucket
+    // (Rate+HDR always pushed together, G-SYNC separate), since that's how
+    // ApplyProfile/ApplyGsyncMode already group things. See
+    // EnforcementBackoffTracker and ReconcileAll's reconciliation-off branch.
+    private readonly EnforcementBackoffTracker _displayBackoff = new();
+    private readonly EnforcementBackoffTracker _gsyncBackoff = new();
+
+    // Guards against overlapping G-SYNC enforcement settle loops — Display's
+    // equivalent is already handled by _settleCts cancelling any prior
+    // SettleAsync, but G-SYNC's enforcement push has no such supersede
+    // mechanism (a normal ApplyGsyncMode call is fire-and-forget, unrelated
+    // to this), so this simple flag is enough to stop a fresh PollGsyncMode
+    // tick from starting a second DRS session write while one is still
+    // settling.
+    private bool _gsyncEnforceInFlight;
+
+    private const int DisplaySettleWindowMs = 5000;
+    private const int DisplaySettlePollMs   = 400;
+
+    // Coarser than Display's — each retry here is a DRS session open/write/
+    // save (see NvidiaGsyncService remarks on session cost and the
+    // last-write-wins collision risk), not a cheap hardware read, so this
+    // deliberately polls less often than Rate/HDR's settle loop.
+    private const int GsyncSettleWindowMs = 3000;
+    private const int GsyncSettlePollMs   = 750;
+
+    // Polls actual process liveness for whatever's sticky-tracked — the sole
+    // release mechanism for the pop side (see StickyLivenessTick remarks for
+    // why event-driven exit detection was dropped in favor of this).
+    private readonly System.Windows.Forms.Timer _stickyLivenessTimer;
+
+    // True from the moment ApplyDisplayState issues a change until SettleAsync
+    // confirms hardware landed on the target (or times out) — see SettleAsync
     // and OnDisplayChange remarks. While true, OnDisplayChange treats any
     // WM_DISPLAYCHANGE as expected settling noise from our own apply, not an
     // external change.
     private bool _settling;
 
-    private GsyncGlobalMode  _defaultGsyncMode;
     private bool             _gsyncAvailable;
     private GsyncGlobalMode  _lastPolledGsyncMode;
     private readonly System.Windows.Forms.Timer _gsyncPollTimer;
+
+    // What we last actually pushed via ApplyGsyncMode/EnforceGsyncAsync — lets
+    // ApplyGsyncMode skip the DRS session write entirely when the resolved
+    // target hasn't changed, instead of reopening/saving a session on every
+    // single ApplyAllProfiles call (every focus change, including Sticky
+    // Profiles resolving back to the SAME app). See ApplyGsyncMode remarks:
+    // that redundant write was a real, self-inflicted cause of a black flash
+    // on every alt-tab away from and back to a G-SYNC app, even though
+    // nothing about G-SYNC was ever actually changing. Deliberately NOT
+    // consulted by drift detection (PollGsyncMode/ReconcileAll/IsDrifted),
+    // which all re-read NVIDIA's live state independently — this cache only
+    // elides a redundant re-assertion, it never substitutes for a real check.
+    private GsyncGlobalMode? _lastAppliedGsyncMode;
 
     private readonly NotifyIcon _tray;
     private Icon? _currentIcon;
 
     private OverlayWindow? _overlay;
 
-    // Reconciles hardware state against the last intended (rate, HDR) target for a
+    // Confirms hardware state against the last intended (rate, HDR) target for a
     // short window after every apply, since SetDisplayConfig's HDR call can return
     // before the driver/TV actually finish renegotiating the HDMI link — a rate
     // change issued right after can get silently clamped by the still-settling
-    // link. A fresh ApplyDisplayState call cancels whatever reconciliation was
-    // still running for the previous target.
-    private CancellationTokenSource? _reconcileCts;
+    // link. A fresh ApplyDisplayState call cancels whatever settle pass was
+    // still running for the previous target. Distinct from ReconcileAll/
+    // ReconciliationEnabled below: this is confirming OUR OWN apply landed,
+    // not reacting to an externally-caused change — see SettleAsync vs
+    // ReconcileAll remarks.
+    private CancellationTokenSource? _settleCts;
 
     private const string TaskName        = "RefreshRateOverlay.WPF";
     private static readonly string ExePath = Path.Combine(AppContext.BaseDirectory, "RefreshRateOverlay.WPF.exe");
@@ -78,55 +146,40 @@ internal sealed class TrayApp : IDisposable
         _profiles = new ProfileService(_ini);
 
         _earlyApplyOnStart = _profiles.ReadEarlyApplyOnStart();
+        _stickyProfilesEnabled = _profiles.ReadStickyProfilesEnabled();
+        _reconciliationEnabled = _profiles.ReadReconciliationEnabled();
 
         (_hdrSupported, bool hdrEnabled) = HdrService.GetState();
-
         _currentRate = DisplayService.GetCurrentRate();
-        _defaultRate = _profiles.Rate.ReadDefault();
-        _defaultHdr  = _hdrSupported && _profiles.Hdr.ReadDefault();
 
-        if (_defaultRate == 60 && _currentRate > 0)
-        {
-            _defaultRate = _currentRate;
-            _profiles.Rate.WriteDefault(_defaultRate);
-        }
-        if (_hdrSupported)
-        {
-            _defaultHdr = hdrEnabled;
-            _profiles.Hdr.WriteDefault(_defaultHdr);
-        }
+        int storedDefaultRate = _profiles.Rate.ReadDefault();
+        int seedRate = storedDefaultRate;
+        if (seedRate == 60 && _currentRate > 0) seedRate = _currentRate;
+        _rateSetting = new SyncableSetting<int>(
+            "Refresh rate", _profiles.Rate,
+            isAvailable: () => true,
+            tryReadLive: (out int v) => { v = _currentRate; return true; },
+            describe: v => $"{v} Hz",
+            initialDefault: seedRate);
+        if (seedRate != storedDefaultRate) _profiles.Rate.WriteDefault(seedRate);
 
-        ApplyDisplayState(_defaultRate, _defaultHdr);
+        bool seedHdr = _hdrSupported ? hdrEnabled : _profiles.Hdr.ReadDefault();
+        _hdrSetting = new SyncableSetting<bool>(
+            "HDR", _profiles.Hdr,
+            isAvailable: () => _hdrSupported,
+            tryReadLive: (out bool v) => { v = HdrService.GetState().Enabled; return true; },
+            describe: v => v ? "On" : "Off",
+            initialDefault: seedHdr);
+        if (_hdrSupported) _profiles.Hdr.WriteDefault(seedHdr);
 
-        // Same reseed-from-live-state-at-startup treatment as HDR just above:
-        // NVIDIA's base profile is the "hardware" here. Confirmed by testing that
-        // VRR_MODE only ever behaves as a true global switch — no per-app NVIDIA
-        // write exists anywhere in this class, only ApplyGsyncMode below pushing
-        // whatever our own INI resolves to for the current app into that one
-        // base-profile setting.
-        _gsyncAvailable = NvidiaGsyncService.IsAvailable;
-        _defaultGsyncMode = _profiles.GsyncMode.ReadDefault();
-        if (_gsyncAvailable && NvidiaGsyncService.TryGetGlobalMode(out var liveGsyncMode))
-        {
-            _defaultGsyncMode = liveGsyncMode;
-            _profiles.GsyncMode.WriteDefault(_defaultGsyncMode);
-        }
-        if (_gsyncAvailable) NvidiaGsyncService.SetGlobalMode(_defaultGsyncMode);
-        _lastPolledGsyncMode = _defaultGsyncMode;
-
-        // HardwareChange subscribers — see its own remarks. Each reconciler owns
-        // its own setting; wiring a new integration in later means adding its
-        // own detector + subscriber pair here, not editing these.
-        HardwareChange += ReconcileRateAndHdr;
-        HardwareChange += ReconcileGsyncMode;
-
-        // NVIDIA's DRS database has no change notification to hook, unlike
-        // WM_DISPLAYCHANGE — 2s balances catching an external change reasonably
-        // promptly against the cost of a DRS session open/read every tick.
-        _gsyncPollTimer = new System.Windows.Forms.Timer { Interval = 2000 };
-        _gsyncPollTimer.Tick += PollGsyncMode;
-        if (_gsyncAvailable) _gsyncPollTimer.Start();
-
+        // Must exist before the ApplyDisplayState call below: ApplyRate calls
+        // UpdateTrayIcon whenever the live rate actually differs from the
+        // seeded default (not always a no-op — e.g. hardware left at a rate
+        // some other app's profile set, on a restart before it settles back),
+        // and UpdateTrayIcon writes _tray.Icon. Everything BuildContextMenu's
+        // click handlers capture (_rateSetting, _gsyncSetting, _gsyncAvailable,
+        // etc.) is only read lazily when a menu item is actually clicked, long
+        // after the rest of this constructor has run — safe to build now.
         _tray = new NotifyIcon
         {
             Text    = "RefreshRateOverlay",
@@ -135,6 +188,47 @@ internal sealed class TrayApp : IDisposable
         UpdateTrayIcon(_currentRate);
         _tray.ContextMenuStrip = BuildContextMenu();
         _tray.MouseClick += TrayMouseClick;
+
+        ApplyDisplayState(_rateSetting.Default, _hdrSetting.Default);
+
+        // Same reseed-from-live-state-at-startup treatment as HDR just above:
+        // NVIDIA's base profile is the "hardware" here. Confirmed by testing that
+        // VRR_MODE only ever behaves as a true global switch — no per-app NVIDIA
+        // write exists anywhere in this class, only ApplyGsyncMode below pushing
+        // whatever our own INI resolves to for the current app into that one
+        // base-profile setting.
+        _gsyncAvailable = NvidiaGsyncService.IsAvailable;
+        GsyncGlobalMode seedGsync = _profiles.GsyncMode.ReadDefault();
+        if (_gsyncAvailable && NvidiaGsyncService.TryGetGlobalMode(out var liveGsyncMode))
+            seedGsync = liveGsyncMode;
+        _gsyncSetting = new SyncableSetting<GsyncGlobalMode>(
+            "G-SYNC", _profiles.GsyncMode,
+            isAvailable: () => _gsyncAvailable,
+            tryReadLive: (out GsyncGlobalMode v) => NvidiaGsyncService.TryGetGlobalMode(out v),
+            describe: v => v.ToString(),
+            initialDefault: seedGsync);
+        if (_gsyncAvailable)
+        {
+            _profiles.GsyncMode.WriteDefault(seedGsync);
+            NvidiaGsyncService.SetGlobalMode(seedGsync);
+            _lastAppliedGsyncMode = seedGsync;
+        }
+        _lastPolledGsyncMode = seedGsync;
+
+        _syncables = new List<ISyncableSetting> { _rateSetting, _hdrSetting, _gsyncSetting };
+
+        // HardwareChange subscriber — see its own remarks. Adding a fourth
+        // setting of this shape later means constructing one more
+        // SyncableSetting and appending it to _syncables above, not writing a
+        // new ReconcileXxx method or a new subscription here.
+        HardwareChange += ReconcileAll;
+
+        // NVIDIA's DRS database has no change notification to hook, unlike
+        // WM_DISPLAYCHANGE — 2s balances catching an external change reasonably
+        // promptly against the cost of a DRS session open/read every tick.
+        _gsyncPollTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+        _gsyncPollTimer.Tick += PollGsyncMode;
+        if (_gsyncAvailable) _gsyncPollTimer.Start();
 
         _tracker = new ForegroundTracker();
         _tracker.AppChanged += OnAppChanged;
@@ -146,6 +240,15 @@ internal sealed class TrayApp : IDisposable
         _processStartWatcher = new ProcessStartWatcher();
         _processStartWatcher.ProcessStarted += OnProcessStarted;
         _processStartWatcher.Start();
+
+        // StickyProfileTracker's sole pop mechanism — see StickyLivenessTick
+        // remarks. 3s balances catching a closed app reasonably promptly
+        // against the cost of a process-table scan every tick; always
+        // running (cheap no-op when nothing's sticky-tracked) avoids a
+        // start/stop dance every time the tray toggle flips.
+        _stickyLivenessTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+        _stickyLivenessTimer.Tick += StickyLivenessTick;
+        _stickyLivenessTimer.Start();
 
         _msgSink = new SystemMessageSink(OnDisplayChange);
 
@@ -166,10 +269,85 @@ internal sealed class TrayApp : IDisposable
         // any outstanding guess about who's about to take over (see
         // AnticipatedAppTracker remarks), whether it confirms that guess or not.
         _anticipatedApp.RealFocusChanged();
-        ApplyAllProfiles(app);
+
+        // See _seenFirstAppChange remarks: the very first callback only
+        // reports pre-existing focus, not an observed open, so it's excluded
+        // from sticky promotion below — captured before flipping the flag so
+        // this specific call sees "was this the first."
+        bool isFirstAppChange = !_seenFirstAppChange;
+        _seenFirstAppChange = true;
+
+        // Promote/register this app in the sticky stack BEFORE resolving —
+        // if it has a profile, it becomes (or stays) the active app, so
+        // ResolveStickyApp below naturally returns it unchanged. If the
+        // newly focused app has no profile, nothing is pushed, and — if a
+        // sticky app is still open underneath — that app keeps winning
+        // instead of this focus change clobbering it.
+        if (_stickyProfilesEnabled && !isFirstAppChange && HasAnyProfile(app))
+        {
+            Logger.Log($"StickyProfileTracker: '{app}' opened (has a profile) — now the active sticky app.");
+            _stickyProfiles.AppOpened(app);
+        }
+
+        ApplyAllProfiles(ResolveStickyApp(app));
     }
 
     private readonly AnticipatedAppTracker _anticipatedApp = new();
+
+    // Guards the very first OnAppChanged callback: ForegroundTracker's own
+    // _lastApp starts empty, so its first-ever AppChanged just reports
+    // whatever was ALREADY focused before Start() was called, not an "open"
+    // this app actually witnessed happen. Sticky is meant to survive an
+    // observed app losing focus temporarily (see StickyProfileTracker
+    // remarks) — latching onto that first ambiguous sample would stick to a
+    // guess, not something this app ever saw open. The profile still applies
+    // normally either way (ApplyAllProfiles below runs unconditionally); only
+    // the sticky promotion is skipped for this one callback.
+    private bool _seenFirstAppChange;
+
+    /// <summary>What TrayApp should actually treat as "the current app" for
+    /// applying/reconciling profiles: the sticky-tracked app if the feature
+    /// is on and one is open, otherwise whatever was passed in (typically
+    /// real focus, or the anticipated-app resolution). See
+    /// StickyProfileTracker remarks — this is the single place that decision
+    /// gets made, so every call site (focus change, reconcile, the early-
+    /// apply revert check, opening the overlay) agrees on the same app.</summary>
+    private string ResolveStickyApp(string app) =>
+        _stickyProfilesEnabled && _stickyProfiles.ActiveApp is { } sticky ? sticky : app;
+
+    /// <summary>StickyProfileTracker's sole pop mechanism: on every tick,
+    /// drop any sticky-tracked app that's no longer actually running.
+    ///
+    /// This used to be event-driven (a WMI Win32_ProcessStopTrace watcher,
+    /// firing the instant a tracked process exited) — dropped after a real
+    /// production bug: a closed game (Doom) stayed sticky-active
+    /// indefinitely because the exit event never fired. This app's
+    /// Win32_ProcessStartTrace watcher (ProcessStartWatcher, the exact same
+    /// WMI trace mechanism, just for process START) has thrown intermittent
+    /// "Access Denied" ManagementExceptions in production for weeks —
+    /// concrete evidence this WMI event channel isn't reliable enough to be
+    /// the ONLY way a sticky app ever gets released. Polling actual process
+    /// existence (Process.GetProcessesByName) doesn't depend on any event
+    /// ever being delivered, so a missed/failed WMI subscription can no
+    /// longer strand a closed app as permanently "active".</summary>
+    private void StickyLivenessTick(object? sender, EventArgs e)
+    {
+        if (!_stickyProfilesEnabled) return;
+
+        bool changed = _stickyProfiles.PruneClosedApps(IsProcessRunning);
+        if (!changed) return;
+
+        Logger.Log("StickyProfileTracker: liveness check released a closed app.");
+        ApplyAllProfiles(ResolveStickyApp(_tracker.LastApp));
+    }
+
+    private static bool IsProcessRunning(string exeName)
+    {
+        string name = Path.GetFileNameWithoutExtension(exeName);
+        var procs = Process.GetProcessesByName(name);
+        try { return procs.Length > 0; }
+        finally { foreach (var p in procs) p.Dispose(); }
+    }
 
     /// <summary>Applies every per-app setting (rate/HDR, DSX, G-SYNC) for the
     /// given app in one call — the single "make hardware match this app's
@@ -177,14 +355,42 @@ internal sealed class TrayApp : IDisposable
     /// speculative early-start push (OnProcessStarted), and that push's own
     /// revert (ScheduleEarlyApplyRevertCheck). One shared definition of "apply
     /// this app" instead of each caller picking its own subset.</summary>
+    // The most recently resolved app ApplyAllProfiles actually applied a
+    // profile for — lets it tell "genuinely switching to a different app"
+    // (reset the enforcement backoff trackers — a fresh attempt) from
+    // "Sticky Profiles resolving back to the SAME app again because
+    // something else briefly took real focus" (leave backoff alone). Real
+    // production bug this fixes: with Sticky Profiles on, WM_DISPLAYCHANGE/
+    // ForegroundTracker noise from totally unrelated apps kept re-resolving
+    // to the same sticky app and re-triggering this unconditional reset,
+    // wiping out the backoff escalation against an ONGOING external fight
+    // (WRC.exe repeatedly resetting its own display mode after a crash)
+    // every single time — so it could never reach give-up no matter how long
+    // the fight went on, as long as focus kept moving around elsewhere.
+    private string? _lastAppliedProfileApp;
+
     private void ApplyAllProfiles(string app)
     {
+        // A real, deliberate switch to a DIFFERENT app is a fresh attempt
+        // regardless of what an unrelated background enforcement fight was
+        // doing for the previous one — see EnforcementBackoffTracker
+        // remarks. Reapplying the SAME app again (sticky resolving back to
+        // it, an early-apply re-confirmation, etc.) is not a fresh
+        // situation for THAT app's own ongoing fight, so it must not clear
+        // escalation that's already in progress.
+        if (app != _lastAppliedProfileApp)
+        {
+            _displayBackoff.Reset();
+            _gsyncBackoff.Reset();
+        }
+        _lastAppliedProfileApp = app;
+
         ApplyProfile(app);
         ApplyDsxProfileForApp(app);
         ApplyGsyncMode(app);
     }
 
-    private void ApplyProfile(string app)
+    private void ApplyProfile(string app, Action<bool>? onSettled = null)
     {
         // Re-sync from actual hardware before deciding whether a rate change is
         // needed: _currentRate is only ever updated by our own calls, so if
@@ -197,7 +403,7 @@ internal sealed class TrayApp : IDisposable
 
         Logger.Log($"ApplyProfile: app='{app}' target={targetRate} hwRateBefore={_currentRate}");
 
-        ApplyDisplayState(targetRate, targetHdr);
+        ApplyDisplayState(targetRate, targetHdr, onSettled);
     }
 
     /// <summary>What rate/HDR *should* be right now for the given app: its own
@@ -205,10 +411,7 @@ internal sealed class TrayApp : IDisposable
     /// both to apply (ApplyProfile) and to detect drift (OnDisplayChange) —
     /// one shared definition of "correct" instead of two that could disagree.</summary>
     private (int Rate, bool Hdr) ResolveTarget(string app) =>
-        (
-            ReconcilePlanner.Resolve(_profiles.Rate.TryReadProfile(app, out int profileRate), profileRate, _defaultRate),
-            _hdrSupported && ReconcilePlanner.Resolve(_profiles.Hdr.TryReadProfile(app, out bool profileHdr), profileHdr, _defaultHdr)
-        );
+        (_rateSetting.ResolveTarget(app), _hdrSupported && _hdrSetting.ResolveTarget(app));
 
     // -------------------------------------------------------------------------
     // Early apply (process start, ahead of focus)
@@ -232,23 +435,41 @@ internal sealed class TrayApp : IDisposable
     /// is what corrects a wrong guess; nothing here needs to coordinate with
     /// OnAppChanged directly — both funnel through the same ApplyAllProfiles/
     /// ApplyDisplayState, which already treats a fresh call as superseding
-    /// whatever came before.</summary>
+    /// whatever came before.
+    ///
+    /// Also promotes to the sticky stack immediately, same as OnAppChanged does
+    /// on real focus — not just on the apply below. Without this, a companion
+    /// process that steals real OS focus before the profiled app's own window
+    /// ever shows (e.g. an anti-cheat launcher racing the game's own process
+    /// start) resolves with no sticky app to protect it yet, since sticky
+    /// promotion used to wait for the profiled app's OWN focus event — which
+    /// can't happen until after that companion process is done stealing focus.
+    /// Safe to promote on a guess: StickyLivenessTick prunes it the moment the
+    /// process exits, so a wrong guess (never takes focus) self-corrects within
+    /// one liveness poll rather than sticking around indefinitely.</summary>
     private void OnProcessStarted(object? sender, string app)
     {
         if (!_earlyApplyOnStart || !HasAnyProfile(app)) return;
 
         Logger.Log($"ProcessStartWatcher: '{app}' started, early-applying its profile ahead of focus.");
         _anticipatedApp.Started(app);
+
+        if (_stickyProfilesEnabled)
+        {
+            Logger.Log($"StickyProfileTracker: '{app}' started (has a profile) — now the active sticky app.");
+            _stickyProfiles.AppOpened(app);
+        }
+
         ApplyAllProfiles(app);
 
         ScheduleEarlyApplyRevertCheck(app);
     }
 
     private bool HasAnyProfile(string app) =>
-        _profiles.Rate.HasProfile(app) ||
-        _profiles.Hdr.HasProfile(app) ||
+        _rateSetting.HasProfile(app) ||
+        _hdrSetting.HasProfile(app) ||
         _profiles.Dsx.HasProfile(app) ||
-        _profiles.GsyncMode.HasProfile(app);
+        _gsyncSetting.HasProfile(app);
 
     /// <summary>If the anticipated app never actually takes foreground focus
     /// within this window, the early push above was a wrong guess — re-resolve
@@ -272,7 +493,7 @@ internal sealed class TrayApp : IDisposable
             if (actualApp == anticipatedApp) return;
 
             Logger.Log($"ProcessStartWatcher: '{anticipatedApp}' never took focus (actual='{actualApp}') — reverting early apply.");
-            ApplyAllProfiles(actualApp);
+            ApplyAllProfiles(ResolveStickyApp(actualApp));
         };
         timer.Start();
     }
@@ -282,8 +503,8 @@ internal sealed class TrayApp : IDisposable
     // -------------------------------------------------------------------------
 
     /// <summary>Falls back to the default controller profile the same way rate/HDR
-    /// fall back to _defaultRate/_defaultHdr. An empty default means "leave the
-    /// controller alone" (never configured).</summary>
+    /// fall back to _rateSetting.Default/_hdrSetting.Default. An empty default
+    /// means "leave the controller alone" (never configured).</summary>
     private void ApplyDsxProfileForApp(string app)
     {
         string profile = _profiles.Dsx.TryReadProfile(app, out string p) ? p : _profiles.Dsx.ReadDefault();
@@ -310,30 +531,137 @@ internal sealed class TrayApp : IDisposable
     // ?? default) here and reasserting that single value into the one base
     // profile setting on every foreground switch, same as ApplyProfile does for
     // rate/HDR against actual hardware.
+    //
+    // Skips the push entirely when the resolved target already matches what
+    // we last applied (_lastAppliedGsyncMode) — NvidiaGsyncService.SetGlobalMode
+    // opens a DRS session and Save()s unconditionally, with no "is this
+    // actually different" guard of its own (unlike ApplyRate's _currentRate
+    // check), and re-saving the base profile is enough to make the driver
+    // retrain/blank the display link even when the value being written is
+    // identical. Every ApplyAllProfiles call — including Sticky Profiles
+    // resolving back to the SAME app on every alt-tab away and back — used to
+    // hit this unconditionally, which was a real, self-inflicted cause of a
+    // black flash on every such switch even though G-SYNC was never actually
+    // changing. Real drift detection (PollGsyncMode/ReconcileAll/IsDrifted)
+    // never consults this cache — only re-reads NVIDIA's live state — so an
+    // actual external change still gets caught and corrected independently.
     // -------------------------------------------------------------------------
     private void ApplyGsyncMode(string app)
     {
         if (!_gsyncAvailable) return;
-        NvidiaGsyncService.SetGlobalMode(ResolveGsyncTarget(app));
+
+        GsyncGlobalMode target = _gsyncSetting.ResolveTarget(app);
+        if (!ReconcilePlanner.ShouldPush(_lastAppliedGsyncMode, target)) return;
+
+        if (NvidiaGsyncService.SetGlobalMode(target)) _lastAppliedGsyncMode = target;
+    }
+
+    /// <summary>
+    /// The reconciliation-off enforcement push for G-SYNC — unlike the normal
+    /// fire-and-forget ApplyGsyncMode above, this confirms the push actually
+    /// stuck (via SettleLoop, same shape as Rate/HDR's SettleAsync but with
+    /// a coarser window — see GsyncSettleWindowMs/GsyncSettlePollMs remarks)
+    /// and reports the outcome to _gsyncBackoff. Only ever called from
+    /// ReconcileAll's reconciliation-off branch, gated by _gsyncEnforceInFlight
+    /// so a fresh PollGsyncMode tick can't start a second DRS session write
+    /// while this one is still settling.
+    /// </summary>
+    private async Task EnforceGsyncAsync(GsyncGlobalMode target)
+    {
+        NvidiaGsyncService.SetGlobalMode(target);
+        bool converged = await SettleLoop.RunAsync(
+            isDrifted: () => !NvidiaGsyncService.TryGetGlobalMode(out var live) || live != target,
+            push: () => NvidiaGsyncService.SetGlobalMode(target),
+            CancellationToken.None,
+            GsyncSettleWindowMs, GsyncSettlePollMs);
+
+        // Only update the cache ApplyGsyncMode's no-op guard relies on once
+        // the push actually landed — an unconverged attempt means hardware
+        // may still be at something else, so ApplyGsyncMode must not be
+        // tricked into skipping the next real attempt.
+        if (converged) _lastAppliedGsyncMode = target;
+
+        _gsyncEnforceInFlight = false;
+        HandleEnforcementResult(_gsyncBackoff, "G-SYNC", converged);
+    }
+
+    /// <summary>No drift observed this tick. Does NOT immediately clear the
+    /// tracker on the strength of that alone — a single quiet tick can just be
+    /// the calm between two flaps of the very same ongoing fight (the WRC.exe
+    /// regression this guards against: a crashed game flapping its own display
+    /// mode every few seconds, with each of our reverts individually
+    /// succeeding in between). Only once IsRecentlyActive says enough calm
+    /// time has actually passed does this reset the streak and balloon "back
+    /// in sync" — and only if it was actually struggling, never for the
+    /// common case where nothing was ever wrong.</summary>
+    private void HandleEnforcementRecovery(EnforcementBackoffTracker tracker, string label)
+    {
+        if (tracker.IsRecentlyActive(DateTime.UtcNow)) return;
+
+        bool wasStruggling = tracker.ConsecutiveFailures > 0;
+        tracker.Reset();
+        if (wasStruggling)
+        {
+            Logger.Log($"Reconcile (disabled): {label} back in sync — clearing backoff.");
+            NotifyRecovered(label);
+        }
+        RefreshOverlayApplyWarning();
+    }
+
+    /// <summary>Records one enforcement attempt's settle outcome and surfaces
+    /// the transition. Convergence is no longer what decides whether the fight
+    /// is "over" — see EnforcementBackoffTracker's remarks — so this only ever
+    /// balloons a one-time "gave up" the moment the tracker crosses its
+    /// give-up threshold; "back in sync" is HandleEnforcementRecovery's job,
+    /// once a real calm gap has actually passed.</summary>
+    private void HandleEnforcementResult(EnforcementBackoffTracker tracker, string label, bool converged)
+    {
+        tracker.RecordResult(converged, DateTime.UtcNow);
+
+        if (!converged)
+            Logger.Log($"Reconcile (disabled): {label} push did not converge.");
+
+        if (tracker.GaveUp)
+        {
+            Logger.Log($"Reconcile (disabled): {label} keeps needing to be reverted — giving up until Apply is clicked.");
+            NotifyGaveUp(label);
+        }
+        RefreshOverlayApplyWarning();
+    }
+
+    /// <summary>Reflects current gave-up state into the open overlay, if any —
+    /// so a warning shown while enforcement was already failing doesn't sit
+    /// there stale, and a fresh give-up shows up without needing to reopen
+    /// Settings. See OverlayWindow.SetApplyWarning.</summary>
+    private void RefreshOverlayApplyWarning()
+    {
+        if (_overlay is not { } overlay) return;
+
+        var failed = new List<string>();
+        if (_displayBackoff.GaveUp) failed.Add("Refresh rate/HDR");
+        if (_gsyncAvailable && _gsyncBackoff.GaveUp) failed.Add("G-SYNC");
+
+        overlay.SetApplyWarning(failed.Count > 0 ? string.Join(", ", failed) : null);
     }
 
     // -------------------------------------------------------------------------
     // HardwareChange — a generic "something external changed, go check for
-    // drift" signal, deliberately decoupled from what detected it. Today it has
-    // one raiser (OnDisplayChange, below) and one subscriber
-    // (ReconcileRateAndHdr) for the display, plus a second raiser/subscriber
-    // pair (PollGsyncMode/ReconcileGsyncMode) proving a second, unrelated
-    // integration can plug into the same signal without touching this one.
-    // Adding another integration later (DSX, say) means adding its own
-    // detector that raises this event and its own subscriber — never editing
-    // an existing reconciler to know about a new source.
+    // drift" signal, deliberately decoupled from what detected it. Two
+    // raisers today — OnDisplayChange (below) for WM_DISPLAYCHANGE, and
+    // PollGsyncMode for NVIDIA's DRS database, which has no equivalent OS
+    // notification — both feed the single ReconcileAll subscriber, which
+    // walks every registered SyncableSetting (see its remarks). Adding
+    // another detection source later (a poll for some future setting, say)
+    // means adding its own detector that raises this event — never editing
+    // ReconcileAll to know about a new source, and never writing a new
+    // per-setting Reconcile method by hand.
     // -------------------------------------------------------------------------
     private event Action? HardwareChange;
 
     // -------------------------------------------------------------------------
     // Display change detection — while _settling is true, this is our own apply
     // still riding out the driver/TV's negotiation delay (see ApplyDisplayState/
-    // ReconcileAsync, which own that flag), not an external change, so it's
+    // SettleAsync, which own that flag), not an external change, so it's
     // ignored entirely. _settling is specific to the display (HDMI/TV settling
     // time) — a future raiser with its own settling semantics would own its own
     // guard rather than share this one.
@@ -350,78 +678,102 @@ internal sealed class TrayApp : IDisposable
     }
 
     /// <summary>
-    /// Subscribed to HardwareChange. Any external display change means
-    /// something outside the overlay changed it — the user via Windows
-    /// Settings, or the app itself re-asserting its own preference. Either way
-    /// this doesn't fight it: it records the observed value as the new truth,
-    /// into whichever slot is currently active for the foreground app (its own
-    /// profile if it has one, otherwise the shared default) — same rule
-    /// regardless of which one applies, since both cases are "something changed
-    /// outside the overlay" and get written back the same way.
+    /// Subscribed to HardwareChange. Any external change means something
+    /// outside the overlay changed it — the user via Windows Settings/NVCP/the
+    /// NVIDIA app, or the app itself re-asserting its own preference.
+    ///
+    /// With _reconciliationEnabled (the default), this doesn't fight it: each
+    /// SyncableSetting records the observed value as the new truth, into
+    /// whichever slot is currently active for the foreground app (its own
+    /// profile if it has one, otherwise the shared default) — same rule for
+    /// every setting, since both cases are "something changed outside the
+    /// overlay" and get written back the same way. One loop over _syncables
+    /// instead of a hand-written ReconcileXxx per setting — see
+    /// SyncableSetting remarks.
+    ///
+    /// With it off, the INI is instead treated as the sole source of truth:
+    /// nothing gets persisted from live state, and any drift is reverted by
+    /// reasserting the INI's own resolved target back onto hardware — the
+    /// same push ApplyProfile/ApplyGsyncMode already do on a normal focus
+    /// change, just re-triggered here because something other than a focus
+    /// change caused the drift.
     /// </summary>
-    private void ReconcileRateAndHdr()
+    private void ReconcileAll()
     {
         _currentRate = DisplayService.GetCurrentRate();
         UpdateTrayIcon(_currentRate);
 
         // Prefers the anticipated app (if any) over LastApp — see
-        // AnticipatedAppTracker remarks.
-        string app = _anticipatedApp.ResolveApp(_tracker.LastApp);
-        (int targetRate, bool targetHdr) = ResolveTarget(app);
+        // AnticipatedAppTracker remarks — then the sticky-tracked app (if
+        // any) over that, since sticky is a deliberate, longer-lived user
+        // choice that should win over both real and anticipated focus.
+        string app = ResolveStickyApp(_anticipatedApp.ResolveApp(_tracker.LastApp));
 
-        var ratePlan = ReconcilePlanner.Plan(_currentRate, targetRate, _profiles.Rate.HasProfile(app));
-        if (ratePlan != ReconcileAction.None)
+        if (_reconciliationEnabled)
         {
-            Logger.Log($"ReconcileRateAndHdr: rate drifted to {_currentRate} (target was {targetRate}) for app='{app}' -> {ratePlan}.");
-            NotifyReconciled("Refresh rate", $"{_currentRate} Hz", app, ratePlan);
-        }
-        switch (ratePlan)
-        {
-            case ReconcileAction.WriteProfile:
-                _profiles.Rate.WriteProfile(app, _currentRate);
-                break;
-            case ReconcileAction.WriteDefault:
-                _defaultRate = _currentRate;
-                _profiles.Rate.WriteDefault(_defaultRate);
-                break;
-        }
-
-        bool currHdr = _hdrSupported && HdrService.GetState().Enabled;
-        if (_hdrSupported)
-        {
-            var hdrPlan = ReconcilePlanner.Plan(currHdr, targetHdr, _profiles.Hdr.HasProfile(app));
-            if (hdrPlan != ReconcileAction.None)
+            foreach (var setting in _syncables)
             {
-                Logger.Log($"ReconcileRateAndHdr: HDR drifted to {currHdr} (target was {targetHdr}) for app='{app}' -> {hdrPlan}.");
-                NotifyReconciled("HDR", currHdr ? "On" : "Off", app, hdrPlan);
+                var result = setting.Reconcile(app);
+                if (result is { Action: not ReconcileAction.None } r)
+                {
+                    Logger.Log($"Reconcile: {setting.Name} drifted to {r.Live} (target was {r.Target}) for app='{app}' -> {r.Action}.");
+                    NotifyReconciled(setting.Name, r.Live, app, r.Action);
+                }
             }
-            switch (hdrPlan)
+        }
+        else
+        {
+            // Rate and HDR are pushed together via ApplyProfile (which itself
+            // enforces HDR-before-rate ordering — see ApplyDisplayState) rather
+            // than reverted independently, same as every other caller of this
+            // pair. Each bucket's own EnforcementBackoffTracker decides whether
+            // this tick is even allowed to attempt a push — see its remarks.
+            const string displayLabel = "Refresh rate/HDR";
+            if (!(_rateSetting.IsDrifted(app) || _hdrSetting.IsDrifted(app)))
             {
-                case ReconcileAction.WriteProfile:
-                    _profiles.Hdr.WriteProfile(app, currHdr);
-                    break;
-                case ReconcileAction.WriteDefault:
-                    _defaultHdr = currHdr;
-                    _profiles.Hdr.WriteDefault(_defaultHdr);
-                    break;
+                HandleEnforcementRecovery(_displayBackoff, displayLabel);
+            }
+            else if (_displayBackoff.ShouldAttempt(DateTime.UtcNow))
+            {
+                bool freshStreak = _displayBackoff.ConsecutiveFailures == 0;
+                Logger.Log($"Reconcile (disabled): rate/HDR changed externally for app='{app}' — reverting to INI target.");
+                if (freshStreak) NotifyReverted(displayLabel);
+                ApplyProfile(app, onSettled: converged => HandleEnforcementResult(_displayBackoff, displayLabel, converged));
+            }
+
+            if (_gsyncAvailable)
+            {
+                const string gsyncLabel = "G-SYNC";
+                if (!_gsyncSetting.IsDrifted(app))
+                {
+                    HandleEnforcementRecovery(_gsyncBackoff, gsyncLabel);
+                }
+                else if (!_gsyncEnforceInFlight && _gsyncBackoff.ShouldAttempt(DateTime.UtcNow))
+                {
+                    bool freshStreak = _gsyncBackoff.ConsecutiveFailures == 0;
+                    Logger.Log($"Reconcile (disabled): G-SYNC changed externally for app='{app}' — reverting to INI target.");
+                    if (freshStreak) NotifyReverted(gsyncLabel);
+                    _gsyncEnforceInFlight = true;
+                    _ = EnforceGsyncAsync(_gsyncSetting.ResolveTarget(app));
+                }
             }
         }
 
         // If the overlay is open, push it its OWN app's resolved target — not
         // gated on overlay.ActiveApp == app (the app that was foreground when
         // this reconcile ran). Reconciling can easily happen while a different
-        // app is focused than the overlay's — e.g. the write here just landed
+        // app is focused than the overlay's — e.g. a write above just landed
         // on the shared default, changed from within the NVIDIA app itself,
         // which is a real foreground switch away from whatever the overlay is
         // showing. A default-scope change is still relevant to the overlay's
         // app whenever that app has no profile of its own; re-resolving here
-        // (rather than reusing app/_currentRate/currHdr from above) is what
-        // makes that fall out correctly instead of only handling the
-        // same-app-focused case.
+        // (rather than reusing app from above) is what makes that fall out
+        // correctly instead of only handling the same-app-focused case.
         if (_overlay is { } overlay)
         {
             (int overlayRate, bool overlayHdr) = ResolveTarget(overlay.ActiveApp);
             overlay.RefreshLiveState(overlayRate, overlayHdr);
+            if (_gsyncAvailable) overlay.RefreshGsyncLiveState(_gsyncSetting.ResolveTarget(overlay.ActiveApp));
         }
     }
 
@@ -429,9 +781,9 @@ internal sealed class TrayApp : IDisposable
     // G-SYNC change detection — NVIDIA's DRS database has no equivalent of
     // WM_DISPLAYCHANGE to hook, so this polls the base profile instead. Only
     // raises HardwareChange when the polled value actually differs from the
-    // last poll, same "detect, then let the shared reconciler re-derive truth
-    // independently" split OnDisplayChange/ReconcileRateAndHdr use — this
-    // method never writes anything itself.
+    // last poll, same "detect, then let the shared reconciler (ReconcileAll)
+    // re-derive truth independently" split OnDisplayChange uses — this method
+    // never writes anything itself.
     // -------------------------------------------------------------------------
     private void PollGsyncMode(object? sender, EventArgs e)
     {
@@ -441,52 +793,6 @@ internal sealed class TrayApp : IDisposable
 
         _lastPolledGsyncMode = liveMode;
         HardwareChange?.Invoke();
-    }
-
-    /// <summary>What VRR_MODE *should* be right now for the given app — same
-    /// resolution shape as ResolveTarget, kept separate since it's a different
-    /// setting with a different storage type (GsyncMode isn't Rate/Hdr).</summary>
-    private GsyncGlobalMode ResolveGsyncTarget(string app) =>
-        ReconcilePlanner.Resolve(_profiles.GsyncMode.TryReadProfile(app, out var profileMode), profileMode, _defaultGsyncMode);
-
-    /// <summary>Subscribed to HardwareChange, same shape and reasoning as
-    /// ReconcileRateAndHdr: an external base-profile change (the user via NVCP,
-    /// or the NVIDIA app) gets recorded as the new truth into whichever slot is
-    /// active for the foreground app, rather than fought.</summary>
-    private void ReconcileGsyncMode()
-    {
-        if (!_gsyncAvailable) return;
-        if (!NvidiaGsyncService.TryGetGlobalMode(out var liveMode)) return;
-
-        // See ReconcileRateAndHdr's remarks on AnticipatedAppTracker — same reasoning.
-        string app = _anticipatedApp.ResolveApp(_tracker.LastApp);
-        GsyncGlobalMode target = ResolveGsyncTarget(app);
-
-        var plan = ReconcilePlanner.Plan(liveMode, target, _profiles.GsyncMode.HasProfile(app));
-        if (plan != ReconcileAction.None)
-        {
-            Logger.Log($"ReconcileGsyncMode: VRR_MODE drifted to {liveMode} (target was {target}) for app='{app}' -> {plan}.");
-            NotifyReconciled("G-SYNC", liveMode.ToString(), app, plan);
-        }
-        switch (plan)
-        {
-            case ReconcileAction.WriteProfile:
-                _profiles.GsyncMode.WriteProfile(app, liveMode);
-                break;
-            case ReconcileAction.WriteDefault:
-                _defaultGsyncMode = liveMode;
-                _profiles.GsyncMode.WriteDefault(_defaultGsyncMode);
-                break;
-        }
-
-        // Same "push the overlay's own resolved target, not gated on app
-        // identity" reasoning as ReconcileRateAndHdr — see its remarks. Changing
-        // G-SYNC through the NVIDIA app is the clearest case this matters for:
-        // that's a real foreground switch away from whatever the overlay is
-        // showing, so app == "NVIDIA app.exe" here almost always, never the
-        // overlay's own app.
-        if (_overlay is { } overlay)
-            overlay.RefreshGsyncLiveState(ResolveGsyncTarget(overlay.ActiveApp));
     }
 
     // -------------------------------------------------------------------------
@@ -515,62 +821,66 @@ internal sealed class TrayApp : IDisposable
     /// or get clamped back down by the driver, so HDR must be settled first to
     /// free up whatever headroom the rate change needs. Then spends up to a few
     /// seconds confirming hardware actually landed on this target, re-applying
-    /// if it drifts (see ReconcileAsync) — the initial apply can still lose a
+    /// if it drifts (see SettleAsync) — the initial apply can still lose a
     /// race against the driver/TV settling the HDMI link asynchronously.
     /// </summary>
-    private void ApplyDisplayState(int rate, bool hdrEnabled)
+    private void ApplyDisplayState(int rate, bool hdrEnabled, Action<bool>? onSettled = null)
     {
-        _reconcileCts?.Cancel();
+        _settleCts?.Cancel();
         var cts = new CancellationTokenSource();
-        _reconcileCts = cts;
+        _settleCts = cts;
         _settling = true;
 
         if (_hdrSupported) HdrService.SetState(hdrEnabled);
         ApplyRate(rate);
 
-        _ = ReconcileAsync(rate, hdrEnabled, cts.Token);
+        _ = SettleAsync(rate, hdrEnabled, cts.Token, onSettled);
     }
 
     /// <summary>
-    /// Polls actual hardware state for up to ReconcileWindowMs after an apply and
-    /// re-applies (HDR then rate) if it ever finds a mismatch against the target —
-    /// absorbs the driver/TV's asynchronous HDMI settling delay instead of hoping
-    /// the first attempt landed. Stops as soon as hardware matches the target, or
-    /// if superseded by a newer ApplyDisplayState call (via the passed token) —
-    /// clears _settling on the way out (guarded by the token so a superseded pass
-    /// can't clear it out from under the newer one that replaced it), which is
-    /// what lets OnDisplayChange start treating further changes as external.
+    /// Polls actual hardware state for up to DisplaySettleWindowMs after an apply
+    /// (via SettleLoop — see its remarks) and re-applies (HDR then rate) if it
+    /// ever finds a mismatch against the target — absorbs the driver/TV's
+    /// asynchronous HDMI settling delay instead of hoping the first attempt
+    /// landed. Stops as soon as hardware matches the target, or if superseded by
+    /// a newer ApplyDisplayState call (via the passed token) — clears _settling
+    /// on the way out (guarded by the token so a superseded pass can't clear it
+    /// out from under the newer one that replaced it), which is what lets
+    /// OnDisplayChange start treating further changes as external. onSettled
+    /// (only ever passed by the reconciliation-off enforcement path) reports
+    /// whether it ultimately converged, guarded by the same token check so a
+    /// superseded attempt never reports a stale result.
+    ///
+    /// Named distinctly from ReconcileAll/"Reconcile (disabled)" on purpose:
+    /// this is confirming OUR OWN just-issued apply actually landed (the
+    /// target hasn't changed, hardware just hasn't caught up yet) — never
+    /// triggered by an externally-caused change the way ReconcileAll is.
+    /// Logs under "Settle:" so the two are never confused in the log file.
     /// </summary>
-    private async Task ReconcileAsync(int targetRate, bool targetHdr, CancellationToken token)
+    private async Task SettleAsync(int targetRate, bool targetHdr, CancellationToken token, Action<bool>? onSettled)
     {
-        const int windowMs = 5000;
-        const int pollMs = 400;
-        int elapsed = 0;
-
-        while (elapsed < windowMs)
-        {
-            try { await Task.Delay(pollMs, token); }
-            catch (OperationCanceledException) { return; }
-            if (token.IsCancellationRequested) return;
-            elapsed += pollMs;
-
-            int  hwRate = DisplayService.GetCurrentRate();
-            bool hwHdr  = !_hdrSupported || HdrService.GetState().Enabled == targetHdr;
-            bool rateOk = hwRate == targetRate;
-
-            if (rateOk && hwHdr)
+        int lastHwRate = 0;
+        bool converged = await SettleLoop.RunAsync(
+            isDrifted: () =>
             {
-                if (!token.IsCancellationRequested) _settling = false;
-                return; // converged
-            }
+                lastHwRate = DisplayService.GetCurrentRate();
+                bool hwHdr = !_hdrSupported || HdrService.GetState().Enabled == targetHdr;
+                return lastHwRate != targetRate || !hwHdr;
+            },
+            push: () =>
+            {
+                Logger.Log($"Settle: mismatch (hwRate={lastHwRate} target={targetRate}) — re-applying.");
+                if (_hdrSupported) HdrService.SetState(targetHdr);
+                _currentRate = lastHwRate; // resync so ApplyRate's no-op guard doesn't skip the needed reapply
+                ApplyRate(targetRate);
+            },
+            token, DisplaySettleWindowMs, DisplaySettlePollMs);
 
-            Logger.Log($"Reconcile: mismatch (hwRate={hwRate} target={targetRate}, hdrOk={hwHdr}) — re-applying.");
-            if (_hdrSupported) HdrService.SetState(targetHdr);
-            _currentRate = hwRate; // resync so ApplyRate's no-op guard doesn't skip the needed reapply
-            ApplyRate(targetRate);
+        if (!token.IsCancellationRequested)
+        {
+            _settling = false;
+            onSettled?.Invoke(converged);
         }
-
-        if (!token.IsCancellationRequested) _settling = false;
     }
 
     // -------------------------------------------------------------------------
@@ -595,6 +905,40 @@ internal sealed class TrayApp : IDisposable
         _tray.BalloonTipText  = $"{setting} changed to {valueDescription} outside the overlay — saved to {scope}.";
         _tray.BalloonTipIcon  = ToolTipIcon.Info;
         _tray.ShowBalloonTip(4000);
+    }
+
+    /// <summary>Surfaces a reconciliation revert (hardware drifted, overlay
+    /// pushed the INI target back onto it) as a tray balloon — the
+    /// reconciliation-off counterpart to NotifyReconciled above.</summary>
+    private void NotifyReverted(string setting)
+    {
+        _tray.BalloonTipTitle = "RefreshRateOverlay";
+        _tray.BalloonTipText  = $"{setting} was changed outside the overlay — reverted (reconciliation is off).";
+        _tray.BalloonTipIcon  = ToolTipIcon.Info;
+        _tray.ShowBalloonTip(4000);
+    }
+
+    /// <summary>One-time balloon for when a bucket's EnforcementBackoffTracker
+    /// crosses its give-up threshold — see HandleEnforcementResult. Warning
+    /// icon (not Info, unlike the other balloons here) since this needs the
+    /// user to actually do something about it.</summary>
+    private void NotifyGaveUp(string setting)
+    {
+        _tray.BalloonTipTitle = "RefreshRateOverlay";
+        _tray.BalloonTipText  = $"{setting} keeps getting changed externally — giving up on auto-reverting it. Open Settings and click Apply to retry.";
+        _tray.BalloonTipIcon  = ToolTipIcon.Warning;
+        _tray.ShowBalloonTip(6000);
+    }
+
+    /// <summary>Balloon for when a bucket that was actually struggling (had
+    /// consecutive failures, whether or not it had fully given up) converges
+    /// again on its own — the counterpart to NotifyGaveUp.</summary>
+    private void NotifyRecovered(string setting)
+    {
+        _tray.BalloonTipTitle = "RefreshRateOverlay";
+        _tray.BalloonTipText  = $"{setting} is back in sync.";
+        _tray.BalloonTipIcon  = ToolTipIcon.Info;
+        _tray.ShowBalloonTip(3000);
     }
 
     // -------------------------------------------------------------------------
@@ -667,6 +1011,62 @@ internal sealed class TrayApp : IDisposable
         };
         menu.Items.Add(earlyApplyItem);
 
+        // Sticky Profiles — see StickyProfileTracker/ResolveStickyApp remarks.
+        var stickyProfilesItem = new ToolStripMenuItem((_stickyProfilesEnabled ? check : space) + "Sticky Profiles")
+        {
+            CheckOnClick = true,
+            Checked      = _stickyProfilesEnabled,
+        };
+        stickyProfilesItem.CheckedChanged += (sender, _) =>
+        {
+            if (sender is not ToolStripMenuItem item) return;
+            _stickyProfilesEnabled = item.Checked;
+            item.Text = (item.Checked ? check : space) + "Sticky Profiles";
+            _profiles.WriteStickyProfilesEnabled(_stickyProfilesEnabled);
+
+            if (_stickyProfilesEnabled)
+            {
+                // Start tracking from whatever's focused right now, if it
+                // has a profile — otherwise the feature would only kick in
+                // after the NEXT focus change, doing nothing for an already-
+                // focused profiled app until the user alt-tabs away and back.
+                if (HasAnyProfile(_tracker.LastApp)) _stickyProfiles.AppOpened(_tracker.LastApp);
+            }
+            else
+            {
+                // Drop tracking and immediately reapply for real focus — the
+                // override stops the instant the feature is turned off.
+                _stickyProfiles.Clear();
+                ApplyAllProfiles(_tracker.LastApp);
+            }
+        };
+        menu.Items.Add(stickyProfilesItem);
+
+        // Reconcile External Changes — see ReconcileAll remarks. On by default
+        // (existing behavior); unticking makes the INI the sole source of
+        // truth, so an external change gets reverted instead of learned.
+        var reconciliationItem = new ToolStripMenuItem((_reconciliationEnabled ? check : space) + "Reconcile External Changes")
+        {
+            CheckOnClick = true,
+            Checked      = _reconciliationEnabled,
+        };
+        reconciliationItem.CheckedChanged += (sender, _) =>
+        {
+            if (sender is not ToolStripMenuItem item) return;
+            _reconciliationEnabled = item.Checked;
+            item.Text = (item.Checked ? check : space) + "Reconcile External Changes";
+            _profiles.WriteReconciliationEnabled(_reconciliationEnabled);
+
+            // Stale enforcement state from before the flip (either direction)
+            // no longer means anything — reconciliation-on doesn't consult it,
+            // and reconciliation-off should start clean rather than resuming
+            // mid-backoff or already given up.
+            _displayBackoff.Reset();
+            _gsyncBackoff.Reset();
+            RefreshOverlayApplyWarning();
+        };
+        menu.Items.Add(reconciliationItem);
+
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(space + "Exit", null, (_, _) => ExitApp());
 
@@ -722,7 +1122,9 @@ internal sealed class TrayApp : IDisposable
             _switchingOverlayApp = false;
         }
 
-        string app = forcedApp ?? _tracker.LastApp;
+        // A forced app (app picker) is an explicit user choice — bypasses
+        // sticky resolution entirely, same as it bypasses real focus.
+        string app = forcedApp ?? ResolveStickyApp(_tracker.LastApp);
         if (string.IsNullOrEmpty(app)) app = "Desktop";
 
         // Remember whatever currently owns foreground/focus (typically the game)
@@ -751,7 +1153,7 @@ internal sealed class TrayApp : IDisposable
         _currentRate = DisplayService.GetCurrentRate();
         UpdateTrayIcon(_currentRate);
 
-        (_, bool currHdr) = _hdrSupported ? HdrService.GetState() : (false, _defaultHdr);
+        (_, bool currHdr) = _hdrSupported ? HdrService.GetState() : (false, _hdrSetting.Default);
 
         // hasDsxProfile drives the Save-checkbox/delete-button state — only a
         // per-app entry counts as "this app has its own profile". dsxProfile
@@ -769,6 +1171,12 @@ internal sealed class TrayApp : IDisposable
         // unavailable, app unknown to the driver, etc).
         VrrAppState? appVrrState = _gsyncAvailable && NvidiaGsyncService.TryGetAppVrrState(app, out var vrrState)
             ? vrrState
+            : null;
+
+        // Same no-default/global-scope shape as App VRR above — see
+        // NvidiaGsyncService's remarks on AppVrr/FrameCap.
+        uint? frameCapFps = _gsyncAvailable && NvidiaGsyncService.TryGetAppFrameCap(app, out var capFps)
+            ? capFps
             : null;
 
         bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile || hasGsyncModeProfile;
@@ -793,7 +1201,15 @@ internal sealed class TrayApp : IDisposable
         // available at all this session — hides the row.
         GsyncGlobalMode? gsyncMode = !_gsyncAvailable ? null
             : hasGsyncModeProfile && _profiles.GsyncMode.TryReadProfile(app, out var pgm) ? pgm
-            : _defaultGsyncMode;
+            : _gsyncSetting.Default;
+
+        // Reflects whatever enforcement already gave up on before this dialog
+        // was even opened — see RefreshOverlayApplyWarning, which keeps this in
+        // sync afterward while the overlay stays open.
+        var failedSettings = new List<string>();
+        if (_displayBackoff.GaveUp) failedSettings.Add("Refresh rate/HDR");
+        if (_gsyncAvailable && _gsyncBackoff.GaveUp) failedSettings.Add("G-SYNC");
+        string? applyWarning = failedSettings.Count > 0 ? string.Join(", ", failedSettings) : null;
 
         _overlay = new OverlayWindow(
             activeApp:      app,
@@ -808,33 +1224,45 @@ internal sealed class TrayApp : IDisposable
             appVrrState:    appVrrState,
             runningApps:    RunningAppsService.GetRunningApps(),
             storedRate:     storedRate,
-            storedHdr:      storedHdr);
+            storedHdr:      storedHdr,
+            applyWarning:   applyWarning,
+            frameCapFps:    frameCapFps);
 
         _overlay.AppSwitchRequested += (_, newApp) => ShowOverlay(forcedApp: newApp);
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {
             Logger.Log($"Overlay: profile deleted for app='{app}'.");
+            _displayBackoff.Reset();
+            _gsyncBackoff.Reset();
+            _overlay!.SetApplyWarning(null);
             _profiles.Rate.DeleteProfile(app);
             if (_hdrSupported) _profiles.Hdr.DeleteProfile(app);
             _profiles.Dsx.DeleteProfile(app);
             if (_gsyncAvailable) _profiles.GsyncMode.DeleteProfile(app);
-            ApplyDisplayState(_defaultRate, _defaultHdr);
+            ApplyDisplayState(_rateSetting.Default, _hdrSetting.Default);
             if (_gsyncAvailable) ApplyGsyncMode(app);
         };
 
         _overlay.ApplyRequested += (_, _) =>
         {
+            // A manual Apply is an explicit fresh attempt — "restart the loop"
+            // regardless of whatever backoff/give-up state an unrelated
+            // enforcement fight left behind. See EnforcementBackoffTracker.
+            _displayBackoff.Reset();
+            _gsyncBackoff.Reset();
+            _overlay!.SetApplyWarning(null);
+
             int     selRate     = _overlay!.SelectedRate;
             bool    saveProfile = _overlay.SaveProfile;
             bool    hdrVal      = _overlay.HdrEnabled;
             string? selDsx      = _overlay.SelectedDsxProfile;
 
-            Logger.Log($"Overlay: Apply clicked for app='{app}' rate={selRate} hdr={hdrVal} dsx='{selDsx}' gsync={_overlay.SelectedGsyncMode} saveProfile={saveProfile}.");
+            Logger.Log($"Overlay: Apply clicked for app='{app}' rate={selRate} hdr={hdrVal} dsx='{selDsx}' gsync={_overlay.SelectedGsyncMode} frameCap={_overlay.SelectedFrameCapFps} saveProfile={saveProfile}.");
 
-            _defaultRate = SaveOrClear(_profiles.Rate, app, saveProfile, selRate, _defaultRate);
+            _rateSetting.SaveOrClear(app, saveProfile, selRate);
             if (_hdrSupported)
-                _defaultHdr = SaveOrClear(_profiles.Hdr, app, saveProfile, hdrVal, _defaultHdr);
+                _hdrSetting.SaveOrClear(app, saveProfile, hdrVal);
 
             // Only touch DSX storage if the dropdown was actually live this session
             // (DSX was reachable) — otherwise it was a grayed-out echo of whatever's
@@ -846,10 +1274,22 @@ internal sealed class TrayApp : IDisposable
                 // defaulting an empty selection — there's nothing meaningful to persist.
                 if (selDsx is not null) SaveOrClear(_profiles.Dsx, app, saveProfile, selDsx, _profiles.Dsx.ReadDefault());
                 else _profiles.Dsx.DeleteProfile(app);
+                _overlay.ReflectDsxApplied(selDsx ?? "");
             }
 
             ApplyDisplayState(selRate, hdrVal);
             if (selDsx is not null) _ = ApplyDsxProfileToDevicesAsync(selDsx);
+
+            // Every write below is immediately followed by telling the
+            // overlay's own dot about it — see OverlayWindow's Apply-
+            // reflection remarks (RefreshLiveState/RefreshGsyncLiveState/
+            // ReflectAppVrrApplied/ReflectFrameCapApplied) for why this was
+            // missing before and what it fixes: without it, a dot the user
+            // had just turned red by editing stayed red after a successful
+            // Apply, since nothing here ever told it the shown value had
+            // become the new truth — only closing and reopening the dialog
+            // (which recomputes the baseline from scratch) ever showed green.
+            _overlay.RefreshLiveState(selRate, hdrVal);
 
             // Same default/override split as rate/HDR above, and same "apply now
             // regardless of save scope" — except what gets applied is always a
@@ -857,8 +1297,9 @@ internal sealed class TrayApp : IDisposable
             // NVIDIA write (see NvidiaGsyncService remarks for why).
             if (_overlay.SelectedGsyncMode is { } selGsync)
             {
-                _defaultGsyncMode = SaveOrClear(_profiles.GsyncMode, app, saveProfile, selGsync, _defaultGsyncMode);
+                _gsyncSetting.SaveOrClear(app, saveProfile, selGsync);
                 NvidiaGsyncService.SetGlobalMode(selGsync);
+                _overlay.RefreshGsyncLiveState(selGsync);
             }
 
             // No default/global scope to fall back to (see NvidiaGsyncService.
@@ -868,7 +1309,19 @@ internal sealed class TrayApp : IDisposable
             // unticking Save just stops offering this app's edits, it doesn't
             // erase whatever NVIDIA's own per-app profile already has.
             if (saveProfile && _overlay.SelectedAppVrrState is { } selAppVrr)
+            {
                 NvidiaGsyncService.SetAppVrrOverride(app, selAppVrr);
+                _overlay.ReflectAppVrrApplied(selAppVrr);
+            }
+
+            // Same shape as App VRR just above — see NvidiaGsyncService's
+            // AppVrr/FrameCap remarks for why there's no clear-on-untick path
+            // here either.
+            if (saveProfile && _overlay.SelectedFrameCapFps is { } selFrameCap)
+            {
+                NvidiaGsyncService.SetAppFrameCap(app, selFrameCap);
+                _overlay.ReflectFrameCapApplied(selFrameCap);
+            }
 
             _overlay.ReflectProfileState(saveProfile);
         };
@@ -883,12 +1336,12 @@ internal sealed class TrayApp : IDisposable
     }
 
     /// <summary>
-    /// Shared save path for every setting type (rate, HDR, DSX profile): saved
-    /// per-app when saveProfile is set, otherwise persisted as the app-agnostic
-    /// default. Routing all settings through this one branch — instead of each
-    /// getting its own hand-written if/else — is what keeps "save as general"
-    /// from silently having no effect for a setting type that never wired up
-    /// its default half.
+    /// Same save-path shape as SyncableSetting&lt;T&gt;.SaveOrClear, for DSX —
+    /// the one remaining setting still backed by a raw ProfileSetting&lt;T&gt;
+    /// rather than a SyncableSetting, since it has no synchronous live
+    /// readback to reconcile against (see OverlayWindow's DSX dot remarks).
+    /// Kept as its own static method rather than duplicating the branch inline
+    /// at its one call site.
     /// </summary>
     private static T SaveOrClear<T>(ProfileSetting<T> setting, string app, bool saveProfile, T value, T currentDefault)
     {
@@ -950,9 +1403,11 @@ internal sealed class TrayApp : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _reconcileCts?.Cancel();
+        _settleCts?.Cancel();
         _gsyncPollTimer.Stop();
         _gsyncPollTimer.Dispose();
+        _stickyLivenessTimer.Stop();
+        _stickyLivenessTimer.Dispose();
         _tracker.Dispose();
         _processStartWatcher.Dispose();
         _msgSink.Dispose();

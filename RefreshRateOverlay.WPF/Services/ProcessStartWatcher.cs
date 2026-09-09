@@ -22,8 +22,8 @@ namespace RefreshRateOverlay.WPF.Services;
 /// game whose process starts around the same moment it takes foreground
 /// focus (exactly Content Manager launching Assetto Corsa) could fire
 /// OnProcessStarted and OnAppChanged concurrently on two different threads,
-/// racing unsynchronized on TrayApp's shared reconciliation state
-/// (_currentRate, _settling, _reconcileCts) and corrupting it — observed as
+/// racing unsynchronized on TrayApp's shared apply/settle state
+/// (_currentRate, _settling, _settleCts) and corrupting it — observed as
 /// a saved rate profile silently reverting a few seconds after being set
 /// correctly. Capturing the UI Dispatcher at construction (this class is
 /// always constructed from TrayApp's constructor, itself on that thread) and

@@ -15,9 +15,10 @@ internal static class DisplayService
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int ChangeDisplaySettingsW(IntPtr lpDevMode, uint dwFlags);
 
-    private const int ENUM_CURRENT_SETTINGS = -1;
-    private const int DISP_CHANGE_SUCCESSFUL = 0;
-    private const int DEVMODE_SIZE = 220;
+    private const int  ENUM_CURRENT_SETTINGS = -1;
+    private const int  DISP_CHANGE_SUCCESSFUL = 0;
+    private const int  DEVMODE_SIZE = 220;
+    private const uint CDS_UPDATEREGISTRY = 0x00000001;
 
     // DEVMODE field offsets (verified against Windows SDK)
     private const int OFF_SIZE      = 68;
@@ -87,6 +88,21 @@ internal static class DisplayService
 
     /// <summary>
     /// Applies the given refresh rate to the primary monitor. Returns true on success.
+    ///
+    /// Must pass CDS_UPDATEREGISTRY — without it, ChangeDisplaySettingsW only
+    /// changes the live/dynamic mode for the current session, never Windows'
+    /// own persisted "current settings" for the display (what Settings >
+    /// Display shows, what survives logoff/reboot). Confirmed as the actual
+    /// cause of a real production bug: with the rate left un-persisted, some
+    /// transitions (virtual-desktop switches, a fullscreen-exclusive app
+    /// losing/regaining exclusive mode) made the display transiently fall
+    /// back toward that still-60Hz persisted value before our own reconcile
+    /// loop caught it and pushed the rate back — each of those was a second,
+    /// avoidable mode-set on top of the first, both visible as a black
+    /// flash. Manually setting Windows' own display settings to match this
+    /// app's target rate eliminated the transitions entirely, which is what
+    /// pinned this down: the two were fighting over two different sources of
+    /// truth for "the" refresh rate, not actually disagreeing on the value.
     /// </summary>
     public static bool SetRate(int rate)
     {
@@ -97,7 +113,7 @@ internal static class DisplayService
                 return false;
 
             WriteU32(buf, OFF_FREQUENCY, (uint)rate);
-            return ChangeDisplaySettingsW(buf, 0) == DISP_CHANGE_SUCCESSFUL;
+            return ChangeDisplaySettingsW(buf, CDS_UPDATEREGISTRY) == DISP_CHANGE_SUCCESSFUL;
         }
         finally
         {
