@@ -79,42 +79,6 @@ public class ReconcilePlannerTests
             ReconcilePlanner.Plan(live: GsyncGlobalMode.FullscreenOnly, target: GsyncGlobalMode.FullscreenOnly, hasProfile: true));
     }
 
-    // ---- ShouldPush ----------------------------------------------------
-    // Covers the cache-based no-op guard ApplyGsyncMode relies on to avoid
-    // re-saving an unchanged NVIDIA DRS session on every routine focus
-    // change — the actual production bug this guards against (a black flash
-    // on every alt-tab away from and back to a G-SYNC app, even though
-    // G-SYNC was never actually changing) is described in ShouldPush's own
-    // remarks.
-
-    [Fact]
-    public void ShouldPush_NothingAppliedYet_ReturnsTrue()
-    {
-        Assert.True(ReconcilePlanner.ShouldPush<GsyncGlobalMode>(lastApplied: null, target: GsyncGlobalMode.Disabled));
-    }
-
-    [Fact]
-    public void ShouldPush_LastAppliedMatchesTarget_ReturnsFalse()
-    {
-        Assert.False(ReconcilePlanner.ShouldPush(lastApplied: GsyncGlobalMode.FullscreenAndWindowed, target: GsyncGlobalMode.FullscreenAndWindowed));
-    }
-
-    [Fact]
-    public void ShouldPush_LastAppliedDiffersFromTarget_ReturnsTrue()
-    {
-        Assert.True(ReconcilePlanner.ShouldPush(lastApplied: GsyncGlobalMode.Disabled, target: GsyncGlobalMode.FullscreenAndWindowed));
-    }
-
-    [Fact]
-    public void ShouldPush_WorksForNonEnumStruct()
-    {
-        // Same generic path as GsyncGlobalMode — confirms this isn't
-        // accidentally enum-specific.
-        Assert.True(ReconcilePlanner.ShouldPush<int>(lastApplied: null, target: 100));
-        Assert.False(ReconcilePlanner.ShouldPush(lastApplied: 100, target: 100));
-        Assert.True(ReconcilePlanner.ShouldPush(lastApplied: 60, target: 100));
-    }
-
     // ---- PlanSeed ------------------------------------------------------
     // Covers TrayApp's startup default-seeding decision — the exact gap that
     // let a live value merely left over from whatever was on screen at

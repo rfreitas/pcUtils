@@ -4,6 +4,13 @@ Per-app display-settings overlay: refresh rate, HDR, DSX controller profile, and
 NVIDIA G-SYNC, all switched automatically on foreground-app change and editable
 from a settings popup (hotkey or tray icon).
 
+Before a non-trivial change — real back-and-forth on approach, anything worth
+benchmarking, anything touching enough of the app that the plan is worth
+pinning down before starting — write it up in `plans/` first; see
+`plans/README.md` for the shape. Sections below are the *shipped* decisions
+this file exists to carry forward; `plans/` is where those decisions get
+worked out beforehand, and the historical record of how they were reached.
+
 ## Per-app setting shapes
 
 All four settings (rate, HDR, DSX controller profile, G-SYNC mode) use the same
@@ -46,10 +53,11 @@ setting with no default/global scope of its own. If per-app G-SYNC exclusion
 is wanted later, it needs its own control that's *only* ever writable in
 per-app (ticked) mode, never touched from default-editing mode.
 
-`TryGetGlobalMode` (the only read method) exists purely to seed the INI
-default from NVIDIA's live base-profile state at startup — same treatment
-`HdrService.GetState()` gets for `_defaultHdr`, not something the overlay
-reads to decide what to show mid-session.
+`TryGetGlobalMode` seeds the INI default from NVIDIA's live base-profile
+state at startup — same treatment `HdrService.GetState()` gets for
+`_defaultHdr` — but is not something the overlay reads to decide what to show
+mid-session; see "G-SYNC reads are a write-through cache, not a poll" below
+for the other two places it's called and why nowhere else calls it.
 
 NVIDIA's own DRS docs are explicit that **sessions don't merge** — save is a
 last-write-wins snapshot, so if the NVIDIA app or NVCP has a session open
@@ -138,14 +146,44 @@ that shipped as a real bug for two of the three settings this pushes:
 
 G-SYNC's guard is shaped differently from HDR's on purpose: it does **not**
 read NVIDIA's live state first to decide whether to push (unlike HDR's
-`GetState()` check). A live DRS read is comparatively expensive (a full
-session open/load, not a cheap Win32 call) and reading-then-conditionally-
-writing opens a real time-of-check-to-time-of-use gap — if something external
-changes G-SYNC in between our read and our (skipped) write, we'd wrongly
-believe hardware still matches. Instead `TrayApp` tracks
-`_lastAppliedGsyncMode` — what *this app itself* last successfully pushed —
-and `ReconcilePlanner.ShouldPush` (`Services/ReconcilePlanner.cs`) is the
-pure, unit-tested comparison behind that gate. Real external drift is still
-caught independently by `PollGsyncMode`/`ReconcileAll`, which always re-read
-NVIDIA's live state and never consult this cache — so the cache can only ever
-elide a redundant re-push, never mask a genuine external change.
+`GetState()` check) — it compares against `_gsyncCache`, a write-through
+cache that's never refreshed from a live read on the routine push path. See
+"G-SYNC reads are a write-through cache, not a poll" below for why, and for
+how external drift still gets caught without polling.
+
+## G-SYNC reads are a write-through cache, not a poll
+
+`NvidiaGsyncService.TryGetGlobalMode` used to be polled every 2 seconds
+(`TrayApp.PollGsyncMode`), forever, whenever G-SYNC is available — plus a
+second, fully redundant read inside `ReconcileAll` every time it ran for
+*any* reason (including `WM_DISPLAYCHANGE`, unrelated to G-SYNC). Measured
+directly rather than assumed (see
+`RefreshRateOverlay.WPF/plans/2026-09-10-gsync-cache.md` for the full
+numbers): a single `TryGetGlobalMode` call costs **~130ms** (min 102.7ms,
+p95 161.1ms across 50 calls), roughly 20,000-150,000x a `DisplayService`/
+`HdrService` Win32 call (both sub-0.02ms). Confirmed why: NVIDIA's DRS API
+has no entry point narrower than `DriverSettingsSession.CreateAndLoad()`,
+which loads its *entire* database every call — 7,960 profiles, 30,205
+settings, 12,972 app associations on this machine, to read one 24-setting
+base profile. Every DRS tool (nvidiaProfileInspector included) pays this the
+same way; it isn't specific to how this app uses the wrapper.
+
+`TrayApp._gsyncCache` is a write-through cache instead: the sole source of
+truth `_gsyncSetting`'s `tryReadLive` and `ApplyGsyncMode`'s push guard both
+read, and the only thing `NvidiaGsyncService.SetGlobalMode`/
+`EnforceGsyncAsync` update alongside the real NVIDIA push. `TryGetGlobalMode`
+itself is now called from exactly three places: once at startup (seeding),
+once inside `EnforceGsyncAsync`'s settle-confirm loop (has to be live — it's
+answering "did my own write from a moment ago land," which a cache can't
+answer), and once whenever focus leaves the NVIDIA App
+(`TrayApp.RefreshGsyncCacheIfLeavingNvidiaApp`) — event-driven invalidation
+in place of the old poll's time-driven invalidation, refreshing exactly at
+the moment someone is most likely to have just changed it by hand. Confirmed
+this isn't hypothetical: the log already had a real instance of a G-SYNC
+change made this exact way, caught (at the time) by the poll this replaces
+(`2026-08-31 23:22:09`, `app='NVIDIA App.exe'`).
+
+Accepted gap: a third-party DRS editor (nvidiaProfileInspector, legacy NVCP)
+changing G-SYNC wouldn't be caught until the next startup or next
+NVIDIA-App-focus event — the common real case (the first-party NVIDIA App)
+is covered; broader coverage wasn't worth reintroducing a poll for.

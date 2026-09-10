@@ -56,8 +56,16 @@ public enum VrrAppState : uint
 ///   ProfileService's GsyncMode setting (our own INI) is, and TrayApp pushes
 ///   the resolved value in here on every foreground-app change and on Apply,
 ///   the same relationship DisplayService/HdrService have with hardware.
-///   TryGetGlobalMode exists purely to seed the overlay/INI default the first
-///   time, before the user has ever set one through this app.
+///   TryGetGlobalMode is deliberately not called on any recurring cadence —
+///   a call costs ~130ms (loading NVIDIA's entire ~8,000-profile DRS
+///   database; see RefreshRateOverlay.WPF/plans/2026-09-10-gsync-cache.md
+///   for the measurements). TrayApp calls it in exactly three places: once
+///   at startup to seed the overlay/INI default, once whenever focus leaves
+///   the NVIDIA App (TrayApp.RefreshGsyncCacheIfLeavingNvidiaApp — the point
+///   someone is most likely to have just changed it by hand), and inside
+///   EnforceGsyncAsync's settle loop to confirm a just-issued push actually
+///   landed. Everything else in TrayApp reads its own write-through cache
+///   (_gsyncCache) instead of calling this.
 /// - AppVrr (VRRApplicationOverride) and FrameCap (FRL_FPS) are the opposite:
 ///   genuinely per-application settings with no default/global scope of their
 ///   own, so this class *is* the source of truth for them — read and written

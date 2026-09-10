@@ -75,9 +75,9 @@ internal sealed class TrayApp : IDisposable
     // equivalent is already handled by _settleCts cancelling any prior
     // SettleAsync, but G-SYNC's enforcement push has no such supersede
     // mechanism (a normal ApplyGsyncMode call is fire-and-forget, unrelated
-    // to this), so this simple flag is enough to stop a fresh PollGsyncMode
-    // tick from starting a second DRS session write while one is still
-    // settling.
+    // to this), so this simple flag is enough to stop a fresh HardwareChange
+    // (e.g. leaving the NVIDIA App again) from starting a second DRS session
+    // write while one is still settling.
     private bool _gsyncEnforceInFlight;
 
     private const int DisplaySettleWindowMs = 5000;
@@ -102,22 +102,22 @@ internal sealed class TrayApp : IDisposable
     // external change.
     private bool _settling;
 
-    private bool             _gsyncAvailable;
-    private GsyncGlobalMode  _lastPolledGsyncMode;
-    private readonly System.Windows.Forms.Timer _gsyncPollTimer;
+    private bool _gsyncAvailable;
 
-    // What we last actually pushed via ApplyGsyncMode/EnforceGsyncAsync — lets
-    // ApplyGsyncMode skip the DRS session write entirely when the resolved
-    // target hasn't changed, instead of reopening/saving a session on every
-    // single ApplyAllProfiles call (every focus change, including Sticky
-    // Profiles resolving back to the SAME app). See ApplyGsyncMode remarks:
-    // that redundant write was a real, self-inflicted cause of a black flash
-    // on every alt-tab away from and back to a G-SYNC app, even though
-    // nothing about G-SYNC was ever actually changing. Deliberately NOT
-    // consulted by drift detection (PollGsyncMode/ReconcileAll/IsDrifted),
-    // which all re-read NVIDIA's live state independently — this cache only
-    // elides a redundant re-assertion, it never substitutes for a real check.
-    private GsyncGlobalMode? _lastAppliedGsyncMode;
+    // Write-through cache of NVIDIA's global G-SYNC mode — the single source
+    // of truth every read in this class uses (_gsyncSetting's tryReadLive,
+    // ApplyGsyncMode's push guard). Nothing calls NvidiaGsyncService.
+    // TryGetGlobalMode() on any recurring cadence anymore — a live read costs
+    // ~130ms (NVIDIA's DRS API has no narrower entry point than loading its
+    // entire ~8,000-profile database; see plans/2026-09-10-gsync-cache.md for
+    // the measurements), so it's paid exactly twice: once at startup
+    // (seeding, below) and once whenever focus leaves the NVIDIA App (see
+    // RefreshGsyncCacheIfLeavingNvidiaApp) — the point someone is most likely
+    // to have just changed it by hand. Every write updates this field
+    // alongside the real NVIDIA push (ApplyGsyncMode, EnforceGsyncAsync), so
+    // it can only go stale from an external change not yet detected, never
+    // from anything this app itself does.
+    private GsyncGlobalMode _gsyncCache;
 
     private readonly NotifyIcon _tray;
     private Icon? _currentIcon;
@@ -222,16 +222,15 @@ internal sealed class TrayApp : IDisposable
         _gsyncSetting = new SyncableSetting<GsyncGlobalMode>(
             "G-SYNC", _profiles.GsyncMode,
             isAvailable: () => _gsyncAvailable,
-            tryReadLive: (out GsyncGlobalMode v) => NvidiaGsyncService.TryGetGlobalMode(out v),
+            tryReadLive: (out GsyncGlobalMode v) => { v = _gsyncCache; return true; },
             describe: v => v.ToString(),
             initialDefault: seedGsync);
         if (_gsyncAvailable)
         {
             if (seedGsync != storedDefaultGsync) _profiles.GsyncMode.WriteDefault(seedGsync);
             NvidiaGsyncService.SetGlobalMode(seedGsync);
-            _lastAppliedGsyncMode = seedGsync;
         }
-        _lastPolledGsyncMode = seedGsync;
+        _gsyncCache = seedGsync;
 
         _syncables = new List<ISyncableSetting> { _rateSetting, _hdrSetting, _gsyncSetting };
 
@@ -240,13 +239,6 @@ internal sealed class TrayApp : IDisposable
         // SyncableSetting and appending it to _syncables above, not writing a
         // new ReconcileXxx method or a new subscription here.
         HardwareChange += ReconcileAll;
-
-        // NVIDIA's DRS database has no change notification to hook, unlike
-        // WM_DISPLAYCHANGE — 2s balances catching an external change reasonably
-        // promptly against the cost of a DRS session open/read every tick.
-        _gsyncPollTimer = new System.Windows.Forms.Timer { Interval = 2000 };
-        _gsyncPollTimer.Tick += PollGsyncMode;
-        if (_gsyncAvailable) _gsyncPollTimer.Start();
 
         _tracker = new ForegroundTracker();
         _tracker.AppChanged += OnAppChanged;
@@ -283,6 +275,15 @@ internal sealed class TrayApp : IDisposable
     private void OnAppChanged(object? sender, string app)
     {
         Logger.Log($"ForegroundTracker: app changed -> '{app}'");
+
+        // ForegroundTracker only ever hands us the app being focused now,
+        // never the one just left — captured here, before it's overwritten,
+        // so RefreshGsyncCacheIfLeavingNvidiaApp can tell "we just left the
+        // NVIDIA App" from every other transition.
+        string previousApp = _previousForegroundApp;
+        _previousForegroundApp = app;
+        RefreshGsyncCacheIfLeavingNvidiaApp(previousApp);
+
         // A real, debounced focus change is always authoritative — supersedes
         // any outstanding guess about who's about to take over (see
         // AnticipatedAppTracker remarks), whether it confirms that guess or not.
@@ -322,6 +323,34 @@ internal sealed class TrayApp : IDisposable
     // normally either way (ApplyAllProfiles below runs unconditionally); only
     // the sticky promotion is skipped for this one callback.
     private bool _seenFirstAppChange;
+
+    // What OnAppChanged's `app` parameter was on the PREVIOUS call — see its
+    // own remarks and RefreshGsyncCacheIfLeavingNvidiaApp. Empty on the very
+    // first callback, same as ForegroundTracker's own _lastApp; harmless,
+    // since nothing will ever match NvidiaAppProcessName against "".
+    private string _previousForegroundApp = string.Empty;
+
+    // NVIDIA's DRS database has no change notification to hook the way
+    // WM_DISPLAYCHANGE does for Rate/HDR, and a live read is far too
+    // expensive to poll on a timer (~130ms — see _gsyncCache's remarks and
+    // plans/2026-09-10-gsync-cache.md). Instead, refresh the cache exactly
+    // when someone is most likely to have just changed G-SYNC by hand: the
+    // moment focus leaves the NVIDIA App itself. Confirmed this actually
+    // matters in practice — RefreshRateOverlay.WPF.log already has a real
+    // instance of a G-SYNC change made this exact way, caught (at the time)
+    // by the poll this replaces.
+    private const string NvidiaAppProcessName = "NVIDIA App.exe";
+
+    private void RefreshGsyncCacheIfLeavingNvidiaApp(string previousApp)
+    {
+        if (!_gsyncAvailable) return;
+        if (!string.Equals(previousApp, NvidiaAppProcessName, StringComparison.OrdinalIgnoreCase)) return;
+        if (!NvidiaGsyncService.TryGetGlobalMode(out var liveMode)) return;
+        if (liveMode == _gsyncCache) return;
+
+        _gsyncCache = liveMode;
+        HardwareChange?.Invoke();
+    }
 
     /// <summary>What TrayApp should actually treat as "the current app" for
     /// applying/reconciling profiles: the sticky-tracked app if the feature
@@ -550,28 +579,29 @@ internal sealed class TrayApp : IDisposable
     // profile setting on every foreground switch, same as ApplyProfile does for
     // rate/HDR against actual hardware.
     //
-    // Skips the push entirely when the resolved target already matches what
-    // we last applied (_lastAppliedGsyncMode) — NvidiaGsyncService.SetGlobalMode
-    // opens a DRS session and Save()s unconditionally, with no "is this
-    // actually different" guard of its own (unlike ApplyRate's _currentRate
-    // check), and re-saving the base profile is enough to make the driver
-    // retrain/blank the display link even when the value being written is
-    // identical. Every ApplyAllProfiles call — including Sticky Profiles
-    // resolving back to the SAME app on every alt-tab away and back — used to
-    // hit this unconditionally, which was a real, self-inflicted cause of a
-    // black flash on every such switch even though G-SYNC was never actually
-    // changing. Real drift detection (PollGsyncMode/ReconcileAll/IsDrifted)
-    // never consults this cache — only re-reads NVIDIA's live state — so an
-    // actual external change still gets caught and corrected independently.
+    // Skips the push entirely when the resolved target already matches
+    // _gsyncCache — NvidiaGsyncService.SetGlobalMode opens a DRS session and
+    // Save()s unconditionally, with no "is this actually different" guard of
+    // its own (unlike ApplyRate's _currentRate check), and re-saving the base
+    // profile is enough to make the driver retrain/blank the display link
+    // even when the value being written is identical. Every ApplyAllProfiles
+    // call — including Sticky Profiles resolving back to the SAME app on
+    // every alt-tab away and back — used to hit this unconditionally, which
+    // was a real, self-inflicted cause of a black flash on every such switch
+    // even though G-SYNC was never actually changing. _gsyncCache itself is
+    // only ever refreshed from live NVIDIA state at startup and when leaving
+    // the NVIDIA App (see RefreshGsyncCacheIfLeavingNvidiaApp) — an actual
+    // external change made any other way is caught independently once one of
+    // those refreshes happens, same as before.
     // -------------------------------------------------------------------------
     private void ApplyGsyncMode(string app)
     {
         if (!_gsyncAvailable) return;
 
         GsyncGlobalMode target = _gsyncSetting.ResolveTarget(app);
-        if (!ReconcilePlanner.ShouldPush(_lastAppliedGsyncMode, target)) return;
+        if (_gsyncCache == target) return;
 
-        if (NvidiaGsyncService.SetGlobalMode(target)) _lastAppliedGsyncMode = target;
+        if (NvidiaGsyncService.SetGlobalMode(target)) _gsyncCache = target;
     }
 
     /// <summary>
@@ -581,7 +611,7 @@ internal sealed class TrayApp : IDisposable
     /// a coarser window — see GsyncSettleWindowMs/GsyncSettlePollMs remarks)
     /// and reports the outcome to _gsyncBackoff. Only ever called from
     /// ReconcileAll's reconciliation-off branch, gated by _gsyncEnforceInFlight
-    /// so a fresh PollGsyncMode tick can't start a second DRS session write
+    /// so a second HardwareChange can't start a second DRS session write
     /// while this one is still settling.
     /// </summary>
     private async Task EnforceGsyncAsync(GsyncGlobalMode target)
@@ -593,11 +623,11 @@ internal sealed class TrayApp : IDisposable
             CancellationToken.None,
             GsyncSettleWindowMs, GsyncSettlePollMs);
 
-        // Only update the cache ApplyGsyncMode's no-op guard relies on once
-        // the push actually landed — an unconverged attempt means hardware
-        // may still be at something else, so ApplyGsyncMode must not be
-        // tricked into skipping the next real attempt.
-        if (converged) _lastAppliedGsyncMode = target;
+        // Only update _gsyncCache once the push actually landed — an
+        // unconverged attempt means hardware may still be at something else,
+        // so ApplyGsyncMode/tryReadLive must not be tricked into trusting a
+        // value that was never actually confirmed.
+        if (converged) _gsyncCache = target;
 
         _gsyncEnforceInFlight = false;
         HandleEnforcementResult(_gsyncBackoff, "G-SYNC", converged);
@@ -666,9 +696,10 @@ internal sealed class TrayApp : IDisposable
     // HardwareChange — a generic "something external changed, go check for
     // drift" signal, deliberately decoupled from what detected it. Two
     // raisers today — OnDisplayChange (below) for WM_DISPLAYCHANGE, and
-    // PollGsyncMode for NVIDIA's DRS database, which has no equivalent OS
-    // notification — both feed the single ReconcileAll subscriber, which
-    // walks every registered SyncableSetting (see its remarks). Adding
+    // RefreshGsyncCacheIfLeavingNvidiaApp for NVIDIA's DRS database, which
+    // has no equivalent OS notification — both feed the single ReconcileAll
+    // subscriber, which walks every registered SyncableSetting (see its
+    // remarks). Adding
     // another detection source later (a poll for some future setting, say)
     // means adding its own detector that raises this event — never editing
     // ReconcileAll to know about a new source, and never writing a new
@@ -793,24 +824,6 @@ internal sealed class TrayApp : IDisposable
             overlay.RefreshLiveState(overlayRate, overlayHdr);
             if (_gsyncAvailable) overlay.RefreshGsyncLiveState(_gsyncSetting.ResolveTarget(overlay.ActiveApp));
         }
-    }
-
-    // -------------------------------------------------------------------------
-    // G-SYNC change detection — NVIDIA's DRS database has no equivalent of
-    // WM_DISPLAYCHANGE to hook, so this polls the base profile instead. Only
-    // raises HardwareChange when the polled value actually differs from the
-    // last poll, same "detect, then let the shared reconciler (ReconcileAll)
-    // re-derive truth independently" split OnDisplayChange uses — this method
-    // never writes anything itself.
-    // -------------------------------------------------------------------------
-    private void PollGsyncMode(object? sender, EventArgs e)
-    {
-        if (!_gsyncAvailable) return;
-        if (!NvidiaGsyncService.TryGetGlobalMode(out var liveMode)) return;
-        if (liveMode == _lastPolledGsyncMode) return;
-
-        _lastPolledGsyncMode = liveMode;
-        HardwareChange?.Invoke();
     }
 
     // -------------------------------------------------------------------------
@@ -1422,8 +1435,6 @@ internal sealed class TrayApp : IDisposable
         if (_disposed) return;
         _disposed = true;
         _settleCts?.Cancel();
-        _gsyncPollTimer.Stop();
-        _gsyncPollTimer.Dispose();
         _stickyLivenessTimer.Stop();
         _stickyLivenessTimer.Dispose();
         _tracker.Dispose();

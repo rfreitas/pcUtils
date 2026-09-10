@@ -9,8 +9,8 @@ namespace RefreshRateOverlay.WPF.Services;
 /// reconciliation-off branch: without this, something that keeps fighting a
 /// setting (an unsupported mode after a monitor swap, a driver quirk,
 /// another tool, or a crashed game repeatedly flapping its own display mode)
-/// would get re-pushed on every single HardwareChange tick forever — for
-/// G-SYNC, every 2s indefinitely, since PollGsyncMode's timer doesn't care
+/// would get re-pushed on every single HardwareChange forever — for G-SYNC,
+/// every time focus leaves the NVIDIA App, since that trigger doesn't care
 /// whether the last push actually worked.
 ///
 /// Escalation is driven by how RECENTLY a revert was last needed, not by
