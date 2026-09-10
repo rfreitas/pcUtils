@@ -49,6 +49,14 @@ internal sealed class ProfileSetting<T>
         return raw.Length > 0 && _parse(raw, out T v) ? v : _fallback;
     }
 
+    /// <summary>Whether the default has ever actually been written to the INI,
+    /// as opposed to ReadDefault() falling back to `_fallback` because the key
+    /// is simply absent (true first run). Startup seeding needs this
+    /// distinction — see ReconcilePlanner.PlanSeed remarks — since a stored
+    /// value that happens to equal the fallback is otherwise indistinguishable
+    /// from "never configured".</summary>
+    public bool HasDefault() => _ini.ReadString(_defaultSection, _defaultKey).Length > 0;
+
     public void WriteDefault(T value) =>
         _ini.WriteString(_defaultSection, _defaultKey, _format(value));
 

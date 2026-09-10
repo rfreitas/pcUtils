@@ -4,6 +4,8 @@ namespace RefreshRateOverlay.WPF.Services;
 
 internal enum ReconcileAction { None, WriteProfile, WriteDefault }
 
+internal enum SeedAction { KeepStored, AdoptLive }
+
 /// <summary>
 /// Pure decision logic shared by every HardwareChange reconciler
 /// (TrayApp.ReconcileRateAndHdr, TrayApp.ReconcileGsyncMode): given what's
@@ -75,4 +77,38 @@ internal static class ReconcilePlanner
     /// switch, with nothing about the target ever actually drifting.</summary>
     public static bool ShouldPush<T>(T? lastApplied, T target) where T : struct =>
         !lastApplied.HasValue || !EqualityComparer<T>.Default.Equals(lastApplied.Value, target);
+
+    /// <summary>Should TrayApp's constructor adopt live hardware/driver state as
+    /// this setting's default at startup, or keep whatever's already stored?
+    ///
+    /// True first run (hasStoredDefault false — the INI key has never been
+    /// written) always adopts live: there's no persisted truth yet to protect,
+    /// only a bootstrap decision, same as picking an initial value out of thin
+    /// air. Every later run answers the exact same question ReconcileAll asks
+    /// for every other drift during the session — "is an externally-observed
+    /// value allowed to overwrite our own persisted truth?" — and must answer
+    /// it the same way: only when reconciliationEnabled, mirroring Plan above.
+    ///
+    /// This exists because the pre-fix code answered that question differently
+    /// at startup than everywhere else: it unconditionally adopted live state
+    /// (rate only when the stored default happened to equal a hardcoded 60
+    /// sentinel; HDR and G-SYNC on every single restart, no gate at all) with
+    /// no regard for ReconciliationEnabled. With reconciliation off — meaning
+    /// the INI is supposed to be the sole source of truth across restarts, the
+    /// same way it already is mid-session — that let a live value merely left
+    /// over from whatever was on screen at the moment of a crash/restart (a
+    /// game's own profile rate/HDR/G-SYNC state) permanently overwrite the
+    /// real default and persist it, indistinguishable from a deliberate
+    /// profile change. Real bug, confirmed via RefreshRateOverlay.WPF.log: a
+    /// restart while a 100Hz-profiled game was still driving the display
+    /// silently rewrote DefaultRefreshRate 60 -> 100, and every unprofiled app
+    /// (Explorer, other tools) ran at 100Hz from then on — exactly the shape
+    /// of "a game's profile became the global default" the user reported,
+    /// even though no profile save was ever involved.</summary>
+    public static SeedAction PlanSeed<T>(bool hasStoredDefault, T stored, T live, bool reconciliationEnabled)
+    {
+        if (!hasStoredDefault) return SeedAction.AdoptLive;
+        if (!reconciliationEnabled) return SeedAction.KeepStored;
+        return EqualityComparer<T>.Default.Equals(stored, live) ? SeedAction.KeepStored : SeedAction.AdoptLive;
+    }
 }

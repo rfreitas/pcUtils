@@ -79,6 +79,41 @@ rate: the transitions stopped immediately, with this app's code completely
 unchanged. The two were never disagreeing on the *value* — they were reading
 from two different sources of truth for what "the" refresh rate even is.
 
+## Startup seeding is a reconciliation decision too — it must respect ReconciliationEnabled
+
+`TrayApp`'s constructor seeds each default+profile setting's shared default
+(rate, HDR, G-SYNC) from live hardware/driver state at startup — needed for a
+genuine first run, where the INI has nothing to go on yet. The pre-fix code
+did this unconditionally on *every* startup: rate only reseeded when the
+stored default happened to equal a hardcoded `60` sentinel, but HDR and
+G-SYNC reseeded from live state on every single restart with no gate at all.
+
+Real, reproducible bug: restarting the app (crash, dev reload, Windows
+Update — anything) while a per-app profile was still driving the display at
+a non-default rate/HDR/G-SYNC state (a game running, or its rate just never
+settled back) silently overwrote the *permanent* default and persisted it to
+the INI — indistinguishable from a deliberate profile change. Confirmed via
+`RefreshRateOverlay.WPF.log`: a restart while a 100Hz-profiled game was
+running rewrote `DefaultRefreshRate` 60 → 100, and every unprofiled app
+(Explorer, terminal, other tools) ran at 100Hz from then on, for the rest of
+that session and every session after — surfacing, a day later, as "I left
+[game] and its profile became the global settings," even though no profile
+save was ever involved.
+
+This is the exact same question `ReconcileAll` already answers for every
+other drift during a session — "is an externally-observed value allowed to
+overwrite our own persisted truth?" — and `ReconciliationEnabled` is
+supposed to be the one switch that controls that answer everywhere. Startup
+seeding was answering it differently (always yes) instead of asking the same
+question the same way. Fixed by routing all three settings' startup seed
+through `ReconcilePlanner.PlanSeed` (see its remarks): adopt live state
+unconditionally only on true first run (`ProfileSetting<T>.HasDefault()` is
+false — the INI key was never written, not just equal to the fallback),
+otherwise only when `ReconciliationEnabled` is on, exactly like every other
+drift. With reconciliation off, the stored default now survives a restart
+unchanged, the same way it already survives every mid-session
+`HardwareChange`.
+
 ## Routine re-assertion must no-op when nothing's actually changing
 
 `ApplyAllProfiles` re-resolves and re-pushes rate/HDR/G-SYNC on every single

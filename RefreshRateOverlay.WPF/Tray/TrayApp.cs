@@ -154,7 +154,12 @@ internal sealed class TrayApp : IDisposable
 
         int storedDefaultRate = _profiles.Rate.ReadDefault();
         int seedRate = storedDefaultRate;
-        if (seedRate == 60 && _currentRate > 0) seedRate = _currentRate;
+        if (_currentRate > 0 &&
+            ReconcilePlanner.PlanSeed(_profiles.Rate.HasDefault(), storedDefaultRate, _currentRate, _reconciliationEnabled)
+                == SeedAction.AdoptLive)
+        {
+            seedRate = _currentRate;
+        }
         _rateSetting = new SyncableSetting<int>(
             "Refresh rate", _profiles.Rate,
             isAvailable: () => true,
@@ -163,14 +168,21 @@ internal sealed class TrayApp : IDisposable
             initialDefault: seedRate);
         if (seedRate != storedDefaultRate) _profiles.Rate.WriteDefault(seedRate);
 
-        bool seedHdr = _hdrSupported ? hdrEnabled : _profiles.Hdr.ReadDefault();
+        bool storedDefaultHdr = _profiles.Hdr.ReadDefault();
+        bool seedHdr = storedDefaultHdr;
+        if (_hdrSupported &&
+            ReconcilePlanner.PlanSeed(_profiles.Hdr.HasDefault(), storedDefaultHdr, hdrEnabled, _reconciliationEnabled)
+                == SeedAction.AdoptLive)
+        {
+            seedHdr = hdrEnabled;
+        }
         _hdrSetting = new SyncableSetting<bool>(
             "HDR", _profiles.Hdr,
             isAvailable: () => _hdrSupported,
             tryReadLive: (out bool v) => { v = HdrService.GetState().Enabled; return true; },
             describe: v => v ? "On" : "Off",
             initialDefault: seedHdr);
-        if (_hdrSupported) _profiles.Hdr.WriteDefault(seedHdr);
+        if (seedHdr != storedDefaultHdr) _profiles.Hdr.WriteDefault(seedHdr);
 
         // Must exist before the ApplyDisplayState call below: ApplyRate calls
         // UpdateTrayIcon whenever the live rate actually differs from the
@@ -191,16 +203,22 @@ internal sealed class TrayApp : IDisposable
 
         ApplyDisplayState(_rateSetting.Default, _hdrSetting.Default);
 
-        // Same reseed-from-live-state-at-startup treatment as HDR just above:
-        // NVIDIA's base profile is the "hardware" here. Confirmed by testing that
-        // VRR_MODE only ever behaves as a true global switch — no per-app NVIDIA
-        // write exists anywhere in this class, only ApplyGsyncMode below pushing
-        // whatever our own INI resolves to for the current app into that one
-        // base-profile setting.
+        // Same reseed-from-live-state-at-startup treatment as HDR just above,
+        // now gated by the same ReconcilePlanner.PlanSeed decision — see its
+        // remarks. NVIDIA's base profile is the "hardware" here. Confirmed by
+        // testing that VRR_MODE only ever behaves as a true global switch — no
+        // per-app NVIDIA write exists anywhere in this class, only
+        // ApplyGsyncMode below pushing whatever our own INI resolves to for
+        // the current app into that one base-profile setting.
         _gsyncAvailable = NvidiaGsyncService.IsAvailable;
-        GsyncGlobalMode seedGsync = _profiles.GsyncMode.ReadDefault();
-        if (_gsyncAvailable && NvidiaGsyncService.TryGetGlobalMode(out var liveGsyncMode))
+        GsyncGlobalMode storedDefaultGsync = _profiles.GsyncMode.ReadDefault();
+        GsyncGlobalMode seedGsync = storedDefaultGsync;
+        if (_gsyncAvailable && NvidiaGsyncService.TryGetGlobalMode(out var liveGsyncMode) &&
+            ReconcilePlanner.PlanSeed(_profiles.GsyncMode.HasDefault(), storedDefaultGsync, liveGsyncMode, _reconciliationEnabled)
+                == SeedAction.AdoptLive)
+        {
             seedGsync = liveGsyncMode;
+        }
         _gsyncSetting = new SyncableSetting<GsyncGlobalMode>(
             "G-SYNC", _profiles.GsyncMode,
             isAvailable: () => _gsyncAvailable,
@@ -209,7 +227,7 @@ internal sealed class TrayApp : IDisposable
             initialDefault: seedGsync);
         if (_gsyncAvailable)
         {
-            _profiles.GsyncMode.WriteDefault(seedGsync);
+            if (seedGsync != storedDefaultGsync) _profiles.GsyncMode.WriteDefault(seedGsync);
             NvidiaGsyncService.SetGlobalMode(seedGsync);
             _lastAppliedGsyncMode = seedGsync;
         }

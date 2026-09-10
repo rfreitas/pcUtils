@@ -128,6 +128,25 @@ public class SyncableSettingTests : IDisposable
         Assert.False(setting.IsDrifted("acs.exe"));
     }
 
+    // ---- HasDefault ------------------------------------------------------
+    // Backs TrayApp's startup seeding decision (ReconcilePlanner.PlanSeed) —
+    // it needs to tell "never configured" apart from "stored value happens to
+    // equal the fallback", which ReadDefault alone can't do.
+
+    [Fact]
+    public void HasDefault_NeverWritten_ReturnsFalse()
+    {
+        Assert.False(_storage.HasDefault());
+        Assert.Equal(60, _storage.ReadDefault()); // falls back silently — not a signal of "configured"
+    }
+
+    [Fact]
+    public void HasDefault_AfterWriteDefault_ReturnsTrue_EvenIfValueEqualsFallback()
+    {
+        _storage.WriteDefault(60); // deliberately equals the fallback used above
+        Assert.True(_storage.HasDefault());
+    }
+
     [Fact]
     public void SaveOrClear_NotSaved_WritesDefaultAndDeletesProfile()
     {
