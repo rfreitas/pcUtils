@@ -13,10 +13,12 @@ using Shared;
 namespace AggressiveScreensaver;
 
 /// <summary>
-/// Main application context. Owns all services and the NotifyIcon.
-/// Wires everything together and runs the WinForms message loop.
+/// Owns all services and the NotifyIcon. WPF has no native tray-icon control,
+/// so this uses System.Windows.Forms.NotifyIcon/ContextMenuStrip, same as
+/// LGTV_brightness.NET and RefreshRateOverlay.WPF — both ride on the host
+/// WPF Application's message loop (App.xaml.cs), not a WinForms one.
 /// </summary>
-internal sealed class TrayApp : ApplicationContext, IDisposable
+internal sealed class TrayApp : IDisposable
 {
     // -------------------------------------------------------------------------
     // Services
@@ -119,15 +121,23 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
         if (screenBlocked)
             _agentIdle.ResetActivity();
 
+        bool fullscreenSuppressed = _suppressFullscreen && IsFullscreenAppForeground();
+
         bool shouldBlank =
             _agentIdle.AgentIdleSeconds >= _blankThresholdSec &&
             !screenBlocked &&
-            (!_suppressFullscreen || !IsFullscreenAppForeground());
+            !fullscreenSuppressed;
 
         if (shouldBlank && !_overlay.IsBlanked)
+        {
+            Logger.Log($"Blank triggered: idle={_agentIdle.AgentIdleSeconds}s/{_blankThresholdSec}s, screenBlocked={screenBlocked}, fullscreenSuppressed={fullscreenSuppressed}, blockers=[{string.Join(",", GetActiveBlockerFilenames())}]");
             _overlay.Show();
+        }
         else if (!shouldBlank && _overlay.IsBlanked)
+        {
+            Logger.Log($"Blank cleared: idle={_agentIdle.AgentIdleSeconds}s/{_blankThresholdSec}s, screenBlocked={screenBlocked}, fullscreenSuppressed={fullscreenSuppressed}, blockers=[{string.Join(",", GetActiveBlockerFilenames())}]");
             _overlay.Remove();
+        }
     }
 
     /// <summary>
@@ -366,9 +376,6 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
 
     private void ShowSlider()
     {
-        // WPF window shown from a WinForms host: Show()/ShowDialog() pump their
-        // own Dispatcher via a nested message loop, so no System.Windows.Application
-        // instance is needed (this app is WinForms end to end otherwise).
         if (_sliderWindow is null)
         {
             _sliderWindow = new TimeoutSliderWindow(
@@ -407,7 +414,7 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     {
         Logger.Log("Exit requested via tray menu.");
         _overlay.Remove();   // restore taskbar + cursor on clean exit
-        Application.Exit();
+        System.Windows.Application.Current.Shutdown();
     }
 
     // -------------------------------------------------------------------------
@@ -432,19 +439,16 @@ internal sealed class TrayApp : ApplicationContext, IDisposable
     // IDisposable
     // -------------------------------------------------------------------------
     private bool _disposed;
-    protected override void Dispose(bool disposing)
+    public void Dispose()
     {
-        if (!_disposed && disposing)
-        {
-            _disposed = true;
-            _tooltipTimer.Dispose();
-            _agentIdle.Dispose();
-            _powercfg.Dispose();
-            _msgSink.Dispose();
-            _ini.Dispose();
-            _tray.Visible = false;
-            _tray.Dispose();
-        }
-        base.Dispose(disposing);
+        if (_disposed) return;
+        _disposed = true;
+        _tooltipTimer.Dispose();
+        _agentIdle.Dispose();
+        _powercfg.Dispose();
+        _msgSink.Dispose();
+        _ini.Dispose();
+        _tray.Visible = false;
+        _tray.Dispose();
     }
 }
