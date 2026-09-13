@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using LgtvBrightness.Forms;
 using LgtvBrightness.Rendering;
@@ -29,7 +30,7 @@ internal sealed class TrayApp : IDisposable
     private ToolStripMenuItem? _valueItem;
 
     private BacklightSliderWindow? _sliderWindow;
-    private BrightnessOsdWindow? _osd;
+    private readonly BrightnessOsdWindow _osd;
 
     private long _lastHotkeyTick;
     private const int HotkeyMinIntervalMs = 90; // throttle for key-repeat
@@ -74,6 +75,9 @@ internal sealed class TrayApp : IDisposable
 
         _ = _brightness.SyncAsync(force: true);
 
+        _osd = new BrightnessOsdWindow();
+        _osd.WarmUp();
+
         Logger.Log("TrayApp started.");
     }
 
@@ -86,7 +90,15 @@ internal sealed class TrayApp : IDisposable
         if (now - _lastHotkeyTick < HotkeyMinIntervalMs) return;
         _lastHotkeyTick = now;
 
-        _ = _brightness.AdjustAsync(direction);
+        _ = RunAdjustAsync(direction);
+    }
+
+    /// <summary>Wraps the fire-and-forget AdjustAsync call so a failure (e.g. TV
+    /// unreachable) lands in the log instead of vanishing as an unobserved Task exception.</summary>
+    private async Task RunAdjustAsync(int direction)
+    {
+        try { await _brightness.AdjustAsync(direction); }
+        catch (Exception ex) { Logger.LogException(ex); }
     }
 
     // -------------------------------------------------------------------------
@@ -111,7 +123,6 @@ internal sealed class TrayApp : IDisposable
     /// shows the custom brightness OSD, since Windows has no real one for this TV.</summary>
     private void OnHotkeyApplied(int value)
     {
-        _osd ??= new BrightnessOsdWindow();
         _osd.ShowValue(value);
     }
 
@@ -169,10 +180,12 @@ internal sealed class TrayApp : IDisposable
             if (reverting || sender is not ToolStripMenuItem item) return;
             item.Text = (item.Checked ? check : space) + "Start at Login";
             bool ok = item.Checked
-                // This app runs asInvoker (no admin needed), so the startup task must not
-                // request RunLevel=HighestAvailable — registering that requires the calling
-                // process to already be elevated, which this one deliberately isn't.
-                ? StartupTaskService.Install(TaskName, ExePath, TaskDescription, Logger.Log, requireElevation: false)
+                // This app runs elevated (requireAdministrator in app.manifest) so its topmost
+                // OSD can render over other elevated foreground windows (e.g. anti-cheat'd
+                // games) — UIPI blocks a lower-integrity window from going topmost over a
+                // higher-integrity one. The startup task must match with HighestAvailable so
+                // it launches elevated at logon without a UAC prompt.
+                ? StartupTaskService.Install(TaskName, ExePath, TaskDescription, Logger.Log, requireElevation: true)
                 : StartupTaskService.Uninstall(TaskName, Logger.Log);
             if (!ok)
             {

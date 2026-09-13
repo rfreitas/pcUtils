@@ -37,6 +37,16 @@ internal partial class BrightnessOsdWindow : Window
         };
     }
 
+    /// <summary>Forces the native HWND creation + first layout/render pass ahead of time
+    /// (at app startup, off the hot path) so the first real ShowValue() isn't the one
+    /// paying that cost. Opacity 0 keeps the flash-through-Show/Hide invisible.</summary>
+    public void WarmUp()
+    {
+        Opacity = 0;
+        Show();
+        Hide();
+    }
+
     public void ShowValue(int percent)
     {
         FillBar.Width = TrackWidth * Math.Clamp(percent, 0, 100) / 100.0;
