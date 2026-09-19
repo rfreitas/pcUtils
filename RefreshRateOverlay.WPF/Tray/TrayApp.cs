@@ -722,6 +722,20 @@ internal sealed class TrayApp : IDisposable
             Logger.Log("OnDisplayChange: ignored (still settling from our own apply).");
             return;
         }
+
+        // Unlike _gsyncAvailable (a static driver-presence fact, checked once),
+        // HDR support is live display-path negotiation state — a display that
+        // hasn't finished negotiating with the GPU yet at startup can report
+        // unsupported, and without this we'd hide the HDR control for the rest
+        // of the session even once the display catches up. Only adopts a flip
+        // false -> true; never re-hides an already-supported display off a
+        // single transient read during a WM_DISPLAYCHANGE settling window.
+        if (!_hdrSupported && HdrService.GetState().Supported)
+        {
+            _hdrSupported = true;
+            Logger.Log("OnDisplayChange: HDR now reports supported (was unsupported at startup).");
+        }
+
         Logger.Log("OnDisplayChange: not settling, treating as external — invoking HardwareChange.");
         HardwareChange?.Invoke();
     }
