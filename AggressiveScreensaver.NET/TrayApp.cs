@@ -320,12 +320,14 @@ internal sealed class TrayApp : IDisposable
             suppressFullscreen:               _suppressFullscreen,
             ignoreUnfocusedBlockers:          _ignoreUnfocusedBlockers,
             ignoreNonvisibleBlockers:         _ignoreNonvisibleBlockers,
+            nativeScreensaverActive:          NativeScreensaverService.IsActive(),
             onIgnoreList:                     ShowIgnoreListForm,
             onDebug:                          ShowDebugForm,
             onStartupChanged:                 HandleStartupToggle,
             onSuppressFullscreenChanged:      HandleSuppressFullscreenToggle,
             onIgnoreUnfocusedBlockersChanged: HandleIgnoreUnfocusedBlockersToggle,
             onIgnoreNonvisibleBlockersChanged: HandleIgnoreNonvisibleBlockersToggle,
+            onNativeScreensaverChanged:       HandleNativeScreensaverToggle,
             onExit:                           ExitApp);
 
     private bool HandleSuppressFullscreenToggle(bool wantEnabled)
@@ -347,6 +349,13 @@ internal sealed class TrayApp : IDisposable
         _ignoreNonvisibleBlockers = wantEnabled;
         _ini.DebouncedSave(() => _ini.WriteInt("Settings", "IgnoreNonvisibleBlockers", _ignoreNonvisibleBlockers ? 1 : 0));
         return true;
+    }
+
+    private bool HandleNativeScreensaverToggle(bool wantEnabled)
+    {
+        bool ok = NativeScreensaverService.SetActive(wantEnabled);
+        Logger.Log($"Native screensaver {(wantEnabled ? "enabled" : "disabled")} via tray menu.{(ok ? "" : " (failed)")}");
+        return ok;
     }
 
     private bool HandleStartupToggle(bool wantEnabled)

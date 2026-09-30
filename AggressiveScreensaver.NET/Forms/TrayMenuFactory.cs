@@ -24,12 +24,14 @@ internal static class TrayMenuFactory
         bool       suppressFullscreen       = false,
         bool       ignoreUnfocusedBlockers  = true,
         bool       ignoreNonvisibleBlockers = false,
+        bool       nativeScreensaverActive  = false,
         Action?    onIgnoreList             = null,
         Action?    onDebug                  = null,
         Func<bool, bool>? onStartupChanged         = null,
         Func<bool, bool>? onSuppressFullscreenChanged = null,
         Func<bool, bool>? onIgnoreUnfocusedBlockersChanged = null,
         Func<bool, bool>? onIgnoreNonvisibleBlockersChanged = null,
+        Func<bool, bool>? onNativeScreensaverChanged = null,
         Action?    onExit                  = null)
     {
         var menu = new ContextMenuStrip
@@ -208,6 +210,45 @@ internal static class TrayMenuFactory
         }
 
         menu.Items.Add(nonvisibleBlockersItem);
+        menu.Items.Add(new ToolStripSeparator());
+
+        // Native Windows Screensaver checkbox — off by default since it competes
+        // with this app's own blanking (see NativeScreensaverService).
+        var nativeScreensaverItem = new ToolStripMenuItem((nativeScreensaverActive ? check : space) + "Native Screensaver")
+        {
+            CheckOnClick = true,
+            Checked      = nativeScreensaverActive,
+        };
+
+        if (onNativeScreensaverChanged is not null)
+        {
+            bool reverting = false;
+            nativeScreensaverItem.CheckedChanged += (sender, _) =>
+            {
+                if (reverting || sender is not ToolStripMenuItem item) return;
+
+                item.Text = (item.Checked ? check : space) + "Native Screensaver";
+
+                bool ok = onNativeScreensaverChanged(item.Checked);
+                if (!ok)
+                {
+                    reverting = true;
+                    item.Checked = !item.Checked;
+                    item.Text = (item.Checked ? check : space) + "Native Screensaver";
+                    reverting = false;
+                }
+            };
+        }
+        else
+        {
+            nativeScreensaverItem.CheckedChanged += (sender, _) =>
+            {
+                if (sender is ToolStripMenuItem item)
+                    item.Text = (item.Checked ? check : space) + "Native Screensaver";
+            };
+        }
+
+        menu.Items.Add(nativeScreensaverItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(space + "Exit", null, (_, _) => onExit?.Invoke());
 
