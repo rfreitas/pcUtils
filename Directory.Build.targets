@@ -1,0 +1,36 @@
+<Project>
+  <!--
+    Auto-imported by every .csproj under this directory (MSBuild convention,
+    no per-project changes needed). Stops any running instance of the exe
+    being built before compilation starts, so "dotnet build" never fails
+    with the output .exe locked (MSB3027) - these are long-lived tray/
+    background apps that are almost always still running when you rebuild.
+
+    Only applies to actual apps (Exe/WinExe); class libraries and test
+    projects are unaffected. Uses taskkill rather than PowerShell so this
+    has no dependency on which PowerShell (Windows PowerShell vs pwsh) is
+    the caller's default, and no text-encoding pitfalls.
+
+    Matches by image name only, same as the manual convention this replaces
+    (CommonScripts/BuildDotNetApp.ps1, ReloadDotNetApp.ps1) - it does not
+    check the running process's path, so it would also stop an installed
+    copy elsewhere with the same exe name.
+  -->
+  <Target Name="StopRunningInstanceBeforeBuild" BeforeTargets="CoreCompile"
+          Condition="'$(OutputType)' == 'WinExe' or '$(OutputType)' == 'Exe'">
+    <!--
+      BeforeTargets="Build" does not work here: the SDK's "Build" target has
+      an empty body (just DependsOnTargets), and MSBuild never logs/enters it
+      as a distinct target when that's the case - confirmed by testing (an
+      unconditional <Error> hooked to BeforeTargets="Build" never fired, on
+      this SDK version, even though the same target invoked directly by name
+      with -t: ran fine). CoreCompile is a real, always-present target for
+      every C# project, confirmed to fire even when it is itself skipped as
+      up-to-date - which is the common case here (only the later copy-to-
+      output step actually needs the file unlocked).
+    -->
+    <Exec Command="taskkill /IM &quot;$(AssemblyName).exe&quot; /F &gt;NUL 2&gt;&amp;1 &amp; exit /b 0"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low" />
+  </Target>
+</Project>
