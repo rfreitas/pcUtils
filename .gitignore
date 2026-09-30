@@ -21,6 +21,12 @@ AggressiveScreensaver.NET.Tests/obj/
 TaskbarReveal.NET/bin/
 TaskbarReveal.NET/obj/
 
+# PortWatch.NET build artifacts
+PortWatch.NET/bin/
+PortWatch.NET/obj/
+PortWatch.NET.Tests/bin/
+PortWatch.NET.Tests/obj/
+
 # RefreshRateOverlay.WPF build artifacts
 RefreshRateOverlay.WPF/bin/
 RefreshRateOverlay.WPF/obj/

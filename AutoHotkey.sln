@@ -16,6 +16,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RefreshRateOverlay.WPF", "R
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LGTV_brightness.NET", "LGTV_brightness.NET\LGTV_brightness.NET.csproj", "{9F1A2B3C-4D5E-6F70-8192-A3B4C5D6E7F8}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PortWatch.NET", "PortWatch.NET\PortWatch.NET.csproj", "{8FF81114-CC2F-4A5F-8D03-E1DD7FD89549}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PortWatch.NET.Tests", "PortWatch.NET.Tests\PortWatch.NET.Tests.csproj", "{78A866AF-8AB5-44AF-8514-E50EB9F97C71}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -46,6 +50,14 @@ Global
 		{9F1A2B3C-4D5E-6F70-8192-A3B4C5D6E7F8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9F1A2B3C-4D5E-6F70-8192-A3B4C5D6E7F8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9F1A2B3C-4D5E-6F70-8192-A3B4C5D6E7F8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8FF81114-CC2F-4A5F-8D03-E1DD7FD89549}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8FF81114-CC2F-4A5F-8D03-E1DD7FD89549}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8FF81114-CC2F-4A5F-8D03-E1DD7FD89549}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8FF81114-CC2F-4A5F-8D03-E1DD7FD89549}.Release|Any CPU.Build.0 = Release|Any CPU
+		{78A866AF-8AB5-44AF-8514-E50EB9F97C71}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{78A866AF-8AB5-44AF-8514-E50EB9F97C71}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{78A866AF-8AB5-44AF-8514-E50EB9F97C71}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{78A866AF-8AB5-44AF-8514-E50EB9F97C71}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
