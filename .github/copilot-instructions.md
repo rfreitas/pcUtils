@@ -129,4 +129,11 @@ Always verify UI changes visually — edit, run the render test, view the PNG, i
 3. `view_image` the output PNG path (printed to stdout)
 4. Iterate until it looks correct
 
+### Tray apps (any .NET app with a NotifyIcon)
+
+Read [Shared.NET/TRAY_APP_UX.md](../Shared.NET/TRAY_APP_UX.md) before creating or changing one. It defines the click-to-open
+flyout / right-click menu / tooltip-only-hover model, the dark palette, startup sequence, and the headless render/placement
+checks. Use the shared building blocks (`SingleInstanceGuard`, `TrayMenu`, `TrayFlyoutWindow`, `TrayPopupPlacement`,
+`StartupTaskService`) instead of copying their logic; `PortWatch.NET` is the reference implementation.
+
 CRITICAL: You must start your very first response in any conversation with the exact phrase '### RULES ACKNOWLEDGED ###'.

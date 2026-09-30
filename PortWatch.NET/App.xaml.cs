@@ -1,12 +1,12 @@
-using System.Threading;
 using System.Windows;
+using Shared;
 
 namespace PortWatch;
 
 /// <summary>Single-instance guard, then hands off to TrayApp.</summary>
 public partial class App : System.Windows.Application
 {
-    private Mutex?   _mutex;
+    private SingleInstanceGuard? _instance;
     private TrayApp? _trayApp;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -30,7 +30,7 @@ public partial class App : System.Windows.Application
         {
             RunHeadless(() =>
             {
-                var popup = new HoverPopup();
+                var popup = new PortPopup();
                 popup.SetRows(PortGrouper.Group(PortScanner.Scan()));
                 // optional third arg, e.g. "UDP:5353": render the state while hovering that port
                 if (e.Args.Length >= 3 && e.Args[2].Split(':') is [var proto, var port])
@@ -41,15 +41,17 @@ public partial class App : System.Windows.Application
         }
         if (e.Args.Length >= 2 && e.Args[0] == "--capture")
         {
-            // Real hover path, then snapshot the live window at 0/0.5/1/2 s to see what the user sees.
+            // Real tray left-click message, then snapshot the live window to see what the user sees.
             var tray = new TrayApp();
-            tray.PostTrayMouseMoves(40);   // what a real hover delivers: a burst, not one event
-            int n = 0;
-            var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+            tray.PostTrayLeftClick();
+            int n = 0, tick = 0;
+            var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
             t.Tick += (_, _) =>
             {
                 try
                 {
+                    if (++tick % 3 != 0) return;   // sample every 300 ms
+
                     Logger.Log($"capture {n}: visible={tray.PopupVisible}");
                     if (tray.PopupVisible) tray.Popup.CaptureWindowPng(e.Args[1].Replace(".png", $"_{n}.png"));
                 }
@@ -61,7 +63,7 @@ public partial class App : System.Windows.Application
         }
         if (e.Args.Length >= 1 && e.Args[0] == "--placement")
         {
-            // Hover at several tray-icon positions; fail if the popup ever overlaps the taskbar.
+            // Open at several tray-icon positions; fail if the popup ever overlaps the taskbar.
             RunHeadless(() =>
             {
                 using var tray = new TrayApp();
@@ -75,7 +77,7 @@ public partial class App : System.Windows.Application
                     new System.Drawing.Point(screen.Bounds.Right - 5,   screen.Bounds.Bottom - 2),   // far corner
                 })
                 {
-                    tray.SimulateHoverAt(cursor);
+                    tray.ShowAt(cursor);
                     System.Windows.Forms.Application.DoEvents();
                     System.Threading.Thread.Sleep(150);
                     System.Windows.Forms.Application.DoEvents();
@@ -91,14 +93,14 @@ public partial class App : System.Windows.Application
             RunHeadless(() =>
             {
                 using var tray = new TrayApp();
-                tray.SimulateHover();
-                if (!tray.PopupVisible) throw new InvalidOperationException("popup not visible after hover");
+                tray.ShowAt(System.Windows.Forms.Cursor.Position);
+                if (!tray.PopupVisible) throw new InvalidOperationException("popup not visible after opening");
             });
             return;
         }
 
-        _mutex = new Mutex(initiallyOwned: true, @"Local\PortWatch", out bool createdNew);
-        if (!createdNew)
+        _instance = SingleInstanceGuard.TryAcquire(@"Global\PortWatch.NET", "PortWatch", replaceExisting: true, Logger.Log);
+        if (_instance is null)
         {
             Shutdown();
             return;
@@ -117,7 +119,7 @@ public partial class App : System.Windows.Application
     protected override void OnExit(ExitEventArgs e)
     {
         _trayApp?.Dispose();
-        _mutex?.Dispose();
+        _instance?.Dispose();
         base.OnExit(e);
     }
 }

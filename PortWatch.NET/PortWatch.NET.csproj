@@ -11,6 +11,11 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\Shared.NET\StartupTaskService.cs" Link="Services\StartupTaskService.cs" />
+    <Compile Include="..\Shared.NET\DarkMenuRenderer.cs" Link="Tray\DarkMenuRenderer.cs" />
+    <Compile Include="..\Shared.NET\TrayMenu.cs" Link="Tray\TrayMenu.cs" />
+    <Compile Include="..\Shared.NET\SingleInstanceGuard.cs" Link="Services\SingleInstanceGuard.cs" />
+    <Compile Include="..\Shared.NET\TrayFlyoutWindow.cs" Link="Forms\TrayFlyoutWindow.cs" />
     <Compile Include="..\Shared.NET\TrayPopupPlacement.cs" Link="Services\TrayPopupPlacement.cs" />
   </ItemGroup>
   <ItemGroup>

@@ -1,97 +1,84 @@
 using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
+using Shared;
 
 namespace PortWatch;
 
 /// <summary>
-/// NotifyIcon + hover popup. WinForms raises NotifyIcon.MouseMove while the
-/// cursor is over the icon but has no "mouse left" event, so a short timer
-/// hides the popup once the cursor is neither moving over the icon nor
-/// inside the popup itself.
+/// NotifyIcon + click-to-open flyout, the same pattern as AggressiveScreensaver: left click opens the
+/// popup above the taskbar and it stays until click-away / Escape (TrayFlyoutWindow); clicking the
+/// icon again closes it. Right click shows the menu.
 /// </summary>
 internal sealed class TrayApp : IDisposable
 {
-    private static readonly TimeSpan HoverGrace = TimeSpan.FromMilliseconds(400);
+    private const string TaskName        = "PortWatch";
+    private static readonly string ExePath = Path.Combine(AppContext.BaseDirectory, "PortWatch.exe");
+    private const string TaskDescription = "Launches PortWatch (tray port viewer) at logon.";
 
     private readonly NotifyIcon _tray;
-    private readonly HoverPopup _popup = new();
-    private readonly System.Windows.Forms.Timer _hideTimer = new() { Interval = 150 };
-    private bool _showing;
-    private DateTime _lastIconMoveUtc = DateTime.MinValue;
+    private readonly PortPopup _popup = new();
 
     public TrayApp()
     {
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("Exit", null, (_, _) => System.Windows.Application.Current.Shutdown());
-
         _tray = new NotifyIcon
         {
             Icon = SystemIcons.Information,
-            Text = "PortWatch",
+            Text = "PortWatch - click to show listening ports",
             Visible = true,
-            ContextMenuStrip = menu,
+            ContextMenuStrip = BuildContextMenu(),
         };
-        _tray.MouseMove += OnIconMouseMove;
-
-        _hideTimer.Tick += (_, _) => HideIfCursorAway();
-        _hideTimer.Start();
+        _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) OnIconClick(); };
     }
 
-    /// <summary>Same code path as a real hover, callable without a mouse.</summary>
-    public void SimulateHover() => OnIconMouseMove(null, new MouseEventArgs(MouseButtons.None, 0, 0, 0, 0));
-
-    /// <summary>Hover with the cursor treated as being at <paramref name="cursorPx"/> (e.g. over the tray icon).</summary>
-    public void SimulateHoverAt(System.Drawing.Point cursorPx)
+    private static ContextMenuStrip BuildContextMenu()
     {
-        _lastIconMoveUtc = DateTime.UtcNow;
+        var menu = TrayMenu.Create();
+        // Runs as a normal user (asInvoker manifest), so the startup task must not request elevation.
+        menu.Items.Add(TrayMenu.StartAtLoginItem(TaskName, ExePath, TaskDescription, requireElevation: false, Logger.Log, "PortWatch"));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(TrayMenu.ExitItem(() => System.Windows.Application.Current.Shutdown()));
+        return menu;
+    }
+
+    /// <summary>
+    /// Left click: opens the popup above the taskbar, or closes it if it is open. ToggleShow also
+    /// swallows the reopen that a click-away on the icon would otherwise cause.
+    /// </summary>
+    public void OnIconClick() =>
+        _popup.ToggleShow(() =>
+        {
+            _popup.SetRows(PortGrouper.Group(PortScanner.Scan()));
+            _popup.ShowNear(Cursor.Position);
+            _popup.Activate();   // needed so Deactivated fires on click-away
+        });
+
+    public PortPopup Popup => _popup;
+
+    public bool PopupVisible => _popup.IsVisible;
+
+    /// <summary>Shows the popup as if the tray icon had been clicked with the cursor at <paramref name="cursorPx"/> (diagnostics).</summary>
+    public void ShowAt(System.Drawing.Point cursorPx)
+    {
         _popup.SetRows(PortGrouper.Group(PortScanner.Scan()));
         _popup.ShowNear(cursorPx);
     }
 
-    public HoverPopup Popup => _popup;
-
-    /// <summary>Posts <paramref name="count"/> genuine tray mouse-move messages to the NotifyIcon's window (diagnostics).</summary>
-    public void PostTrayMouseMoves(int count)
+    /// <summary>Posts a genuine left-click (button down + up) to the NotifyIcon's window, exactly as the shell does (diagnostics).</summary>
+    public void PostTrayLeftClick()
     {
         var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
         var window = (NativeWindow)typeof(NotifyIcon).GetField("_window", flags)!.GetValue(_tray)!;
         var id = Convert.ToInt32(typeof(NotifyIcon).GetField("_id", flags)!.GetValue(_tray)!);
-        for (int i = 0; i < count; i++)
-            PostMessage(window.Handle, 0x800 /* WM_USER+1024 tray callback */, (IntPtr)id, (IntPtr)0x200 /* WM_MOUSEMOVE */);
+        PostMessage(window.Handle, 0x800 /* WM_USER+1024 tray callback */, (IntPtr)id, (IntPtr)0x201 /* WM_LBUTTONDOWN */);
+        PostMessage(window.Handle, 0x800, (IntPtr)id, (IntPtr)0x202 /* WM_LBUTTONUP */);
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
 
-    public bool PopupVisible => _popup.IsVisible;
-
-    private void OnIconMouseMove(object? sender, MouseEventArgs e)
-    {
-        _lastIconMoveUtc = DateTime.UtcNow;
-        // Show() pumps messages while it builds the window, and a hover is a burst of
-        // mouse-move events, so guard against re-entering mid-creation.
-        if (_popup.IsVisible || _showing) return;
-
-        _showing = true;
-        try
-        {
-            _popup.SetRows(PortGrouper.Group(PortScanner.Scan()));
-            _popup.ShowNear(Cursor.Position);
-        }
-        finally { _showing = false; }
-    }
-
-    private void HideIfCursorAway()
-    {
-        if (!_popup.IsVisible) return;
-        if (DateTime.UtcNow - _lastIconMoveUtc < HoverGrace) return;
-        if (_popup.ContainsPixel(Cursor.Position)) return;
-        _popup.Hide();
-    }
-
     public void Dispose()
     {
-        _hideTimer.Dispose();
         _popup.Close();
         _tray.Visible = false;
         _tray.Dispose();

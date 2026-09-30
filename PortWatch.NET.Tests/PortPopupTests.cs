@@ -1,7 +1,7 @@
 using PortWatch;
 using Xunit;
 
-public class HoverPopupTests
+public class PortPopupTests
 {
     [Fact]
     public void Popup_shows_real_ports_without_throwing()
@@ -11,7 +11,7 @@ public class HoverPopupTests
         {
             try
             {
-                var popup = new HoverPopup();
+                var popup = new PortPopup();
                 popup.SetRows(PortGrouper.Group(PortScanner.Scan()));
                 popup.ShowNear(new System.Drawing.Point(1800, 1000));
                 Assert.True(popup.IsVisible);

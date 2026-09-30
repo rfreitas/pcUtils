@@ -8,11 +8,11 @@ using Shared;
 namespace PortWatch;
 
 /// <summary>
-/// Borderless dark window: one line per process, ports as hoverable tokens. Hovering a port
+/// Click-to-open flyout: one line per process, ports as hoverable tokens. Hovering a port
 /// highlights every process bound to it; shared ports carry a "+N" badge (amber for TCP,
-/// where sharing is unusual); system processes get their own colour. Never takes focus.
+/// where sharing is unusual); system processes get their own colour. Dismissal (click-away / Escape) comes from TrayFlyoutWindow.
 /// </summary>
-internal sealed class HoverPopup : Window
+internal sealed class PortPopup : TrayFlyoutWindow
 {
     private static readonly System.Windows.Media.Brush Bg     = Frozen("#2d2d2d");
     private static readonly System.Windows.Media.Brush Fg     = Frozen("#e6e6e6");
@@ -30,13 +30,9 @@ internal sealed class HoverPopup : Window
     private readonly StackPanel _rows = new();
     private readonly List<RowView> _views = new();
 
-    public HoverPopup()
+    public PortPopup()
     {
-        WindowStyle   = WindowStyle.None;
-        ResizeMode    = ResizeMode.NoResize;
-        Topmost       = true;
-        ShowInTaskbar = false;
-        ShowActivated = false;
+        // TrayFlyoutWindow already sets WindowStyle/ResizeMode/Topmost/ShowInTaskbar/Manual location.
         SizeToContent = SizeToContent.WidthAndHeight;
         MaxHeight     = 420;
         Background    = Bg;
@@ -146,51 +142,11 @@ internal sealed class HoverPopup : Window
         return false;
     }
 
-    /// <summary>
-    /// Shows (without activating) above the taskbar, anchored to the cursor. Positioning is
-    /// shared with the other tray apps (Shared.NET/TrayPopupPlacement) so it never lands under the bar.
-    /// </summary>
-    public void ShowNear(System.Drawing.Point cursorPx)
-    {
-        _anchor = cursorPx;
-        if (!IsVisible) Show();
-        Place();
-        // Moving between monitors of different DPI re-lays the window out (it can change size
-        // after the move), so re-place once it has settled and whenever DPI changes.
-        Dispatcher.BeginInvoke(new Action(Place), System.Windows.Threading.DispatcherPriority.Loaded);
-    }
-
-    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
-    {
-        base.OnDpiChanged(oldDpi, newDpi);
-        if (IsVisible) Dispatcher.BeginInvoke(new Action(Place), System.Windows.Threading.DispatcherPriority.Loaded);
-    }
-
-    private System.Drawing.Point _anchor;
-
-    /// <summary>Places using the window's real pixel size, never WPF's DIP estimate.</summary>
-    private void Place()
-    {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        UpdateLayout();
-        for (int pass = 0; pass < 2; pass++)   // 2nd pass corrects a size change caused by the 1st move
-        {
-            if (!GetWindowRect(hwnd, out var r)) return;
-            var size = new System.Drawing.Size(r.R - r.L, r.B - r.T);
-            int margin = (int)(6 * TrayPopupPlacement.ScaleAt(_anchor));
-            var pos = TrayPopupPlacement.AboveTaskbar(_anchor, size, margin);
-            if (pos.X == r.L && pos.Y == r.T) return;
-            SetWindowPos(hwnd, new IntPtr(-1), pos.X, pos.Y, 0, 0, 0x0001 | 0x0010); // NOSIZE | NOACTIVATE, HWND_TOPMOST
-            UpdateLayout();
-        }
-    }
+    /// <summary>Shows above the taskbar, anchored to the cursor (shared placement: never under the bar).</summary>
+    public void ShowNear(System.Drawing.Point cursorPx) => TrayPopupPlacement.ShowAbove(this, cursorPx);
 
     /// <summary>Live window rectangle in physical pixels (diagnostics / tests).</summary>
-    public System.Drawing.Rectangle WindowRectPx()
-    {
-        GetWindowRect(new WindowInteropHelper(this).Handle, out var r);
-        return System.Drawing.Rectangle.FromLTRB(r.L, r.T, r.R, r.B);
-    }
+    public System.Drawing.Rectangle WindowRectPx() => TrayPopupPlacement.WindowRect(this);
 
     /// <summary>Renders the popup content to a PNG without showing the window (for agents/tests).</summary>
     public void RenderToPng(string path)
@@ -222,13 +178,6 @@ internal sealed class HoverPopup : Window
             g.ReleaseHdc(hdc);
         }
         bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
-    }
-
-    public bool ContainsPixel(System.Drawing.Point p)
-    {
-        if (!IsVisible) return false;
-        var hwnd = new WindowInteropHelper(this).Handle;
-        return GetWindowRect(hwnd, out var r) && p.X >= r.L && p.X < r.R && p.Y >= r.T && p.Y < r.B;
     }
 
     private static SolidColorBrush Frozen(string hex)

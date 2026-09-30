@@ -1,6 +1,9 @@
 using System;
 using System.Drawing;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Windows.Interop;
+using System.Windows.Threading;
 
 namespace Shared;
 
@@ -33,6 +36,67 @@ internal static class TrayPopupPlacement
         y = Math.Max(y, bounds.Top);
         return new Point(x, y);
     }
+
+    // ---- Window-level API: what a flyout actually calls ---------------------------------------------
+
+    private sealed class Anchor { public System.Drawing.Point Cursor; }
+    private static readonly ConditionalWeakTable<System.Windows.Window, Anchor> Anchors = new();
+
+    /// <summary>
+    /// Shows <paramref name="window"/> (if hidden) and places it above the taskbar, anchored to the cursor.
+    /// Sizes from the window's REAL pixel rectangle (WPF's DIP size is wrong while the window is still on
+    /// another monitor/DPI), re-places once layout has settled, and again whenever the DPI changes.
+    /// The window should start at Left = Top = -10000 so it never flashes at WPF's default spot.
+    /// </summary>
+    public static void ShowAbove(System.Windows.Window window, Point cursorPx)
+    {
+        bool first = !Anchors.TryGetValue(window, out var anchor);
+        if (first)
+        {
+            anchor = new Anchor();
+            Anchors.Add(window, anchor);
+            window.DpiChanged += (_, _) =>
+            {
+                if (window.IsVisible)
+                    window.Dispatcher.BeginInvoke(new Action(() => Place(window, anchor!)), DispatcherPriority.Loaded);
+            };
+        }
+        anchor!.Cursor = cursorPx;
+
+        if (!window.IsVisible) window.Show();
+        Place(window, anchor);
+        window.Dispatcher.BeginInvoke(new Action(() => Place(window, anchor)), DispatcherPriority.Loaded);
+    }
+
+    /// <summary>The window's live rectangle in physical pixels.</summary>
+    public static Rectangle WindowRect(System.Windows.Window window)
+    {
+        GetWindowRect(new WindowInteropHelper(window).Handle, out var r);
+        return Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+    }
+
+    private static void Place(System.Windows.Window window, Anchor anchor)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        window.UpdateLayout();
+        for (int pass = 0; pass < 2; pass++)   // 2nd pass corrects a size change caused by the 1st move
+        {
+            if (!GetWindowRect(hwnd, out var r)) return;
+            var size   = new System.Drawing.Size(r.Right - r.Left, r.Bottom - r.Top);
+            int margin = (int)(6 * ScaleAt(anchor.Cursor));
+            var pos    = AboveTaskbar(anchor.Cursor, size, margin);
+            if (pos.X == r.Left && pos.Y == r.Top) return;
+            SetWindowPos(hwnd, new IntPtr(-1), pos.X, pos.Y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);   // HWND_TOPMOST
+            window.UpdateLayout();
+        }
+    }
+
+    private const uint SWP_NOSIZE     = 0x0001;
+    private const uint SWP_NOACTIVATE = 0x0010;
+
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect rect);
+    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
 
     /// <summary>DPI scale (1.0 = 96 dpi) of the monitor under <paramref name="pt"/>.</summary>
     public static float ScaleAt(Point pt)
