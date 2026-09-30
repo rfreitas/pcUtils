@@ -33,6 +33,12 @@ internal sealed class BrightnessService
     /// slider drags or tray sync) — drives the on-screen brightness OSD.</summary>
     public event Action<int>? HotkeyApplied;
 
+    /// <summary>Fired on the UI thread once the TV write for the latest hotkey press finishes
+    /// (true = TV accepted it, false = failed). Superseded presses don't report.</summary>
+    public event Action<bool>? HotkeySynced;
+
+    private int _adjustSeq;
+
     public async Task SyncAsync(bool force = false)
     {
         long now = Environment.TickCount64;
@@ -48,20 +54,34 @@ internal sealed class BrightnessService
         }
     }
 
-    public async Task ApplyAsync(int value)
+    public async Task<bool> ApplyAsync(int value)
     {
         _cur = Clamp(value);
         Raise(Changed, _cur);
-        await Task.Run(() => LgTvCliService.SetBacklight(_cur));
+        int v = _cur;
+        return await Task.Run(() => LgTvCliService.SetBacklight(v));
     }
 
     /// <summary>Adjusts by +/- Step. Mirrors the AHK hotkey path: an opportunistic
     /// (interval-gated) sync first, then apply relative to the tracked value.</summary>
     public async Task AdjustAsync(int direction)
     {
+        // Show the OSD from the tracked value right away — the sync and the TV write
+        // are CLI process spawns + network round-trips, and awaiting them first is what
+        // made the OSD feel laggy. If the sync corrects the value, the OSD is updated below.
+        int seq = Interlocked.Increment(ref _adjustSeq);
+        int optimistic = Clamp(_cur + direction * Step);
+        Raise(HotkeyApplied, optimistic);
+
         await SyncAsync(force: false);
-        await ApplyAsync(_cur + direction * Step);
-        Raise(HotkeyApplied, _cur);
+
+        int target = Clamp(_cur + direction * Step);
+        if (target != optimistic)
+            Raise(HotkeyApplied, target);
+
+        bool ok = await ApplyAsync(target);
+        if (seq == Volatile.Read(ref _adjustSeq))
+            Raise(HotkeySynced, ok);
     }
 
     /// <summary>
@@ -79,6 +99,14 @@ internal sealed class BrightnessService
             if (_pendingVal != _cur)
                 _ = ApplyAsync(_pendingVal);
         }, null, SliderDebounceMs, Timeout.Infinite);
+    }
+
+    private void Raise(Action<bool>? evt, bool value)
+    {
+        if (_uiContext is null || SynchronizationContext.Current == _uiContext)
+            evt?.Invoke(value);
+        else
+            _uiContext.Post(_ => evt?.Invoke(value), null);
     }
 
     private void Raise(Action<int>? evt, int value)

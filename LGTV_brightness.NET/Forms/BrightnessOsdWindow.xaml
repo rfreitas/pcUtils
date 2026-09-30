@@ -18,7 +18,7 @@
             <!-- Continuous fill, same colors/visual language as BacklightSliderWindow's track. -->
             <Grid x:Name="Track" Width="140" Height="8" Margin="14,0,0,0" VerticalAlignment="Center">
                 <Border CornerRadius="4" Background="#555555"/>
-                <Border x:Name="FillBar" CornerRadius="4" Background="#88BBFF"
+                <Border x:Name="FillBar" CornerRadius="4" Background="#6E94C2"
                         HorizontalAlignment="Left" Width="0"/>
             </Grid>
         </StackPanel>

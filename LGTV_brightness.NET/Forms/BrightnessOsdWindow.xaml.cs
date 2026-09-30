@@ -1,5 +1,8 @@
 using System;
 using System.Windows;
+using WpfBrush = System.Windows.Media.Brush;
+using WpfColor = System.Windows.Media.Color;
+using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
@@ -22,6 +25,19 @@ internal partial class BrightnessOsdWindow : Window
     private const double TrackWidth = 140;
     private const int AutoHideMs = 1500;
     private const int FadeMs = 200;
+
+    // Subtle state tints for the fill: dimmer blue while the TV write is in flight,
+    // soft blue once the TV accepted it, dull blue-grey if it failed.
+    private static readonly WpfBrush PendingBrush = Frozen(0x6E, 0x94, 0xC2);
+    private static readonly WpfBrush SyncedBrush  = Frozen(0x88, 0xBB, 0xFF);
+    private static readonly WpfBrush FailedBrush  = Frozen(0x5E, 0x6B, 0x80);
+
+    private static WpfBrush Frozen(byte r, byte g, byte b)
+    {
+        var br = new WpfSolidColorBrush(WpfColor.FromRgb(r, g, b));
+        br.Freeze();
+        return br;
+    }
 
     private readonly DispatcherTimer _hideTimer;
 
@@ -50,6 +66,7 @@ internal partial class BrightnessOsdWindow : Window
     public void ShowValue(int percent)
     {
         FillBar.Width = TrackWidth * Math.Clamp(percent, 0, 100) / 100.0;
+        FillBar.Background = PendingBrush;
 
         PositionOnScreen();
 
@@ -61,6 +78,8 @@ internal partial class BrightnessOsdWindow : Window
         _hideTimer.Stop();
         _hideTimer.Start();
     }
+
+    public void SetSynced(bool ok) => FillBar.Background = ok ? SyncedBrush : FailedBrush;
 
     private void FadeOutAndHide()
     {

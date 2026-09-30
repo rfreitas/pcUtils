@@ -51,6 +51,7 @@ internal sealed class TrayApp : IDisposable
         _brightness = new BrightnessService();
         _brightness.Changed += OnBrightnessChanged;
         _brightness.HotkeyApplied += OnHotkeyApplied;
+        _brightness.HotkeySynced  += ok => _osd?.SetSynced(ok);
 
         _autoBrightness = new AutoBrightnessService(_brightness) { Enabled = _settings.ReadAutoBrightness() };
         _autoBrightness.Initialize();
