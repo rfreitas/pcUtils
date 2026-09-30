@@ -33,6 +33,10 @@ RefreshRateOverlay.WPF/obj/
 RefreshRateOverlay.WPF.Tests/bin/
 RefreshRateOverlay.WPF.Tests/obj/
 
+# RefreshRateOverlay.WPF: downloaded by the EnsurePresentMon MSBuild target
+# (see RefreshRateOverlay.WPF.csproj) instead of being committed.
+RefreshRateOverlay.WPF/Tools/PresentMon-*.exe
+
 # LGTV_brightness.NET build artifacts
 LGTV_brightness.NET/bin/
 LGTV_brightness.NET/obj/
