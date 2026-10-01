@@ -56,7 +56,7 @@ public partial class App : System.Windows.Application
                     if (tray.PopupVisible) tray.Popup.CaptureWindowPng(e.Args[1].Replace(".png", $"_{n}.png"));
                 }
                 catch (Exception ex) { Logger.Log($"capture failed: {ex}"); }
-                if (++n == 4) { t.Stop(); tray.Dispose(); Shutdown(0); }
+                if (++n == 10) { t.Stop(); tray.Dispose(); Shutdown(0); }
             };
             t.Start();
             return;

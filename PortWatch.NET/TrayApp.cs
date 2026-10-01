@@ -18,6 +18,9 @@ internal sealed class TrayApp : IDisposable
 
     private readonly NotifyIcon _tray;
     private readonly PortPopup _popup = new();
+    private readonly System.Windows.Threading.DispatcherTimer _trafficTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private TrafficCollector? _traffic;
+    private IReadOnlyList<PortEntry> _entries = [];
 
     public TrayApp()
     {
@@ -29,13 +32,17 @@ internal sealed class TrayApp : IDisposable
             ContextMenuStrip = BuildContextMenu(),
         };
         _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) OnIconClick(); };
+
+        // Live traffic only runs while the flyout is open: start tracing on open, stop on close.
+        _trafficTimer.Tick += (_, _) => RefreshTraffic();
+        _popup.IsVisibleChanged += (_, e) => { if (!(bool)e.NewValue) StopTraffic(); };
     }
 
     private static ContextMenuStrip BuildContextMenu()
     {
         var menu = TrayMenu.Create();
-        // Runs as a normal user (asInvoker manifest), so the startup task must not request elevation.
-        menu.Items.Add(TrayMenu.StartAtLoginItem(TaskName, ExePath, TaskDescription, requireElevation: false, Logger.Log, "PortWatch"));
+        // The manifest is requireAdministrator (kernel network tracing), so the logon task must match it.
+        menu.Items.Add(TrayMenu.StartAtLoginItem(TaskName, ExePath, TaskDescription, requireElevation: true, Logger.Log, "PortWatch"));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(TrayMenu.ExitItem(() => System.Windows.Application.Current.Shutdown()));
         return menu;
@@ -48,10 +55,33 @@ internal sealed class TrayApp : IDisposable
     public void OnIconClick() =>
         _popup.ToggleShow(() =>
         {
-            _popup.SetRows(PortGrouper.Group(PortScanner.Scan()));
+            _entries = PortScanner.Scan();
+            _popup.SetRows(PortGrouper.Group(_entries));
+            StartTraffic();
             _popup.ShowNear(Cursor.Position);
             _popup.Activate();   // needed so Deactivated fires on click-away
         });
+
+    private void StartTraffic()
+    {
+        StopTraffic();
+        _traffic = TrafficCollector.TryStart(Logger.Log, out string? error);
+        _popup.SetTrafficStatus(error);
+        if (_traffic is not null) _trafficTimer.Start();
+    }
+
+    private void StopTraffic()
+    {
+        _trafficTimer.Stop();
+        _traffic?.Dispose();
+        _traffic = null;
+    }
+
+    private void RefreshTraffic()
+    {
+        if (_traffic is null) return;
+        _popup.UpdateTraffic(_traffic.Tracker.Snapshot(_entries));
+    }
 
     public PortPopup Popup => _popup;
 
@@ -79,6 +109,7 @@ internal sealed class TrayApp : IDisposable
 
     public void Dispose()
     {
+        StopTraffic();
         _popup.Close();
         _tray.Visible = false;
         _tray.Dispose();

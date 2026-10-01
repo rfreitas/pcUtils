@@ -46,8 +46,10 @@ compiled into each app. **Use them; do not copy their logic.**
 - `OutputType` `WinExe`, `TargetFramework` `net8.0-windows10.0.19041.0`, `UseWPF` **and** `UseWindowsForms` true,
   `Nullable` + `ImplicitUsings` enabled. Note: with WPF/WinForms, `System.IO` is **not** an implicit using.
 - `app.manifest`: `dpiAwareness` **PerMonitorV2**. Execution level **`asInvoker`** unless the app genuinely needs
-  elevation (LGTV/Aggressive use `requireAdministrator` to draw over elevated fullscreen apps). The startup task's
-  `requireElevation` argument **must match** the manifest.
+  elevation. Current reasons: LGTV/Aggressive draw over elevated fullscreen apps; PortWatch starts a kernel network ETW
+  trace for live per-port traffic. The startup task's `requireElevation` argument **must match** the manifest.
+  An elevated app can only be stopped/replaced by an elevated process (`SingleInstanceGuard`, `Directory.Build.targets`'
+  taskkill and your own shell all need to be elevated), and its headless flags need an elevated shell too.
 - `App.xaml`: `ShutdownMode="OnExplicitShutdown"` (the app has no main window). Exit only via
   `Application.Current.Shutdown()` from the menu.
 - Name things `<App>.NET` (+ `<App>.NET.Tests`), add both to `AutoHotkey.sln`, add `bin/` `obj/` ignores to `.gitignore`.
@@ -80,7 +82,8 @@ failure path logs. Logging must never throw.
   under the taskbar on a 240 % display.
 - Construct with `Left = Top = -10000` and `WindowInteropHelper.EnsureHandle()` so the first show neither flashes at
   WPF's default position nor pays window-creation cost mid-click.
-- Refresh data on open (scan when shown), not on a timer, unless the content is live.
+- Refresh data on open (scan when shown), not on a timer, unless the content is live. Live data (PortWatch traffic) runs a
+  1 s timer and any collector **only while the flyout is open** — start on show, stop on hide — so a closed tray app costs nothing.
 - Cap height (PortWatch: 420 px) and scroll; never let a flyout exceed the work area.
 
 ## 6. The menu (right-click)
@@ -114,6 +117,7 @@ Dark only; there is no light theme. One palette across apps:
 | Warning                 | `#ffb454`            |
 | Row highlight           | `#3b4a5e`, `#4f6680` (source) |
 | Category (e.g. system)  | `#c39bff`            |
+| Data in / data out      | `#6fcf97` (↓) / `#ff8fa3` (↑); both = white |
 
 - Font **Segoe UI**: 12 px in WPF flyouts, 9 pt in WinForms.
 - Never convey meaning by colour alone — pair it with a glyph/label (PortWatch: `+N` badges, a legend footer).

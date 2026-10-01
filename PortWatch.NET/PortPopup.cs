@@ -23,11 +23,15 @@ internal sealed class PortPopup : TrayFlyoutWindow
     private static readonly System.Windows.Media.Brush HlRow  = Frozen("#3b4a5e");
     private static readonly System.Windows.Media.Brush HlSrc  = Frozen("#4f6680");
     private static readonly System.Windows.Media.Brush Clear  = System.Windows.Media.Brushes.Transparent;
+    private static readonly System.Windows.Media.Brush InFg   = Frozen("#6fcf97");   // receiving
+    private static readonly System.Windows.Media.Brush OutFg  = Frozen("#ff8fa3");   // sending
+    private static readonly System.Windows.Media.Brush Active = Frozen("#ffffff");   // a port with live traffic
 
-    private sealed record Token(string Protocol, PortSegment Segment);
-    private sealed record RowView(ProcessRow Data, Border Container, List<Token> Tokens);
+    private sealed record Token(string Protocol, PortSegment Segment, System.Windows.Documents.Run Port, System.Windows.Documents.Run Arrow);
+    private sealed record RowView(ProcessRow Data, Border Container, List<Token> Tokens, System.Windows.Documents.Run In, System.Windows.Documents.Run Out);
 
     private readonly StackPanel _rows = new();
+    private readonly TextBlock _footer = new() { Margin = new Thickness(10, 4, 10, 6), Foreground = Dim, FontSize = 11 };
     private readonly List<RowView> _views = new();
 
     public PortPopup()
@@ -43,11 +47,7 @@ internal sealed class PortPopup : TrayFlyoutWindow
         Top  = -10000;
         new WindowInteropHelper(this).EnsureHandle();   // pay window-creation cost up front, not during a hover
 
-        var footer = new TextBlock { Margin = new Thickness(10, 4, 10, 6), Foreground = Dim, FontSize = 11 };
-        footer.Inlines.Add(new System.Windows.Documents.Run("■ ") { Foreground = SysFg });
-        footer.Inlines.Add("system   ");
-        footer.Inlines.Add(new System.Windows.Documents.Run("+N ") { Foreground = Warn });
-        footer.Inlines.Add("TCP port shared   +N UDP shared   hover a port to highlight");
+        FillFooter(null);
 
         var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -58,9 +58,9 @@ internal sealed class PortPopup : TrayFlyoutWindow
             Padding = new Thickness(6, 6, 6, 4),
             Content = _rows,
         };
-        Grid.SetRow(footer, 1);
+        Grid.SetRow(_footer, 1);
         grid.Children.Add(scroll);
-        grid.Children.Add(footer);
+        grid.Children.Add(_footer);
 
         Content = new Border
         {
@@ -85,8 +85,12 @@ internal sealed class PortPopup : TrayFlyoutWindow
             });
             string pids = r.Pids.Count == 1 ? $" ({r.Pids[0]})" : $" (×{r.Pids.Count})";
             line.Inlines.Add(new System.Windows.Documents.Run(pids) { Foreground = Dim });
+            var inRun  = new System.Windows.Documents.Run("") { Foreground = InFg };
+            var outRun = new System.Windows.Documents.Run("") { Foreground = OutFg };
+            line.Inlines.Add(inRun);
+            line.Inlines.Add(outRun);
 
-            var view = new RowView(r, new Border { Padding = new Thickness(4, 2, 4, 2), Child = line, Background = Clear }, new List<Token>());
+            var view = new RowView(r, new Border { Padding = new Thickness(4, 2, 4, 2), Child = line, Background = Clear }, new List<Token>(), inRun, outRun);
             AddPorts(line, view, "TCP", r.Tcp, counts);
             AddPorts(line, view, "UDP", r.Udp, counts);
             _rows.Children.Add(view.Container);
@@ -102,10 +106,12 @@ internal sealed class PortPopup : TrayFlyoutWindow
         {
             var seg = segs[i];
             var run = new System.Windows.Documents.Run(seg.Text) { Foreground = PortFg };
-            view.Tokens.Add(new Token(proto, seg));
+            var arrow = new System.Windows.Documents.Run("") { FontWeight = FontWeights.Bold };
+            view.Tokens.Add(new Token(proto, seg, run, arrow));
             run.MouseEnter += (_, _) => Highlight(proto, seg.Ports, view);
             run.MouseLeave += (_, _) => ClearHighlight();
             line.Inlines.Add(run);
+            line.Inlines.Add(arrow);
 
             int others = PortGrouper.OtherSharers(proto, seg, counts);
             if (others > 0)
@@ -127,6 +133,56 @@ internal sealed class PortPopup : TrayFlyoutWindow
     private void ClearHighlight()
     {
         foreach (var v in _views) v.Container.Background = Clear;
+    }
+
+    /// <summary>Footer legend; with <paramref name="trafficError"/> set, says why live traffic is missing instead.</summary>
+    public void SetTrafficStatus(string? trafficError) => FillFooter(trafficError);
+
+    private void FillFooter(string? trafficError)
+    {
+        _footer.Inlines.Clear();
+        _footer.Inlines.Add(new System.Windows.Documents.Run("\u25A0 ") { Foreground = SysFg });
+        _footer.Inlines.Add("system   ");
+        _footer.Inlines.Add(new System.Windows.Documents.Run("+N ") { Foreground = Warn });
+        _footer.Inlines.Add("shared   ");
+        if (trafficError is null)
+        {
+            _footer.Inlines.Add(new System.Windows.Documents.Run("\u2193 ") { Foreground = InFg });
+            _footer.Inlines.Add("in   ");
+            _footer.Inlines.Add(new System.Windows.Documents.Run("\u2191 ") { Foreground = OutFg });
+            _footer.Inlines.Add("out   hover a port to highlight");
+        }
+        else
+        {
+            _footer.Inlines.Add(new System.Windows.Documents.Run(trafficError) { Foreground = Warn });
+        }
+    }
+
+    /// <summary>Applies live throughput: per-process rates, and an arrow beside every port that is moving data.</summary>
+    public void UpdateTraffic(TrafficSnapshot snapshot)
+    {
+        foreach (var v in _views)
+        {
+            var total = snapshot.ForProcess(v.Data.Pids);
+            v.In.Text  = total.InBps  > 0 ? $"   \u2193 {TrafficFormat.Bytes(total.InBps)}"  : "";
+            v.Out.Text = total.OutBps > 0 ? $"   \u2191 {TrafficFormat.Bytes(total.OutBps)}" : "";
+
+            foreach (var t in v.Tokens)
+            {
+                var rate = snapshot.ForPorts(t.Protocol, v.Data.Pids, t.Segment.Ports);
+                t.Arrow.Text       = rate.Active ? " " + TrafficFormat.Arrow(rate) : "";
+                t.Arrow.Foreground = rate.InBps > 0 && rate.OutBps > 0 ? Active : rate.InBps > 0 ? InFg : OutFg;
+                t.Port.Foreground  = rate.Active ? Active : PortFg;
+            }
+        }
+    }
+
+    /// <summary>The text of one process's row as displayed (diagnostics / tests).</summary>
+    public string RowText(string processName)
+    {
+        var view = _views.FirstOrDefault(v => v.Data.Name.Equals(processName, StringComparison.OrdinalIgnoreCase));
+        if (view?.Container.Child is not TextBlock tb) return "";
+        return string.Concat(tb.Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text));
     }
 
     /// <summary>Same code path as hovering a port; lets agents/tests render the highlighted state.</summary>

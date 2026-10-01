@@ -26,6 +26,7 @@ PortWatch.NET/bin/
 PortWatch.NET/obj/
 PortWatch.NET.Tests/bin/
 PortWatch.NET.Tests/obj/
+PortWatch.NET.Tests/TestResults/
 
 # RefreshRateOverlay.WPF build artifacts
 RefreshRateOverlay.WPF/bin/
