@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace PortWatch;
 
 internal enum TrafficDirection { In, Out }
@@ -75,18 +73,24 @@ internal sealed class TrafficTracker
         _startSec = _clockMs() / 1000;
     }
 
-    public void Record(TrafficEvent e)
+    /// <param name="atMs">
+    /// When the traffic happened, in this tracker's clock. ETW delivers in bursts about a second late, so
+    /// bucketing by arrival would pile a whole burst into the still-filling current second. Defaults to now.
+    /// </param>
+    public void Record(TrafficEvent e, long? atMs = null)
     {
         if (e.Bytes <= 0) return;
 
-        long sec = _clockMs() / 1000;
+        long now = _clockMs();
+        long sec = (atMs ?? now) / 1000;
         var key = new Key(e.Protocol, e.Direction, e.Pid, e.SourcePort, e.DestPort);
         lock (_gate)
         {
             if (!_seconds.TryGetValue(sec, out var bucket)) _seconds[sec] = bucket = new Dictionary<Key, long>();
             bucket[key] = bucket.GetValueOrDefault(key) + e.Bytes;
 
-            while (_seconds.Count > 0 && _seconds.Keys.First() < sec - RetainSeconds)
+            long newest = now / 1000;
+            while (_seconds.Count > 0 && _seconds.Keys.First() < newest - RetainSeconds)
                 _seconds.Remove(_seconds.Keys.First());
         }
     }
@@ -144,33 +148,5 @@ internal sealed class TrafficTracker
         if (ports.Contains(first)) return first;
         if (ports.Contains(second)) return second;
         return null;
-    }
-}
-
-internal static class TrafficFormat
-{
-    /// <summary>"340 B/s", "1.2 KB/s", "56 MB/s" (1024-based, one decimal below 10).</summary>
-    public static string Bytes(double bytesPerSecond)
-    {
-        string[] units = ["B/s", "KB/s", "MB/s", "GB/s"];
-        double v = bytesPerSecond;
-        int i = 0;
-        while (v >= 1024 && i < units.Length - 1) { v /= 1024; i++; }
-
-        string number = i > 0 && v < 10 ? v.ToString("0.0", CultureInfo.InvariantCulture) : v.ToString("0", CultureInfo.InvariantCulture);
-        return $"{number} {units[i]}";
-    }
-
-    /// <summary>↓ receiving, ↑ sending, ↕ both, empty when idle.</summary>
-    public static string Arrow(Rate r) =>
-        r.InBps > 0 && r.OutBps > 0 ? "↕" : r.InBps > 0 ? "↓" : r.OutBps > 0 ? "↑" : "";
-
-    /// <summary>"↓ 1.2 MB/s  ↑ 40 KB/s" with only the active directions; empty when idle.</summary>
-    public static string Summary(Rate r)
-    {
-        var parts = new List<string>();
-        if (r.InBps > 0)  parts.Add($"↓ {Bytes(r.InBps)}");
-        if (r.OutBps > 0) parts.Add($"↑ {Bytes(r.OutBps)}");
-        return string.Join("  ", parts);
     }
 }

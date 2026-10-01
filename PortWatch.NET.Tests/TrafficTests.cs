@@ -49,6 +49,30 @@ public class TrafficTrackerTests
     }
 
     [Fact]
+    public void A_late_delivered_event_is_counted_in_the_second_it_happened()
+    {
+        var (t, clock) = Make();
+        clock.Advance(5);
+        long happened = clock.Ms;                       // traffic at second 5...
+        clock.Advance(1);                               // ...delivered a second later, in a burst
+        t.Record(new("UDP", TrafficDirection.In, 7, 50000, 5353, 4000), atMs: happened);
+        clock.Advance(1);
+
+        Assert.Equal(2000, t.Snapshot([Bound("UDP", 5353, 7)]).ForProcess([7]).InBps);   // 4000 B / 2 s
+    }
+
+    [Fact]
+    public void Without_an_event_time_the_event_counts_as_now()
+    {
+        var (t, clock) = Make();
+        clock.Advance(5);
+        t.Record(new("UDP", TrafficDirection.In, 7, 50000, 5353, 4000));
+        clock.Advance(1);
+
+        Assert.True(t.Snapshot([Bound("UDP", 5353, 7)]).ForProcess([7]).InBps > 0);
+    }
+
+    [Fact]
     public void Old_traffic_falls_out_of_the_window()
     {
         var (t, clock) = Make();
@@ -161,35 +185,6 @@ public class TrafficTrackerTests
     }
 }
 
-public class TrafficFormatTests
-{
-    [Theory]
-    [InlineData(0,        "0 B/s")]
-    [InlineData(340,      "340 B/s")]
-    [InlineData(1024,     "1.0 KB/s")]
-    [InlineData(1536,     "1.5 KB/s")]
-    [InlineData(40960,    "40 KB/s")]
-    [InlineData(1258291,  "1.2 MB/s")]
-    [InlineData(58720256, "56 MB/s")]
-    public void Formats_rates(double bps, string expected) => Assert.Equal(expected, TrafficFormat.Bytes(bps));
-
-    [Theory]
-    [InlineData(0,  0,  "")]
-    [InlineData(10, 0,  "↓")]
-    [InlineData(0,  10, "↑")]
-    [InlineData(10, 10, "↕")]
-    public void Picks_an_arrow(double inBps, double outBps, string expected) =>
-        Assert.Equal(expected, TrafficFormat.Arrow(new Rate(inBps, outBps)));
-
-    [Fact]
-    public void Summary_lists_only_active_directions()
-    {
-        Assert.Equal("", TrafficFormat.Summary(default));
-        Assert.Equal("↓ 1.0 KB/s", TrafficFormat.Summary(new Rate(1024, 0)));
-        Assert.Equal("↓ 1.0 KB/s  ↑ 340 B/s", TrafficFormat.Summary(new Rate(1024, 340)));
-    }
-}
-
 /// <summary>Real ETW capture. Needs an elevated test process (kernel traces do); returns early otherwise.</summary>
 public class TrafficCollectorLiveTests
 {
@@ -207,24 +202,38 @@ public class TrafficCollectorLiveTests
         using var sender = new UdpClient();
         var target = new IPEndPoint(IPAddress.Loopback, port);
         byte[] payload = new byte[1000];
+        int pid = Environment.ProcessId;
+        var bound = new[] { new PortEntry("UDP", port, pid, "testhost") };
 
-        // Drain on a thread so the socket buffer never fills; send ~100 KB/s for just over 3 seconds.
-        var cts = new CancellationTokenSource();
-        var drain = Task.Run(() =>
+        // Keep traffic flowing (~100 KB/s) and drain it so the socket buffer never fills...
+        using var cts = new CancellationTokenSource();
+        var drain = new Thread(() =>
         {
             var any = new IPEndPoint(IPAddress.Any, 0);
             while (!cts.IsCancellationRequested) { try { receiver.Receive(ref any); } catch { break; } }
-        });
-        var until = DateTime.UtcNow.AddMilliseconds(3300);
-        while (DateTime.UtcNow < until) { sender.Send(payload, payload.Length, target); Thread.Sleep(10); }
+        }) { IsBackground = true };
+        var send = new Thread(() =>
+        {
+            while (!cts.IsCancellationRequested) { try { sender.Send(payload, payload.Length, target); } catch { break; } Thread.Sleep(10); }
+        }) { IsBackground = true };
+        drain.Start(); send.Start();
 
-        int pid = Environment.ProcessId;
-        var snap = collector!.Tracker.Snapshot([new PortEntry("UDP", port, pid, "testhost")]);
+        // ...and poll for the result. ETW delivers about a second late and the rate window only counts completed
+        // seconds, so how long the first reading takes depends on machine load; fail only if it never arrives.
+        TrafficSnapshot snap = TrafficSnapshot.Empty;
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(250);
+            snap = collector!.Tracker.Snapshot(bound);
+            if (snap.ForPorts("UDP", [pid], [port]).InBps > 1_000) break;
+        }
         cts.Cancel(); receiver.Close();
 
-        string diag = $"events={collector.EventCount}; log=[{string.Join(" | ", log)}]";
+        string diag = $"events={collector!.EventCount}; log=[{string.Join(" | ", log)}]";
         Assert.True(collector.EventCount > 0, "no kernel network events were delivered. " + diag);
         Assert.True(snap.ForProcess([pid]).Active, "no traffic attributed to this process. " + diag);
-        Assert.True(snap.ForPorts("UDP", [pid], [port]).InBps > 10_000, "receive rate on the bound port too low. " + diag);
+        // Capture + attribution is what is under test, not throughput (a loaded machine sends fewer packets per second).
+        Assert.True(snap.ForPorts("UDP", [pid], [port]).InBps > 1_000, "receive rate on the bound port too low. " + diag);
     }
 }

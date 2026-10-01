@@ -120,6 +120,10 @@ Dark only; there is no light theme. One palette across apps:
 | Data in / data out      | `#6fcf97` (↓) / `#ff8fa3` (↑); both = white |
 
 - Font **Segoe UI**: 12 px in WPF flyouts, 9 pt in WinForms.
+- **A live flyout must not move.** Show changing state with colour only, never by adding or removing text: reserve a
+  fixed slot for every state indicator (PortWatch lays out a `↓↑` pair for every process and port and just recolours it,
+  transparent when idle) so widths, wrapping and scroll positions stay put. Don't show numbers that change every second.
+  Cover it with a test that compares window size and full text before/after a state change.
 - Never convey meaning by colour alone — pair it with a glyph/label (PortWatch: `+N` badges, a legend footer).
 - Secondary information is dimmed, not smaller than 10 px. Padding 6–10 px. Keep dense lists to one line per item.
 - Tray icon: a real `.ico` embedded as a resource with `SystemIcons.Application` as the fallback (AggressiveScreensaver does

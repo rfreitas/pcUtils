@@ -15,18 +15,17 @@ public class PortPopupTrafficTests
         new("TCP", 49664, 5, "lsass", IsSystem: true),
     ];
 
-    /// <summary>A snapshot where chrome receives, Virtual Desktop sends and receives, everything else is idle.</summary>
+    /// <summary>chrome receives, Virtual Desktop sends and receives, a server only sends, the rest idle.</summary>
     private static TrafficSnapshot Busy()
     {
         long ms = 10_000_000;
         var tracker = new TrafficTracker(() => ms);
         ms += 5_000;
-        // chrome: 4 KB/s in on 5353
-        tracker.Record(new("UDP", TrafficDirection.In, 11, 55000, 5353, 8192));
-        // Virtual Desktop streamer: heavy out on UDP 38850, light in on TCP 38810
-        tracker.Record(new("UDP", TrafficDirection.Out, 21, 38850, 60000, 3_000_000));
-        tracker.Record(new("UDP", TrafficDirection.In,  21, 60000, 38850, 40_000));
-        tracker.Record(new("TCP", TrafficDirection.In,  21, 51000, 38810, 2048));
+        tracker.Record(new("UDP", TrafficDirection.In, 11, 55000, 5353, 8192));              // chrome: in on 5353
+        tracker.Record(new("UDP", TrafficDirection.Out, 21, 38850, 60000, 3_000_000));        // VD: out on UDP 38850
+        tracker.Record(new("UDP", TrafficDirection.In,  21, 60000, 38850, 40_000));           //     and in on UDP 38850
+        tracker.Record(new("TCP", TrafficDirection.In,  21, 51000, 38810, 2048));             //     in on TCP 38810
+        tracker.Record(new("TCP", TrafficDirection.Out, 31, 8080, 52000, 1000));              // server: out on 8080
         ms += 1_000;
         return tracker.Snapshot(Entries);
     }
@@ -40,60 +39,88 @@ public class PortPopupTrafficTests
         Assert.True(error is null, error?.ToString());
     }
 
+    private static PortPopup Make()
+    {
+        var popup = new PortPopup();
+        popup.SetRows(PortGrouper.Group(Entries));
+        return popup;
+    }
+
     [Fact]
-    public void Busy_processes_show_rates_and_idle_ones_show_nothing()
+    public void Processes_light_their_arrows_by_direction()
     {
         OnSta(() =>
         {
-            var popup = new PortPopup();
-            popup.SetRows(PortGrouper.Group(Entries));
+            var popup = Make();
             popup.UpdateTraffic(Busy());
 
-            Assert.Contains("↓ 4.0 KB/s", popup.RowText("chrome"));
-            Assert.DoesNotContain("↑", popup.RowText("chrome"));
-
-            string vd = popup.RowText("VirtualDesktop.Streamer");
-            Assert.Contains("↑ 1.4 MB/s", vd);
-            Assert.Contains("↓", vd);
-
-            Assert.DoesNotContain("/s", popup.RowText("idle-server"));
-            Assert.DoesNotContain("/s", popup.RowText("svchost"));
+            Assert.Equal("in",   popup.ProcessActivity("chrome"));
+            Assert.Equal("both", popup.ProcessActivity("VirtualDesktop.Streamer"));
+            Assert.Equal("out",  popup.ProcessActivity("idle-server"));
+            Assert.Equal("idle", popup.ProcessActivity("svchost"));
             popup.Close();
         });
     }
 
     [Fact]
-    public void Only_the_ports_that_move_data_get_an_arrow()
+    public void Ports_light_their_arrows_and_their_number_changes_colour()
     {
         OnSta(() =>
         {
-            var popup = new PortPopup();
-            popup.SetRows(PortGrouper.Group(Entries));
+            var popup = Make();
             popup.UpdateTraffic(Busy());
 
-            string vd = popup.RowText("VirtualDesktop.Streamer");
-            Assert.Contains("38810 ↓", vd);    // TCP 38810 receives
-            Assert.Contains("38850 ↕", vd);    // UDP 38850 sends and receives
-            Assert.DoesNotContain("8080 ↓", popup.RowText("idle-server"));
-            Assert.Equal("   TCP 8080", popup.RowText("idle-server").Substring(popup.RowText("idle-server").IndexOf("   TCP")));
+            Assert.Equal("in",   popup.PortActivity("VirtualDesktop.Streamer", "TCP", 38810));
+            Assert.Equal("both", popup.PortActivity("VirtualDesktop.Streamer", "UDP", 38850));
+            Assert.Equal("out",  popup.PortActivity("idle-server", "TCP", 8080));
+            Assert.Equal("idle", popup.PortActivity("svchost", "TCP", 135));
+
+            Assert.Same(PortPopup.InBrush,   popup.PortBrush("VirtualDesktop.Streamer", "TCP", 38810));
+            Assert.Same(PortPopup.BothBrush, popup.PortBrush("VirtualDesktop.Streamer", "UDP", 38850));
+            Assert.Same(PortPopup.OutBrush,  popup.PortBrush("idle-server", "TCP", 8080));
+            Assert.Same(PortPopup.IdleBrush, popup.PortBrush("svchost", "TCP", 135));
             popup.Close();
         });
     }
 
     [Fact]
-    public void Traffic_that_stops_clears_the_arrows_again()
+    public void Traffic_changes_never_change_the_layout()
     {
         OnSta(() =>
         {
-            var popup = new PortPopup();
-            popup.SetRows(PortGrouper.Group(Entries));
+            var popup = Make();
+            popup.UpdateLayout();
+            popup.Show();
+            var before = (popup.ActualWidth, popup.ActualHeight);
+            string idleText = popup.AllText();
+
             popup.UpdateTraffic(Busy());
-            Assert.Contains("/s", popup.RowText("chrome"));
+            popup.UpdateLayout();
+            var busy = (popup.ActualWidth, popup.ActualHeight);
 
             popup.UpdateTraffic(TrafficSnapshot.Empty);
+            popup.UpdateLayout();
+            var after = (popup.ActualWidth, popup.ActualHeight);
 
-            Assert.DoesNotContain("/s", popup.RowText("chrome"));
-            Assert.DoesNotContain("↓", popup.RowText("chrome"));
+            Assert.Equal(before, busy);
+            Assert.Equal(before, after);
+            Assert.Equal(idleText, popup.AllText());   // not one character of text changed either
+            popup.Close();
+        });
+    }
+
+    [Fact]
+    public void Traffic_that_stops_returns_everything_to_idle()
+    {
+        OnSta(() =>
+        {
+            var popup = Make();
+            popup.UpdateTraffic(Busy());
+            popup.UpdateTraffic(TrafficSnapshot.Empty);
+
+            Assert.Equal("idle", popup.ProcessActivity("chrome"));
+            Assert.Equal("idle", popup.PortActivity("VirtualDesktop.Streamer", "UDP", 38850));
+            Assert.Same(PortPopup.IdleBrush, popup.PortBrush("VirtualDesktop.Streamer", "UDP", 38850));
             popup.Close();
         });
     }
@@ -103,11 +130,9 @@ public class PortPopupTrafficTests
     {
         OnSta(() =>
         {
-            var popup = new PortPopup();
+            var popup = Make();
             popup.SetTrafficStatus("Traffic needs an elevated PortWatch.");
-            // Rendering must not throw with the warning footer.
             string path = Path.Combine(AppContext.BaseDirectory, "portwatch_traffic_unavailable.png");
-            popup.SetRows(PortGrouper.Group(Entries));
             popup.RenderToPng(path);
             Assert.True(new FileInfo(path).Length > 0);
             popup.Close();
@@ -119,8 +144,7 @@ public class PortPopupTrafficTests
     {
         OnSta(() =>
         {
-            var popup = new PortPopup();
-            popup.SetRows(PortGrouper.Group(Entries));
+            var popup = Make();
             popup.UpdateTraffic(Busy());
             string path = Path.Combine(AppContext.BaseDirectory, "portwatch_traffic.png");
             popup.RenderToPng(path);
