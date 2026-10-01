@@ -16,6 +16,7 @@ internal static class NativeScreensaverService
     private static extern bool SystemParametersInfoUInt(uint uiAction, uint uiParam, ref uint pvParam, uint fWinIni);
 
     private const uint SPI_GETSCREENSAVETIMEOUT = 0x000E;
+    private const uint SPI_SETSCREENSAVETIMEOUT = 0x000F;
     private const uint SPI_GETSCREENSAVEACTIVE = 0x0010;
     private const uint SPI_SETSCREENSAVEACTIVE = 0x0011;
     private const uint SPIF_UPDATEINIFILE      = 0x01;
@@ -33,6 +34,14 @@ internal static class NativeScreensaverService
     {
         uint seconds = 0;
         return SystemParametersInfoUInt(SPI_GETSCREENSAVETIMEOUT, 0, ref seconds, 0) ? (int)seconds : 0;
+    }
+
+    /// <summary>Sets the Windows screensaver idle timeout (seconds) and persists it.</summary>
+    public static bool SetTimeoutSeconds(int seconds)
+    {
+        uint unused = 0;
+        return seconds > 0 &&
+               SystemParametersInfoUInt(SPI_SETSCREENSAVETIMEOUT, (uint)seconds, ref unused, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
     }
 
     public static bool SetActive(bool active)

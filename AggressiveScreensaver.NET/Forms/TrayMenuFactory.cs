@@ -246,9 +246,11 @@ internal static class TrayMenuFactory
                 {
                     reverting = true;
                     item.Checked = !item.Checked;
-                    item.Text = NativeText(item.Checked);
                     reverting = false;
                 }
+
+                // Re-read after the callback: turning it on also re-syncs the timeout shown in the label.
+                item.Text = NativeText(item.Checked);
             };
         }
         else

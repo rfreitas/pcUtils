@@ -416,4 +416,19 @@ public class TrayMenuBehaviorTests
 
         Assert.Equal("✓ Native Screensaver (2m)", item.Text);
     }
+
+    [Fact]
+    public void NativeScreensaver_Enabling_RefreshesTheLabelAfterTheCallbackChangedTheTimeout()
+    {
+        int seconds = 600;
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, nativeScreensaverActive: false,
+            getNativeScreensaverTimeoutSec: () => seconds,
+            onNativeScreensaverChanged: _ => { seconds = 30; return true; });   // enabling re-syncs the timeout
+        var item = Item(menu, "Native Screensaver");
+        Assert.EndsWith("(10m)", item.Text);
+
+        item.Checked = true;
+
+        Assert.Equal("✓ Native Screensaver (30s)", item.Text);
+    }
 }

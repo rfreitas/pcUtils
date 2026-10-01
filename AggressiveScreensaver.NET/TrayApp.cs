@@ -39,6 +39,7 @@ internal sealed class TrayApp : IDisposable
     // Settings
     // -------------------------------------------------------------------------
     private int  _blankThresholdSec;
+    private readonly NativeScreensaverSync _nativeSync = NativeScreensaverSync.ForSystem(Logger.Log);
     private bool _suppressFullscreen;
     private bool _ignoreUnfocusedBlockers;
     private bool _ignoreNonvisibleBlockers;
@@ -58,6 +59,7 @@ internal sealed class TrayApp : IDisposable
         _ini = new IniStore(iniPath);
 
         _blankThresholdSec       = _ini.ReadInt("Settings", "BlankThreshold",    30);
+        _nativeSync.OnThresholdChanged(_blankThresholdSec);   // keep Windows' screensaver timer equal to ours
         _suppressFullscreen      = _ini.ReadInt("Settings", "SuppressFullscreen", 0) != 0;
         _ignoreUnfocusedBlockers  = _ini.ReadInt("Settings", "IgnoreUnfocusedBlockers", 1) != 0;
         _ignoreNonvisibleBlockers = _ini.ReadInt("Settings", "IgnoreNonvisibleBlockers", 0) != 0;
@@ -356,6 +358,7 @@ internal sealed class TrayApp : IDisposable
     private bool HandleNativeScreensaverToggle(bool wantEnabled)
     {
         bool ok = NativeScreensaverService.SetActive(wantEnabled);
+        if (ok && wantEnabled) _nativeSync.OnEnabled(_blankThresholdSec);
         Logger.Log($"Native screensaver {(wantEnabled ? "enabled" : "disabled")} via tray menu.{(ok ? "" : " (failed)")}");
         return ok;
     }
@@ -395,6 +398,7 @@ internal sealed class TrayApp : IDisposable
                 onChanged: sec =>
                 {
                     _blankThresholdSec = sec;
+                    _nativeSync.OnThresholdChanged(sec);
                     _ini.DebouncedSave(() => _ini.WriteInt("Settings", "BlankThreshold", _blankThresholdSec));
                     UpdateTooltip();
                     Logger.Log($"BlankThreshold changed to {sec}s");
