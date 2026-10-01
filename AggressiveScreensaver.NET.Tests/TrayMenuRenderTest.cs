@@ -59,4 +59,17 @@ public class TrayMenuRenderTest
         Assert.True(new FileInfo(path).Length > 0, "PNG file is empty");
         Console.WriteLine($"View: {path}");
     }
+
+    [Theory]
+    [MemberData(nameof(RenderHelper.ScaleFactors), MemberType = typeof(RenderHelper))]
+    public void RenderMenu_NativeScreensaver_WithTimeout_SavesToPng(float scale, string dpiLabel)
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: true, nativeScreensaverActive: true,
+            getNativeScreensaverTimeoutSec: () => 300);
+        string path = RenderHelper.CaptureMenu(menu, $"tray_menu_native_screensaver_{dpiLabel}", scaleFactor: scale);
+
+        Assert.True(File.Exists(path), $"Expected PNG at {path}");
+        Assert.True(new FileInfo(path).Length > 0, "PNG file is empty");
+        Console.WriteLine($"View: {path}");
+    }
 }

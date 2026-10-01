@@ -322,6 +322,7 @@ internal sealed class TrayApp : IDisposable
             ignoreNonvisibleBlockers:         _ignoreNonvisibleBlockers,
             nativeScreensaverActive:          NativeScreensaverService.IsActive(),
             isNativeScreensaverActive:        NativeScreensaverService.IsActive,
+            getNativeScreensaverTimeoutSec:   NativeScreensaverService.GetTimeoutSeconds,
             onIgnoreList:                     ShowIgnoreListForm,
             onDebug:                          ShowDebugForm,
             onStartupChanged:                 HandleStartupToggle,

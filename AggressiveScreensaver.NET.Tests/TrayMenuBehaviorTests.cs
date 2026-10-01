@@ -357,4 +357,63 @@ public class TrayMenuBehaviorTests
 
         Assert.False(written);
     }
+
+    // -------------------------------------------------------------------------
+    // Native Screensaver — shows the Windows timeout in parentheses
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(60,  "Native Screensaver (1m)")]
+    [InlineData(59,  "Native Screensaver (59s)")]
+    [InlineData(300, "Native Screensaver (5m)")]
+    [InlineData(90,  "Native Screensaver (1m 30s)")]
+    public void NativeScreensaver_Label_ShowsTheTimeout(int seconds, string expected)
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, getNativeScreensaverTimeoutSec: () => seconds);
+        Assert.EndsWith(expected, Item(menu, "Native Screensaver").Text);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NativeScreensaver_Label_OmitsTheTimeoutWhenUnknown(int seconds)
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, getNativeScreensaverTimeoutSec: () => seconds);
+        Assert.DoesNotContain("(", Item(menu, "Native Screensaver").Text);
+    }
+
+    [Fact]
+    public void NativeScreensaver_Label_WithoutAProbe_IsPlain()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false);
+        Assert.Equal("   Native Screensaver", Item(menu, "Native Screensaver").Text);
+    }
+
+    [Fact]
+    public void NativeScreensaver_Opening_RefreshesTheTimeoutEvenWhenTheCheckStateIsUnchanged()
+    {
+        int seconds = 60;
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, nativeScreensaverActive: true,
+            isNativeScreensaverActive: () => true, getNativeScreensaverTimeoutSec: () => seconds);
+        var item = Item(menu, "Native Screensaver");
+        Assert.EndsWith("(1m)", item.Text);
+
+        seconds = 600;   // changed in Windows Settings
+        RaiseOpening(menu);
+
+        Assert.True(item.Checked);
+        Assert.Equal("✓ Native Screensaver (10m)", item.Text);
+    }
+
+    [Fact]
+    public void NativeScreensaver_Toggle_KeepsTheTimeoutInTheLabel()
+    {
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, nativeScreensaverActive: false,
+            getNativeScreensaverTimeoutSec: () => 120, onNativeScreensaverChanged: _ => true);
+        var item = Item(menu, "Native Screensaver");
+
+        item.Checked = true;
+
+        Assert.Equal("✓ Native Screensaver (2m)", item.Text);
+    }
 }
