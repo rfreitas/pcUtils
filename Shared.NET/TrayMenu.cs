@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows.Forms;
 
 namespace Shared;
@@ -56,6 +57,33 @@ internal static class TrayMenu
             reverting    = false;
         };
         return item;
+    }
+
+    /// <summary>
+    /// A set of mutually exclusive rows drawn like checkboxes (✓ on the selected one). Clicking a row selects it and
+    /// calls <paramref name="onSelect"/> with its index; clicking the selected row again does nothing.
+    /// </summary>
+    public static IReadOnlyList<ToolStripMenuItem> RadioGroup(IReadOnlyList<string> labels, int selected, Action<int> onSelect)
+    {
+        var items = new List<ToolStripMenuItem>();
+        for (int i = 0; i < labels.Count; i++)
+        {
+            int index = i;
+            var item = new ToolStripMenuItem(Prefix(i == selected) + labels[i]) { Checked = i == selected };
+            item.Click += (_, _) =>
+            {
+                if (items[index].Checked) return;
+
+                for (int j = 0; j < items.Count; j++)
+                {
+                    items[j].Checked = j == index;
+                    items[j].Text    = Prefix(j == index) + labels[j];
+                }
+                onSelect(index);
+            };
+            items.Add(item);
+        }
+        return items;
     }
 
     /// <summary>

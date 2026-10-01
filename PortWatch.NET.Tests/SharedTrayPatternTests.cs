@@ -76,6 +76,55 @@ public class TrayMenuTests
     }
 }
 
+public class TrayMenuRadioTests
+{
+    private static IReadOnlyList<ToolStripMenuItem> Make(int selected, Action<int>? on = null) =>
+        TrayMenu.RadioGroup(["Ports", "Processes", "Both"], selected, on ?? (_ => { }));
+
+    [Fact]
+    public void The_selected_row_is_ticked_and_the_others_are_aligned()
+    {
+        var items = Make(1);
+        Assert.Equal(["   Ports", "✓ Processes", "   Both"], items.Select(i => i.Text));
+        Assert.Equal([false, true, false], items.Select(i => i.Checked));
+    }
+
+    [Fact]
+    public void Clicking_another_row_moves_the_tick_and_reports_the_index()
+    {
+        int? chosen = null;
+        var items = Make(0, i => chosen = i);
+
+        items[2].PerformClick();
+
+        Assert.Equal(2, chosen);
+        Assert.Equal(["   Ports", "   Processes", "✓ Both"], items.Select(i => i.Text));
+        Assert.Equal([false, false, true], items.Select(i => i.Checked));
+    }
+
+    [Fact]
+    public void Clicking_the_selected_row_again_does_nothing()
+    {
+        int calls = 0;
+        var items = Make(0, _ => calls++);
+
+        items[0].PerformClick();
+
+        Assert.Equal(0, calls);
+        Assert.True(items[0].Checked);
+    }
+
+    [Fact]
+    public void Exactly_one_row_is_ticked_after_any_sequence_of_clicks()
+    {
+        var items = Make(0);
+        foreach (int i in new[] { 2, 1, 1, 0, 2 }) items[i].PerformClick();
+
+        Assert.Single(items.Where(i => i.Checked));
+        Assert.Single(items.Where(i => i.Text.StartsWith("✓")));
+    }
+}
+
 public class SingleInstanceGuardTests
 {
     [Fact]

@@ -12,6 +12,24 @@ internal readonly record struct Rate(double InBps, double OutBps)
     public static Rate operator +(Rate a, Rate b) => new(a.InBps + b.InBps, a.OutBps + b.OutBps);
 }
 
+/// <summary>
+/// Keeps an arrow lit for a while after its traffic stops, so brief gaps in a stream don't flicker and a
+/// burst is still visible a moment later. One latch per arrow target; in and out are held independently.
+/// </summary>
+internal sealed class ActivityLatch
+{
+    private long _inMs  = -1_000_000_000;
+    private long _outMs = -1_000_000_000;
+
+    /// <summary>Records the current rate and reports which directions are lit (active now, or within <paramref name="holdMs"/>).</summary>
+    public (bool In, bool Out) Observe(Rate rate, long nowMs, long holdMs)
+    {
+        if (rate.InBps  > 0) _inMs  = nowMs;
+        if (rate.OutBps > 0) _outMs = nowMs;
+        return (nowMs - _inMs < holdMs, nowMs - _outMs < holdMs);
+    }
+}
+
 /// <summary>An immutable view of current throughput, per process and per (protocol, process, port).</summary>
 internal sealed class TrafficSnapshot
 {

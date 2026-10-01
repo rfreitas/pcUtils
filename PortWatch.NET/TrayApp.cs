@@ -18,7 +18,8 @@ internal sealed class TrayApp : IDisposable
 
     private readonly NotifyIcon _tray;
     private readonly PortPopup _popup = new();
-    private readonly System.Windows.Threading.DispatcherTimer _trafficTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly Settings _settings = Settings.Load(Settings.DefaultPath);
+    private readonly System.Windows.Threading.DispatcherTimer _trafficTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
     private TrafficCollector? _traffic;
     private IReadOnlyList<PortEntry> _entries = [];
 
@@ -38,9 +39,17 @@ internal sealed class TrayApp : IDisposable
         _popup.IsVisibleChanged += (_, e) => { if (!(bool)e.NewValue) StopTraffic(); };
     }
 
-    private static ContextMenuStrip BuildContextMenu()
+    private ContextMenuStrip BuildContextMenu()
     {
         var menu = TrayMenu.Create();
+        menu.Items.Add(TrayMenu.Header("Traffic arrows on"));
+        foreach (var item in TrayMenu.RadioGroup(["Ports", "Processes"], (int)_settings.Arrows, i =>
+        {
+            _settings.Arrows = (ArrowTarget)i;   // takes effect the next time the flyout opens
+            _settings.Save();
+        }))
+            menu.Items.Add(item);
+        menu.Items.Add(new ToolStripSeparator());
         // The manifest is requireAdministrator (kernel network tracing), so the logon task must match it.
         menu.Items.Add(TrayMenu.StartAtLoginItem(TaskName, ExePath, TaskDescription, requireElevation: true, Logger.Log, "PortWatch"));
         menu.Items.Add(new ToolStripSeparator());
@@ -56,6 +65,7 @@ internal sealed class TrayApp : IDisposable
         _popup.ToggleShow(() =>
         {
             _entries = PortScanner.Scan();
+            _popup.Target = _settings.Arrows;
             _popup.SetRows(PortGrouper.Group(_entries));
             StartTraffic();
             _popup.ShowNear(Cursor.Position);

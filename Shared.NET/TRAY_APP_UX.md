@@ -93,6 +93,8 @@ var menu = TrayMenu.Create();
 menu.Items.Add(TrayMenu.Header("App title"));              // optional, disabled
 menu.Items.Add(TrayMenu.Action("Do a thing…", OnThing));
 menu.Items.Add(TrayMenu.CheckItem("Some option", value, on => { Save(on); return true; }));   // false => reverts
+foreach (var item in TrayMenu.RadioGroup(["Ports", "Processes"], selectedIndex, i => Save(i)))   // pick one of several
+    menu.Items.Add(item);
 menu.Items.Add(new ToolStripSeparator());
 menu.Items.Add(TrayMenu.StartAtLoginItem(TaskName, ExePath, Description, requireElevation: false, Logger.Log, "App"));
 menu.Items.Add(new ToolStripSeparator());
@@ -102,6 +104,8 @@ menu.Items.Add(TrayMenu.ExitItem(() => System.Windows.Application.Current.Shutdo
 - Order: header → actions → options → separator → **Start at Login** → separator → **Exit**.
 - Checkbox state is text (`✓ ` / three spaces), never the WinForms check margin (it breaks at high DPI).
 - A checkbox callback that cannot persist the change returns `false`; the item reverts itself.
+- A choice between exclusive options is a `RadioGroup` under a disabled `Header`, not two checkboxes. Apply it the next
+  time the flyout opens (never rearrange an open flyout) and persist it in `%LOCALAPPDATA%\<App>\<App>.ini`.
 - Labels that open a dialog end in `…`. Sentence case.
 
 ## 7. Visual design
@@ -123,6 +127,8 @@ Dark only; there is no light theme. One palette across apps:
 - **A live flyout must not move.** Show changing state with colour only, never by adding or removing text: reserve a
   fixed slot for every state indicator (PortWatch lays out a `↓↑` pair for every process and port and just recolours it,
   transparent when idle) so widths, wrapping and scroll positions stay put. Don't show numbers that change every second.
+  Transient indicators should **linger** (PortWatch holds an arrow 2 s after its traffic stops, per direction) so brief
+  gaps don't strobe; keep the hold in a small pure class with an injectable clock so it is unit-testable.
   Cover it with a test that compares window size and full text before/after a state change.
 - Never convey meaning by colour alone — pair it with a glyph/label (PortWatch: `+N` badges, a legend footer).
 - Secondary information is dimmed, not smaller than 10 px. Padding 6–10 px. Keep dense lists to one line per item.

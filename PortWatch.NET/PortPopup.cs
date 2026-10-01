@@ -27,15 +27,24 @@ internal sealed class PortPopup : TrayFlyoutWindow
     private static readonly System.Windows.Media.Brush OutFg  = Frozen("#ff8fa3");   // sending
     private static readonly System.Windows.Media.Brush Active = Frozen("#ffffff");   // a port with live traffic
 
-    private sealed record Token(string Protocol, PortSegment Segment, System.Windows.Documents.Run Port, System.Windows.Documents.Run In, System.Windows.Documents.Run Out);
-    private sealed record RowView(ProcessRow Data, Border Container, List<Token> Tokens, System.Windows.Documents.Run In, System.Windows.Documents.Run Out);
+    private sealed record Token(string Protocol, PortSegment Segment, System.Windows.Documents.Run Port, System.Windows.Documents.Run In, System.Windows.Documents.Run Out, ActivityLatch Latch);
+    private sealed record RowView(ProcessRow Data, Border Container, List<Token> Tokens, System.Windows.Documents.Run In, System.Windows.Documents.Run Out, ActivityLatch Latch);
 
     private readonly StackPanel _rows = new();
     private readonly TextBlock _footer = new() { Margin = new Thickness(10, 4, 10, 6), Foreground = Dim, FontSize = 11 };
     private readonly List<RowView> _views = new();
 
-    public PortPopup()
+    /// <summary>How long an arrow stays lit after its traffic stops.</summary>
+    public const long HoldMs = 2000;
+
+    /// <summary>Where arrows are drawn. Read by <see cref="SetRows"/>, so set it before the rows are built.</summary>
+    public ArrowTarget Target { get; set; } = ArrowTarget.Port;
+
+    private readonly Func<long> _clockMs;
+
+    public PortPopup(Func<long>? clockMs = null)
     {
+        _clockMs = clockMs ?? (() => Environment.TickCount64);
         // TrayFlyoutWindow already sets WindowStyle/ResizeMode/Topmost/ShowInTaskbar/Manual location.
         SizeToContent = SizeToContent.WidthAndHeight;
         MaxHeight     = 420;
@@ -83,15 +92,22 @@ internal sealed class PortPopup : TrayFlyoutWindow
                 FontWeight = FontWeights.SemiBold,
                 Foreground = r.IsSystem ? SysFg : Fg,
             });
-            string pids = r.Pids.Count == 1 ? $" ({r.Pids[0]})" : $" (×{r.Pids.Count})";
+            string pids = r.Pids.Count == 1 ? $" ({r.Pids[0]})" : $" (\u00D7{r.Pids.Count})";
             line.Inlines.Add(new System.Windows.Documents.Run(pids) { Foreground = Dim });
-            line.Inlines.Add(" ");
+
+            // Arrows live on EITHER the process or its ports (never both). Only the chosen level reserves slots,
+            // so the other stays compact; the choice is fixed while the flyout is open, so nothing ever moves.
             var inRun  = Slot("\u2193");
             var outRun = Slot("\u2191");
-            line.Inlines.Add(inRun);
-            line.Inlines.Add(outRun);
+            if (Target == ArrowTarget.Process)
+            {
+                line.Inlines.Add(" ");
+                line.Inlines.Add(inRun);
+                line.Inlines.Add(outRun);
+            }
 
-            var view = new RowView(r, new Border { Padding = new Thickness(4, 2, 4, 2), Child = line, Background = Clear }, new List<Token>(), inRun, outRun);
+            var view = new RowView(r, new Border { Padding = new Thickness(4, 2, 4, 2), Child = line, Background = Clear },
+                new List<Token>(), inRun, outRun, new ActivityLatch());
             AddPorts(line, view, "TCP", r.Tcp, counts);
             AddPorts(line, view, "UDP", r.Udp, counts);
             _rows.Children.Add(view.Container);
@@ -109,14 +125,18 @@ internal sealed class PortPopup : TrayFlyoutWindow
             var run = new System.Windows.Documents.Run(seg.Text) { Foreground = PortFg };
             var inArrow  = Slot("\u2193");
             var outArrow = Slot("\u2191");
-            view.Tokens.Add(new Token(proto, seg, run, inArrow, outArrow));
+            view.Tokens.Add(new Token(proto, seg, run, inArrow, outArrow, new ActivityLatch()));
             run.MouseEnter += (_, _) => Highlight(proto, seg.Ports, view);
             run.MouseLeave += (_, _) => ClearHighlight();
+
             // Arrow slot first, then the number: commas stay attached to their port and the reserved gap sits
             // between "UDP" and the number instead of inside the list.
-            line.Inlines.Add(inArrow);
-            line.Inlines.Add(outArrow);
-            line.Inlines.Add(" ");
+            if (Target == ArrowTarget.Port)
+            {
+                line.Inlines.Add(inArrow);
+                line.Inlines.Add(outArrow);
+                line.Inlines.Add(" ");
+            }
             line.Inlines.Add(run);
 
             int others = PortGrouper.OtherSharers(proto, seg, counts);
@@ -167,23 +187,27 @@ internal sealed class PortPopup : TrayFlyoutWindow
     }
 
     /// <summary>
-    /// Applies live traffic with colour only: each process and port lights its reserved ↓ / ↑ slots, and a
-    /// port number turns green (receiving), pink (sending) or white (both). No text changes, so no layout shift.
+    /// Applies live traffic with colour only, on the level chosen by <see cref="Target"/>: that level's reserved
+    /// ↓ / ↑ slots light up (and, for ports, the number turns green / pink / white). Each arrow then stays lit
+    /// for <see cref="HoldMs"/> after its traffic stops. No text changes, so no layout shift.
     /// </summary>
     public void UpdateTraffic(TrafficSnapshot snapshot)
     {
+        long now = _clockMs();
         foreach (var v in _views)
         {
-            Light(v.In, v.Out, snapshot.ForProcess(v.Data.Pids));
+            if (Target == ArrowTarget.Process)
+            {
+                var (inLit, outLit) = v.Latch.Observe(snapshot.ForProcess(v.Data.Pids), now, HoldMs);
+                Light(v.In, v.Out, inLit, outLit);
+                continue;
+            }
 
             foreach (var t in v.Tokens)
             {
-                var rate = snapshot.ForPorts(t.Protocol, v.Data.Pids, t.Segment.Ports);
-                Light(t.In, t.Out, rate);
-                t.Port.Foreground = rate.InBps > 0 && rate.OutBps > 0 ? Active
-                                  : rate.InBps > 0 ? InFg
-                                  : rate.OutBps > 0 ? OutFg
-                                  : PortFg;
+                var (inLit, outLit) = t.Latch.Observe(snapshot.ForPorts(t.Protocol, v.Data.Pids, t.Segment.Ports), now, HoldMs);
+                Light(t.In, t.Out, inLit, outLit);
+                t.Port.Foreground = inLit && outLit ? Active : inLit ? InFg : outLit ? OutFg : PortFg;
             }
         }
     }
@@ -192,16 +216,18 @@ internal sealed class PortPopup : TrayFlyoutWindow
     public string AllText() => string.Concat(_views.SelectMany(v =>
         ((TextBlock)v.Container.Child).Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text)));
 
-    /// <summary>"in", "out", "both" or "idle" for a whole process (diagnostics / tests).</summary>
+    /// <summary>"in", "out", "both" or "idle" for a whole process; "off" when arrows are on ports (diagnostics / tests).</summary>
     public string ProcessActivity(string processName)
     {
+        if (Target != ArrowTarget.Process) return "off";
         var v = _views.FirstOrDefault(x => x.Data.Name.Equals(processName, StringComparison.OrdinalIgnoreCase));
         return v is null ? "missing" : ReadState(v.In, v.Out);
     }
 
-    /// <summary>"in", "out", "both" or "idle" for one port of a process (diagnostics / tests).</summary>
+    /// <summary>"in", "out", "both" or "idle" for one port of a process; "off" when arrows are on processes (diagnostics / tests).</summary>
     public string PortActivity(string processName, string protocol, int port)
     {
+        if (Target != ArrowTarget.Port) return "off";
         var v = _views.FirstOrDefault(x => x.Data.Name.Equals(processName, StringComparison.OrdinalIgnoreCase));
         var t = v?.Tokens.FirstOrDefault(x => x.Protocol == protocol && x.Segment.Ports.Contains(port));
         return t is null ? "missing" : ReadState(t.In, t.Out);
@@ -212,8 +238,8 @@ internal sealed class PortPopup : TrayFlyoutWindow
         _views.FirstOrDefault(x => x.Data.Name.Equals(processName, StringComparison.OrdinalIgnoreCase))
               ?.Tokens.FirstOrDefault(x => x.Protocol == protocol && x.Segment.Ports.Contains(port))?.Port.Foreground;
 
-    public static System.Windows.Media.Brush InBrush  => InFg;
-    public static System.Windows.Media.Brush OutBrush => OutFg;
+    public static System.Windows.Media.Brush InBrush   => InFg;
+    public static System.Windows.Media.Brush OutBrush  => OutFg;
     public static System.Windows.Media.Brush BothBrush => Active;
     public static System.Windows.Media.Brush IdleBrush => PortFg;
 
@@ -283,14 +309,11 @@ internal sealed class PortPopup : TrayFlyoutWindow
     /// </summary>
     private static System.Windows.Documents.Run Slot(string glyph) => new(glyph) { Foreground = Clear, FontWeight = FontWeights.Bold };
 
-    private static void Light(System.Windows.Documents.Run inArrow, System.Windows.Documents.Run outArrow, Rate rate)
+    private static void Light(System.Windows.Documents.Run inArrow, System.Windows.Documents.Run outArrow, bool inLit, bool outLit)
     {
-        inArrow.Foreground  = rate.InBps  > 0 ? InFg  : Clear;
-        outArrow.Foreground = rate.OutBps > 0 ? OutFg : Clear;
+        inArrow.Foreground  = inLit  ? InFg  : Clear;
+        outArrow.Foreground = outLit ? OutFg : Clear;
     }
-
-    private static string State(Rate rate) =>
-        rate.InBps > 0 && rate.OutBps > 0 ? "both" : rate.InBps > 0 ? "in" : rate.OutBps > 0 ? "out" : "idle";
 
     private static SolidColorBrush Frozen(string hex)
     {
