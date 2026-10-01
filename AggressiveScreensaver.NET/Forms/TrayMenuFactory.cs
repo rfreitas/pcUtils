@@ -25,6 +25,7 @@ internal static class TrayMenuFactory
         bool       ignoreUnfocusedBlockers  = true,
         bool       ignoreNonvisibleBlockers = false,
         bool       nativeScreensaverActive  = false,
+        Func<bool>? isNativeScreensaverActive = null,
         Action?    onIgnoreList             = null,
         Action?    onDebug                  = null,
         Func<bool, bool>? onStartupChanged         = null,
@@ -212,20 +213,22 @@ internal static class TrayMenuFactory
         menu.Items.Add(nonvisibleBlockersItem);
         menu.Items.Add(new ToolStripSeparator());
 
-        // Native Windows Screensaver checkbox — off by default since it competes
-        // with this app's own blanking (see NativeScreensaverService).
+        // Native Windows Screensaver checkbox — mirrors the OS flag, which competes with this
+        // app's own blanking (see NativeScreensaverService). The flag can change outside this app
+        // (Windows Settings), so isNativeScreensaverActive re-reads it each time the menu opens.
         var nativeScreensaverItem = new ToolStripMenuItem((nativeScreensaverActive ? check : space) + "Native Screensaver")
         {
             CheckOnClick = true,
             Checked      = nativeScreensaverActive,
         };
 
+        bool refreshing = false;   // true while syncing the item to the OS: must not write the value back
         if (onNativeScreensaverChanged is not null)
         {
             bool reverting = false;
             nativeScreensaverItem.CheckedChanged += (sender, _) =>
             {
-                if (reverting || sender is not ToolStripMenuItem item) return;
+                if (reverting || refreshing || sender is not ToolStripMenuItem item) return;
 
                 item.Text = (item.Checked ? check : space) + "Native Screensaver";
 
@@ -249,6 +252,18 @@ internal static class TrayMenuFactory
         }
 
         menu.Items.Add(nativeScreensaverItem);
+
+        if (isNativeScreensaverActive is not null)
+            menu.Opening += (_, _) =>
+            {
+                bool current = isNativeScreensaverActive();
+                if (current == nativeScreensaverItem.Checked) return;
+
+                refreshing = true;
+                nativeScreensaverItem.Checked = current;
+                nativeScreensaverItem.Text    = (current ? check : space) + "Native Screensaver";
+                refreshing = false;
+            };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(space + "Exit", null, (_, _) => onExit?.Invoke());
 

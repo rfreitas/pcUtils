@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Linq;
+using System.Reflection;
 using System.Windows.Forms;
 using AggressiveScreensaver.Forms;
 
@@ -285,5 +287,74 @@ public class TrayMenuBehaviorTests
         Item(menu, "Ignore Unfocused Blockers").Checked = true;
 
         Assert.True(Item(menu, "Ignore Nonvisible Blockers").Enabled);
+    }
+
+    // -------------------------------------------------------------------------
+    // Native Screensaver — re-synced from the OS every time the menu opens
+    // -------------------------------------------------------------------------
+
+    // ContextMenuStrip.Opening is raised by the protected OnOpening; tests have no shell to open a real menu.
+    private static void RaiseOpening(ContextMenuStrip menu) =>
+        typeof(ToolStripDropDown).GetMethod("OnOpening", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(menu, [new CancelEventArgs()]);
+
+    [Fact]
+    public void NativeScreensaver_Opening_PicksUpAnOutsideChangeToOn()
+    {
+        bool os = false;
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, nativeScreensaverActive: false,
+            isNativeScreensaverActive: () => os, onNativeScreensaverChanged: _ => true);
+        var item = Item(menu, "Native Screensaver");
+        Assert.False(item.Checked);
+
+        os = true;   // changed in Windows Settings while the app was running
+        RaiseOpening(menu);
+
+        Assert.True(item.Checked);
+        Assert.StartsWith("✓", item.Text);
+    }
+
+    [Fact]
+    public void NativeScreensaver_Opening_PicksUpAnOutsideChangeToOff()
+    {
+        bool os = true;
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, nativeScreensaverActive: true,
+            isNativeScreensaverActive: () => os, onNativeScreensaverChanged: _ => true);
+        var item = Item(menu, "Native Screensaver");
+
+        os = false;
+        RaiseOpening(menu);
+
+        Assert.False(item.Checked);
+        Assert.StartsWith("   ", item.Text);
+    }
+
+    [Fact]
+    public void NativeScreensaver_Opening_SyncDoesNotWriteTheValueBackToTheOs()
+    {
+        int writes = 0;
+        bool os = false;
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, nativeScreensaverActive: false,
+            isNativeScreensaverActive: () => os, onNativeScreensaverChanged: _ => { writes++; return true; });
+
+        os = true;
+        RaiseOpening(menu);
+
+        Assert.Equal(0, writes);
+    }
+
+    [Fact]
+    public void NativeScreensaver_UserClickAfterASync_StillWritesToTheOs()
+    {
+        bool? written = null;
+        bool os = false;
+        using var menu = TrayMenuFactory.Build(startAtLogin: false, nativeScreensaverActive: false,
+            isNativeScreensaverActive: () => os, onNativeScreensaverChanged: v => { written = v; return true; });
+
+        os = true;
+        RaiseOpening(menu);                                   // sync (no write)
+        Item(menu, "Native Screensaver").Checked = false;     // user unticks it
+
+        Assert.False(written);
     }
 }

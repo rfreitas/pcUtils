@@ -321,6 +321,7 @@ internal sealed class TrayApp : IDisposable
             ignoreUnfocusedBlockers:          _ignoreUnfocusedBlockers,
             ignoreNonvisibleBlockers:         _ignoreNonvisibleBlockers,
             nativeScreensaverActive:          NativeScreensaverService.IsActive(),
+            isNativeScreensaverActive:        NativeScreensaverService.IsActive,
             onIgnoreList:                     ShowIgnoreListForm,
             onDebug:                          ShowDebugForm,
             onStartupChanged:                 HandleStartupToggle,
