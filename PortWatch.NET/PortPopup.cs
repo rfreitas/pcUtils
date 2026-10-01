@@ -112,14 +112,16 @@ internal sealed class PortPopup : TrayFlyoutWindow
             view.Tokens.Add(new Token(proto, seg, run, inArrow, outArrow));
             run.MouseEnter += (_, _) => Highlight(proto, seg.Ports, view);
             run.MouseLeave += (_, _) => ClearHighlight();
+            // Arrow slot first, then the number: commas stay attached to their port and the reserved gap sits
+            // between "UDP" and the number instead of inside the list.
+            line.Inlines.Add(inArrow);
+            line.Inlines.Add(outArrow);
+            line.Inlines.Add(" ");
             line.Inlines.Add(run);
 
             int others = PortGrouper.OtherSharers(proto, seg, counts);
             if (others > 0)
                 line.Inlines.Add(new System.Windows.Documents.Run($"+{others}") { Foreground = proto == "TCP" ? Warn : Dim, FontSize = 10 });
-            line.Inlines.Add(" ");
-            line.Inlines.Add(inArrow);
-            line.Inlines.Add(outArrow);
             if (i < segs.Count - 1) line.Inlines.Add(", ");
         }
     }
