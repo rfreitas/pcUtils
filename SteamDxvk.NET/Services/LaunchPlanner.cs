@@ -21,13 +21,12 @@ internal static class LaunchPlanner
 
         // DXVK's dxgi.dll can't create a D3D12 swap chain, so the game dies at startup (seen with Session).
         if (mode == RunMode.D3D12 && dxvkInstalled)
-            return new(false, null, [], "DXVK is installed and replaces dxgi.dll, which breaks D3D12 (the game crashes at startup). " +
-                                        "Uninstall DXVK, or set Run as to D3D11.");
+            return new(false, null, [], "DXVK replaces dxgi.dll, which breaks D3D12 (the game crashes at startup). " +
+                                        "Remove DXVK, or set Run as to D3D11.");
 
         var warnings = new List<string>();
         if (mode == RunMode.Default && dxvkInstalled && scan.Primary?.Apis.HasFlag(GfxApi.D3D12) == true)
-            warnings.Add("DXVK is installed but this game also has D3D12 and may start in it, which crashes with DXVK. " +
-                         "Set Run as to D3D11.");
+            warnings.Add("This game may start in D3D12, which crashes with DXVK. Set Run as to D3D11.");
         return new(true, flag, warnings, null);
     }
 }

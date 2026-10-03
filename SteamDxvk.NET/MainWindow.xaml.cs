@@ -138,7 +138,7 @@ internal partial class MainWindow : Window
     /// <summary>Lays the window out at its normal size without showing it, so positions can be measured (tests, renders).</summary>
     internal void LayoutNow()
     {
-        double w = double.IsNaN(Width) ? 1180 : Width, h = double.IsNaN(Height) ? 900 : Height;
+        double w = double.IsNaN(Width) ? 1180 : Width, h = double.IsNaN(Height) ? 860 : Height;
         Root.Measure(new Size(w, h));
         Root.Arrange(new Rect(0, 0, w, h));
         Root.UpdateLayout();
@@ -147,7 +147,7 @@ internal partial class MainWindow : Window
     /// <summary>Renders the whole window to a PNG without showing it (for agents/tests). Always view the result.</summary>
     public void RenderToPng(string path)
     {
-        double w = double.IsNaN(Width) ? 1180 : Width, h = double.IsNaN(Height) ? 900 : Height;
+        double w = double.IsNaN(Width) ? 1180 : Width, h = double.IsNaN(Height) ? 860 : Height;
         LayoutNow();
         if (_selected is not null && _rowBorders.TryGetValue(_selected.AppId, out var row))
         {
@@ -337,8 +337,7 @@ internal partial class MainWindow : Window
 
     private static string NoteText(GameScan s)
     {
-        var parts = new List<string>();
-        if (s.Primary is { } p && p.Apis.HasFlag(GfxApi.D3D12) && p.Apis.Overlaps(GfxApis.Supported)) parts.Add("also has D3D12");
+        var parts = new List<string>();   // the API column already lists every API, so no "also has D3D12" here
         if (s.AntiCheat.Count > 0) parts.Add("⚠ anti-cheat: " + string.Join(", ", s.AntiCheat));
         if (s.Error.Length > 0) parts.Add(s.Error);
         return string.Join("; ", parts);
@@ -441,8 +440,10 @@ internal partial class MainWindow : Window
         bool wanted = manual || (_selected is not null && WantsDxvk(_selected, dxvk));
         if (!_busy) DxvkBox.IsChecked = wanted;
         DxvkBox.IsEnabled = !_busy && !manual && possible;
+        // The reason for a greyed tick lives here only: the greyed control already shows the constraint, so no message line repeats it.
         DxvkBox.ToolTip = manual ? "DXVK was installed in this folder by hand, not by this app, so the app leaves it alone."
-            : possible ? "Ticking installs DXVK for this game; unticking restores the original files. The right DLLs are chosen automatically."
+            : possible ? "Ticking installs DXVK for this game; unticking restores the original files. The right DLLs are chosen automatically." +
+                         (plan!.Guessed ? " This game's API wasn't detected, so both the D3D9 and D3D11 files go in and whichever it uses is translated." : "")
             : plan?.Blocked;
         DxvkOptionsPanel.Visibility = wanted && !manual ? Visibility.Visible : Visibility.Hidden;   // Hidden keeps the row's space
         AsyncBox.IsEnabled = HudBox.IsEnabled = GplBox.IsEnabled = !_busy && possible;
@@ -459,19 +460,13 @@ internal partial class MainWindow : Window
         var runAs = _selected is not null && PlanSummary.ShowRunAs(_selected) ? Visibility.Visible : Visibility.Hidden;
         RunLabel.Visibility = RunBox.Visibility = runAs;
 
-        string? summary = _selected is null ? null : PlanSummary.Describe(_selected, exe, mode, dxvk is not null);
-        PlanText.Text = summary ?? "";
-        PlanText.Visibility = summary is null ? Visibility.Collapsed : Visibility.Visible;
         RescanBtn.IsEnabled = !_scanning && !_busy;
         FetchBtn.IsEnabled = !_busy;
 
-        // Shown inline (not in a modal), so it is visible in a render. Install warnings are only news before DXVK is in.
+        // Only things the UI can't already show or enforce get a line: a greyed tick, a greyed Launch and a flagged dropdown entry
+        // explain themselves. Install warnings are only news before DXVK is in.
         var lines = new List<(string Text, Brush Color)>();
-        if (plan is not null)
-        {
-            if (plan.CanInstall) { if (dxvk is null) lines.AddRange(plan.Warnings.Select(w => ("⚠ " + w, Warn))); }
-            else if (plan.Blocked is not null) lines.Add((plan.Blocked, Dim));
-        }
+        if (plan is { CanInstall: true } && dxvk is null) lines.AddRange(plan.Warnings.Select(w => ("⚠ " + w, Warn)));
         if (launch is not null)
         {
             lines.AddRange(launch.Warnings.Select(w => ("⚠ " + w, Warn)));
@@ -481,8 +476,9 @@ internal partial class MainWindow : Window
         if (problem is not null)
         {
             bool crashed = problem.Outcome == RunOutcome.Crashed;
-            lines.Add(($"{(crashed ? "✖ Crashed" : "⚠ Exited early")} last time with {ConfigKey.Describe(problem.Config)} " +
-                       $"({When(problem.WhenUtc)}): {problem.Detail}.", crashed ? Bad : Warn));
+            // "this setup" because the dropdown entry beside it already names the Run as; the new information is the reason.
+            lines.Add(($"{(crashed ? "✖ Crashed" : "⚠ Exited early")} last time with this setup ({When(problem.WhenUtc)}): {problem.Detail}.",
+                       crashed ? Bad : Warn));
         }
 
         WarningText.Inlines.Clear();
@@ -530,8 +526,7 @@ internal partial class MainWindow : Window
             UpdateActions();   // puts the tick back to what is really installed
             return;
         }
-        if (scan.AntiCheat.Count > 0 &&
-            !ConfirmRisk($"{plan.Warnings.FirstOrDefault(w => w.StartsWith("Anti-cheat", StringComparison.Ordinal))}\n\nUse DXVK anyway?"))
+        if (plan.Risk is not null && !ConfirmRisk($"{plan.Risk}\n\nUse DXVK anyway?"))
         {
             UpdateActions();
             return;

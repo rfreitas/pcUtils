@@ -203,8 +203,9 @@ public class MonitoringWindowTests
             Assert.Equal(Pink, ColorOf(crashed));
             Assert.Equal("D3D11", Choice(w, RunMode.D3D11).Text);   // other modes are untouched
             string warning = Shown(w.WarningText);
-            Assert.Contains("Crashed last time with Run as D3D12", warning);
-            Assert.Contains("DXGI_ERROR_UNSUPPORTED", warning);
+            Assert.Contains("Crashed last time with this setup", warning);   // the dropdown beside it already names the mode
+            Assert.DoesNotContain("Run as D3D12", warning);
+            Assert.Contains("DXGI_ERROR_UNSUPPORTED", warning);                // the reason is the new information
             Assert.Equal("Launch anyway", w.LaunchBtn.Content);
             Assert.Contains("CRASHED", w.LogBox.Text);
         });
@@ -224,7 +225,7 @@ public class MonitoringWindowTests
             var choice = Choice(w, RunMode.Vulkan);
             Assert.Contains("\u26A0 exited early", choice.Text);
             Assert.Equal(Amber, ColorOf(choice));
-            Assert.Contains("Exited early last time with Run as Vulkan", Shown(w.WarningText));
+            Assert.Contains("Exited early last time with this setup", Shown(w.WarningText));
         });
     }
 
@@ -266,8 +267,8 @@ public class MonitoringWindowTests
             Assert.Equal("D3D12", Choice(w, RunMode.D3D12).Text);
             Assert.DoesNotContain("last time", Shown(w.WarningText));
             Assert.Equal("Launch via Steam", w.LaunchBtn.Content);
-            Assert.Contains("Last run with this setup", Shown(w.RunStatusText));
-            Assert.Contains("ran for 12 min", Shown(w.RunStatusText));
+            Assert.Equal(System.Windows.Visibility.Collapsed, w.RunStatusText.Visibility);   // a good run needs no message at all
+            Assert.Equal(System.Windows.Visibility.Collapsed, w.WarningText.Visibility);
         });
     }
 

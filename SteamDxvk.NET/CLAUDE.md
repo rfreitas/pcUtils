@@ -67,7 +67,15 @@ tick and options on screen means the layout doesn't jump when Run as changes. An
 "wanted". Ticking DXVK on a game that could start in D3D12 sets Run as D3D11 for it (where the engine has a flag). A DXVK installed by hand
 is shown ticked and disabled: the app never touches what it didn't install. The diagnostic flags run `ReadOnly`, so selecting a game
 there can't clean up its folder or write settings. DXVK never converts one API into another: a D3D9/D3D11 game keeps using that API and
-DXVK translates it to Vulkan. A one-line sentence under the title says so in plain words (`PlanSummary`).
+DXVK translates it to Vulkan.
+
+**Copy policy: never write down what the UI already shows or enforces.** A greyed "Use DXVK" is the message; its reason is only its tooltip.
+Hidden options, a flagged Run as entry, a greyed Launch, an API column that already lists D3D12 (so no "also has D3D12" note), anti-cheat
+already flagged in the list (so only the confirmation when ticking), a good run (no "ran for 5 min" line) all need no text. What does get a
+line, in the one fixed-height status area under the buttons: a game running and on which API (and a mismatch with what was requested), risks the
+UI can't prevent (a D3D12-capable game on an engine with no launch flag, DXVK over D3D12 at launch), and a remembered crash with its reason
+(the dropdown shows only that it crashed). `InstallPlan` keeps these apart: `Warnings` (shown), `Risk` (the anti-cheat confirmation),
+`Guessed` (tooltip), `Blocked` (tooltip).
 **An install that fails part-way (a DLL locked by the running game) rolls back**, restoring backed-up originals. Without that the leftover
 DLLs, having no manifest, were mistaken for a hand-made DXVK install and never cleaned up.
 This came from a real crash: Session (UE 4.27) defaulted to D3D12 and died with `DXGI_ERROR_UNSUPPORTED` because DXVK's

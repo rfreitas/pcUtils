@@ -1,8 +1,12 @@
 namespace SteamDxvk;
 
-/// <param name="CanInstall">False means the "Use DXVK" tick is greyed out; <paramref name="Blocked"/> says why.</param>
+/// <param name="CanInstall">False means the "Use DXVK" tick is greyed out; <paramref name="Blocked"/> says why (shown as its tooltip only).</param>
 /// <param name="Apis">What the DLLs will be installed for. Chosen automatically: the user never picks DLLs.</param>
-internal sealed record InstallPlan(bool CanInstall, GfxApi Apis, IReadOnlyList<string> Warnings, string? Blocked);
+/// <param name="Warnings">Risks the UI can't prevent by itself, shown as a line. Constraints the UI does enforce (greyed controls) are not repeated here.</param>
+/// <param name="Risk">Anti-cheat text, for the confirmation asked when DXVK is ticked (the list already flags anti-cheat per game).</param>
+/// <param name="Guessed">Nothing was detected, so both common DLL sets go in; the tick's tooltip says so.</param>
+internal sealed record InstallPlan(bool CanInstall, GfxApi Apis, IReadOnlyList<string> Warnings, string? Blocked,
+    string? Risk = null, bool Guessed = false);
 
 /// <summary>Pure decisions behind the UI: can DXVK be used for this game as configured, which DLLs that takes, and what to warn about.</summary>
 internal static class InstallPlanner
@@ -28,47 +32,24 @@ internal static class InstallPlanner
             guessed = true;
         }
 
+        string? risk = scan.AntiCheat.Count > 0
+            ? $"Anti-cheat detected ({string.Join(", ", scan.AntiCheat)}). Modified DLLs, and async compilation in particular, can get you banned in online play."
+            : null;
+
         var warnings = new List<string>();
-        if (scan.AntiCheat.Count > 0)
-            warnings.Add($"Anti-cheat detected ({string.Join(", ", scan.AntiCheat)}). Modified DLLs, and async compilation in " +
-                         "particular, can get you banned in online play.");
-        if (guessed)
-            warnings.Add("Couldn't tell which API this game uses, so both the D3D9 and D3D11 DXVK files are installed.");
         // Engines with a launch flag get Run as D3D11 set automatically when DXVK is ticked, so only others need the warning.
         if (mode != RunMode.D3D11 && scan.Status is null && exe.Apis.HasFlag(GfxApi.D3D12) && EngineFlags.Flag(scan.Engine, RunMode.D3D11) is null)
-            warnings.Add("This game also contains D3D12. If it starts in D3D12 it will crash with DXVK installed, and this app " +
-                         "has no launch flag for its engine to prevent that. Untick DXVK if it fails to start.");
-        return new(true, apis, warnings, null);
+            warnings.Add("This game may start in D3D12, which crashes with DXVK, and this app has no launch flag for its engine to prevent it. " +
+                         "Untick DXVK if it fails to start.");
+        return new(true, apis, warnings, null, risk, guessed);
     }
 }
 
-/// <summary>The one plain sentence that says what the app will do for the selected game and what DXVK's part in it is.</summary>
+/// <summary>Small UI decisions that don't depend on a window.</summary>
 internal static class PlanSummary
 {
     /// <summary>Run as only means something where the engine has launch flags.</summary>
     public static bool ShowRunAs(GameScan scan) => EngineFlags.Available(scan.Engine).Count > 1;
-
-    public static string? Describe(GameScan scan, ExeInfo? exe, RunMode mode, bool dxvkInstalled)
-    {
-        if (exe is null) return null;
-        if (mode == RunMode.D3D12) return "Launches in D3D12 on the driver directly. DXVK can't translate D3D12.";
-        if (mode == RunMode.Vulkan) return "Launches with the game's own Vulkan renderer. DXVK isn't involved.";
-
-        var plan = InstallPlanner.Plan(scan, exe, mode);
-        if (!plan.CanInstall) return null;
-
-        if (mode != RunMode.D3D11 && (exe.Apis & GfxApis.Supported) == GfxApi.None)
-            return dxvkInstalled
-                ? "The game's API wasn't detected, so DXVK's D3D9 and D3D11 files are both installed; whichever the game uses is translated to Vulkan."
-                : "The game's API wasn't detected. Using DXVK installs its D3D9 and D3D11 files, and whichever the game uses is translated to Vulkan.";
-
-        // D3D10 and D3D11 are one DLL set; name the newest the game has so the sentence reads naturally.
-        var served = plan.Apis;
-        string api = served.HasFlag(GfxApi.D3D11) ? "D3D11" : served.HasFlag(GfxApi.D3D10) ? "D3D10" : served.HasFlag(GfxApi.D3D9) ? "D3D9" : "D3D8";
-        return dxvkInstalled
-            ? $"The game uses {api}; DXVK translates it to Vulkan."
-            : $"The game uses {api}. Using DXVK translates it to Vulkan.";
-    }
 }
 
 internal static class GameFilter

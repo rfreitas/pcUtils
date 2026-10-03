@@ -150,27 +150,72 @@ public class MainWindowTests
             Assert.True(w.DxvkBox.IsEnabled);
             Assert.False(w.DxvkBox.IsChecked);
             Assert.Equal(Visibility.Hidden, w.DxvkOptionsPanel.Visibility);
-            Assert.Equal(Visibility.Collapsed, w.WarningText.Visibility);
 
-            w.SelectByName("Beta");    // D3D12 only: greyed, with the reason on screen and in the tooltip
+            w.SelectByName("Beta");    // D3D12 only: greyed. The greyed control is the message; the reason is its tooltip.
             Assert.False(w.DxvkBox.IsEnabled);
             Assert.Contains("only uses D3D12", (string)w.DxvkBox.ToolTip);
-            Assert.Contains("only uses D3D12", Text(w.WarningText));
 
             w.SelectByName("Gamma");   // Unreal with D3D11+D3D12: fine, ticking will set Run as D3D11 itself
             Assert.True(w.DxvkBox.IsEnabled);
-            Assert.Equal(Visibility.Collapsed, w.WarningText.Visibility);
 
-            w.SelectByName("Delta");   // anti-cheat: allowed, but the warning is shown before ticking
+            w.SelectByName("Delta");   // anti-cheat: allowed; the list flags it and ticking asks to confirm
             Assert.True(w.DxvkBox.IsEnabled);
-            Assert.Contains("BattlEye", Text(w.WarningText));
 
             w.SelectByName("Epsilon"); // Vulkan only
             Assert.False(w.DxvkBox.IsEnabled);
 
-            w.SelectByName("Zeta");    // nothing detected: allowed, with a note that both DLL sets will go in
+            w.SelectByName("Zeta");    // nothing detected: allowed; the tooltip says both DLL sets go in
             Assert.True(w.DxvkBox.IsEnabled);
-            Assert.Contains("Couldn't tell which API", Text(w.WarningText));
+            Assert.Contains("both the D3D9 and D3D11 files", (string)w.DxvkBox.ToolTip);
+        });
+    }
+
+    [Fact]
+    public void Constraints_the_ui_already_enforces_are_not_repeated_as_text()
+    {
+        // Greyed tick, hidden options, flagged list row: each says it by itself. A line saying the same thing again is clutter.
+        Sta.Run(() =>
+        {
+            var w = Window();
+            w.LoadScans(MockLibrary());
+            foreach (var name in new[] { "Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta" })
+            {
+                w.SelectByName(name);
+                Assert.True(w.WarningText.Visibility == Visibility.Collapsed, $"{name}: unexpected message '{Text(w.WarningText)}'");
+                Assert.Equal(Visibility.Collapsed, w.RunStatusText.Visibility);
+            }
+
+            w.SelectByName("Gamma");
+            w.SetRunMode(RunMode.D3D12);   // DXVK can't be used: the tick is greyed, and that is all that needs to be said
+            Assert.False(w.DxvkBox.IsEnabled);
+            Assert.Equal(Visibility.Collapsed, w.WarningText.Visibility);
+        });
+    }
+
+    [Fact]
+    public void Anti_cheat_is_flagged_once_in_the_list_and_asked_about_when_ticking_not_repeated_in_the_panel()
+    {
+        Sta.Run(() =>
+        {
+            var w = Window();
+            w.LoadScans(MockLibrary());
+            w.SelectByName("Delta");
+            Assert.Equal(Visibility.Collapsed, w.WarningText.Visibility);
+            var row = w.Rows.Children.Cast<Border>().First(b => Shown((System.Windows.Controls.TextBlock)((Grid)b.Child).Children[0]).Contains("Delta"));
+            var notes = (System.Windows.Controls.TextBlock)((Grid)row.Child).Children[5];
+            Assert.Contains("anti-cheat: BattlEye", notes.Text);
+        });
+    }
+
+    [Fact]
+    public void The_notes_column_does_not_repeat_what_the_api_column_lists()
+    {
+        Sta.Run(() =>
+        {
+            var w = Window();
+            w.LoadScans(MockLibrary());
+            foreach (Border row in w.Rows.Children)
+                Assert.DoesNotContain("also has", ((System.Windows.Controls.TextBlock)((Grid)row.Child).Children[5]).Text);
         });
     }
 
@@ -442,6 +487,7 @@ public class MainWindowTests
     {
         using var game = new TickGame(engine: "Unreal", apis: GfxApi.D3D11 | GfxApi.D3D12);
         string png = Path.Combine(AppContext.BaseDirectory, "SteamDxvk_greyed_tick.png");
+        string withMessage = Path.Combine(AppContext.BaseDirectory, "SteamDxvk_with_message.png");
         Sta.Run(() =>
         {
             var w = Ready(game);
@@ -449,9 +495,17 @@ public class MainWindowTests
             UserSets(w.AsyncBox, true);
             w.SetRunMode(RunMode.D3D12);
             w.RenderToPng(png);
+
+            // the same state with a remembered crash, to see the status area with something in it
+            w.History.Add(new RunRecord(9100, "D3D12|no-dxvk", RunOutcome.Crashed,
+                "Unreal crash report: hr failed at D3D12RHI/Private/Windows/WindowsD3D12Viewport.cpp:224 with error DXGI_ERROR_UNSUPPORTED", DateTime.UtcNow));
+            w.SetRunMode(RunMode.Default);
+            w.SetRunMode(RunMode.D3D12);
+            w.RenderToPng(withMessage);
         });
         Assert.True(new FileInfo(png).Length > 5_000);
-        Console.WriteLine($"[render] {png}");
+        Assert.True(new FileInfo(withMessage).Length > 5_000);
+        Console.WriteLine($"[render] {png} {withMessage}");
     }
 
     [Fact]
@@ -1180,27 +1234,6 @@ public class MainWindowTests
             w.SelectByName("Gamma");   // Unreal with several renderers: Run as matters
             Assert.Equal(Visibility.Visible, w.RunBox.Visibility);
             Assert.Equal(Visibility.Visible, w.RunLabel.Visibility);
-        });
-    }
-
-    [Fact]
-    public void A_plain_sentence_says_what_dxvk_does_for_the_selected_game()
-    {
-        Sta.Run(() =>
-        {
-            var w = Window();
-            w.LoadScans(MockLibrary());
-
-            w.SelectByName("Alpha");
-            Assert.Equal("The game uses D3D11. Using DXVK translates it to Vulkan.", w.PlanText.Text);
-            Assert.Equal(Visibility.Visible, w.PlanText.Visibility);
-
-            w.SelectByName("Epsilon");   // Vulkan only: DXVK has nothing to say
-            Assert.Equal(Visibility.Collapsed, w.PlanText.Visibility);
-
-            w.SelectByName("Gamma");
-            w.SetRunMode(RunMode.D3D12);
-            Assert.Contains("DXVK can't translate D3D12", w.PlanText.Text);
         });
     }
 

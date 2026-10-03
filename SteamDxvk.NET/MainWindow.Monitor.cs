@@ -193,10 +193,7 @@ internal partial class MainWindow
                 if (ApiDetector.Mismatch(session.Requested, session.Api) is { } warning) Add("⚠ " + warning, Warn, lineBreak: true);
             }
         }
-        else if (History.Last(scan.AppId, ConfigKey.Of(SelectedRunMode(), scan.Status)) is { Outcome: RunOutcome.Ok } ok)
-        {
-            Add($"Last run with this setup ({When(ok.WhenUtc)}): {ok.Detail}.", Dim);
-        }
+        // A run that went well needs no message: only a running game or a problem is worth a line.
         RunStatusText.Visibility = RunStatusText.Inlines.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 }

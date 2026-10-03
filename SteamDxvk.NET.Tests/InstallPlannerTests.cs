@@ -42,13 +42,17 @@ public class InstallPlannerTests
     }
 
     [Fact]
-    public void Nothing_detected_installs_both_the_d3d9_and_d3d11_sets_and_says_so()
+    public void Nothing_detected_installs_both_the_d3d9_and_d3d11_sets_and_flags_it_for_the_tooltip_not_a_message_line()
     {
         var plan = Plan(TestData.Scan("G", GfxApi.None));
         Assert.True(plan.CanInstall);
         Assert.Equal(GfxApi.D3D9 | GfxApi.D3D11, plan.Apis);
-        Assert.Contains(plan.Warnings, w => w.Contains("Couldn't tell which API"));
+        Assert.True(plan.Guessed);
+        Assert.Empty(plan.Warnings);
     }
+
+    [Fact]
+    public void A_detected_api_is_not_a_guess() => Assert.False(Plan(TestData.Scan("G", GfxApi.D3D11, GfxApi.D3D11)).Guessed);
 
     [Fact]
     public void No_exe_cannot_use_dxvk()
@@ -88,17 +92,24 @@ public class InstallPlannerTests
     }
 
     [Fact]
-    public void Anti_cheat_warns_and_names_it()
+    public void Anti_cheat_is_a_risk_for_the_confirmation_and_names_it_but_not_a_standing_message()
     {
         var plan = Plan(TestData.Scan("G", GfxApi.D3D11, anticheat: ["EasyAntiCheat", "BattlEye"]));
         Assert.True(plan.CanInstall);
-        var warning = Assert.Single(plan.Warnings);
-        Assert.Contains("EasyAntiCheat, BattlEye", warning);
+        Assert.Contains("EasyAntiCheat, BattlEye", plan.Risk);
+        Assert.Empty(plan.Warnings);   // the list's Notes column already flags anti-cheat per game
     }
 
     [Fact]
-    public void Anti_cheat_and_a_missing_launch_flag_both_warn() =>
-        Assert.Equal(2, Plan(TestData.Scan("G", GfxApi.D3D11 | GfxApi.D3D12, anticheat: ["BattlEye"], engine: "")).Warnings.Count);
+    public void No_anti_cheat_no_risk() => Assert.Null(Plan(TestData.Scan("G", GfxApi.D3D11)).Risk);
+
+    [Fact]
+    public void Anti_cheat_and_a_missing_launch_flag_are_separate_things()
+    {
+        var plan = Plan(TestData.Scan("G", GfxApi.D3D11 | GfxApi.D3D12, anticheat: ["BattlEye"], engine: ""));
+        Assert.NotNull(plan.Risk);
+        Assert.Single(plan.Warnings);   // only the D3D12 one, which the UI can't prevent
+    }
 
     [Fact]
     public void Once_dxvk_is_installed_the_d3d12_warning_is_left_to_the_launch_plan()
@@ -107,50 +118,7 @@ public class InstallPlannerTests
         Assert.Empty(Plan(scan).Warnings);
     }
 
-    // ------------------------------------------------------------------ plan summary
-
-    private static ExeInfo Exe(GfxApi apis) => new(@"C:\G\g.exe", 64, 1, apis, apis);
-
-    private static string? Describe(GfxApi detected, RunMode mode, bool installed, string engine = "Unreal")
-    {
-        var scan = TestData.Scan("G", detected, detected, engine: engine);
-        return PlanSummary.Describe(scan, scan.Primary, mode, installed);
-    }
-
-    [Theory]
-    [InlineData(GfxApi.D3D11, RunMode.Default, false, "The game uses D3D11. Using DXVK translates it to Vulkan.")]
-    [InlineData(GfxApi.D3D11, RunMode.Default, true, "The game uses D3D11; DXVK translates it to Vulkan.")]
-    [InlineData(GfxApi.D3D9, RunMode.Default, false, "The game uses D3D9. Using DXVK translates it to Vulkan.")]
-    [InlineData(GfxApi.D3D8, RunMode.Default, true, "The game uses D3D8; DXVK translates it to Vulkan.")]
-    [InlineData(GfxApi.D3D10, RunMode.Default, true, "The game uses D3D10; DXVK translates it to Vulkan.")]
-    [InlineData(GfxApi.D3D9 | GfxApi.D3D11 | GfxApi.D3D12, RunMode.Default, true, "The game uses D3D11; DXVK translates it to Vulkan.")]   // newest DXVK-servable one
-    [InlineData(GfxApi.D3D12, RunMode.D3D11, false, "The game uses D3D11. Using DXVK translates it to Vulkan.")]    // Run as decides
-    public void The_summary_names_the_api_dxvk_will_serve_and_that_the_result_is_vulkan(GfxApi detected, RunMode mode, bool installed, string expected) =>
-        Assert.Equal(expected, Describe(detected, mode, installed));
-
-    [Fact]
-    public void Run_as_d3d12_and_vulkan_say_dxvk_is_not_involved()
-    {
-        Assert.Contains("DXVK can't translate", Describe(GfxApi.D3D11, RunMode.D3D12, false));
-        Assert.Contains("DXVK isn't involved", Describe(GfxApi.D3D11, RunMode.Vulkan, false));
-    }
-
-    [Fact]
-    public void When_the_api_was_not_detected_the_summary_says_both_sets_are_used()
-    {
-        Assert.Contains("D3D9 and D3D11", Describe(GfxApi.None, RunMode.Default, false));
-        Assert.Contains("both installed", Describe(GfxApi.None, RunMode.Default, true)!.Replace("files are ", ""));
-    }
-
-    [Theory]
-    [InlineData(GfxApi.D3D12)]
-    [InlineData(GfxApi.Vulkan)]
-    [InlineData(GfxApi.OpenGL)]
-    public void Nothing_to_say_when_dxvk_has_nothing_to_translate(GfxApi detected) =>
-        Assert.Null(Describe(detected, RunMode.Default, false));
-
-    [Fact]
-    public void No_exe_no_summary() => Assert.Null(PlanSummary.Describe(TestData.Scan("G", GfxApi.D3D11), null, RunMode.Default, false));
+    // ------------------------------------------------------------------------ run as row
 
     [Fact]
     public void Run_as_is_only_shown_for_engines_with_launch_flags()
