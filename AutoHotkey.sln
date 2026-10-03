@@ -20,6 +20,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PortWatch.NET", "PortWatch.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PortWatch.NET.Tests", "PortWatch.NET.Tests\PortWatch.NET.Tests.csproj", "{78A866AF-8AB5-44AF-8514-E50EB9F97C71}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamDxvk.NET", "SteamDxvk.NET\SteamDxvk.NET.csproj", "{FAA3BAD1-C38B-4D2E-8466-E0978676AFB4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamDxvk.NET.Tests", "SteamDxvk.NET.Tests\SteamDxvk.NET.Tests.csproj", "{D266493F-2CAC-4538-AC6B-03ADFF520B16}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -58,6 +62,14 @@ Global
 		{78A866AF-8AB5-44AF-8514-E50EB9F97C71}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{78A866AF-8AB5-44AF-8514-E50EB9F97C71}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{78A866AF-8AB5-44AF-8514-E50EB9F97C71}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FAA3BAD1-C38B-4D2E-8466-E0978676AFB4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FAA3BAD1-C38B-4D2E-8466-E0978676AFB4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FAA3BAD1-C38B-4D2E-8466-E0978676AFB4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FAA3BAD1-C38B-4D2E-8466-E0978676AFB4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D266493F-2CAC-4538-AC6B-03ADFF520B16}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D266493F-2CAC-4538-AC6B-03ADFF520B16}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D266493F-2CAC-4538-AC6B-03ADFF520B16}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D266493F-2CAC-4538-AC6B-03ADFF520B16}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

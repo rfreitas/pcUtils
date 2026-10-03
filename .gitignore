@@ -41,3 +41,10 @@ RefreshRateOverlay.WPF/Tools/PresentMon-*.exe
 # LGTV_brightness.NET build artifacts
 LGTV_brightness.NET/bin/
 LGTV_brightness.NET/obj/
+
+# SteamDxvk.NET build artifacts
+SteamDxvk.NET/bin/
+SteamDxvk.NET/obj/
+SteamDxvk.NET.Tests/bin/
+SteamDxvk.NET.Tests/obj/
+SteamDxvk.NET.Tests/TestResults/
