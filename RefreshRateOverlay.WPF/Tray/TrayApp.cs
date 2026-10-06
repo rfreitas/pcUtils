@@ -64,11 +64,17 @@ internal sealed class TrayApp : IDisposable
     // remarks. Persisted so the user's choice survives a restart.
     private bool _reconciliationEnabled;
 
+    // Core parking is a default+per-app setting like HDR (CoreParkingEnforcer is
+    // the hardware half): true = parking disabled on the active power plan.
+    private readonly IProcessorPowerSettings _powerSettings = new PowrProfProcessorPowerSettings();
+    private readonly SyncableSetting<bool> _coreParkingSetting;
+
     // Backoff state for reconciliation-off enforcement — one per push bucket
     // (Rate+HDR always pushed together, G-SYNC separate), since that's how
     // ApplyProfile/ApplyGsyncMode already group things. See
     // EnforcementBackoffTracker and ReconcileAll's reconciliation-off branch.
     private readonly EnforcementBackoffTracker _displayBackoff = new();
+    private readonly EnforcementBackoffTracker _parkingBackoff = new();
     private readonly EnforcementBackoffTracker _gsyncBackoff = new();
 
     // Guards against overlapping G-SYNC enforcement settle loops — Display's
@@ -232,6 +238,27 @@ internal sealed class TrayApp : IDisposable
         }
         _gsyncCache = seedGsync;
 
+        bool storedDefaultParking = _profiles.CoreParking.ReadDefault();
+        bool seedParking = storedDefaultParking;
+        bool liveParking = CoreParkingEnforcer.IsDisabled(_powerSettings);
+        if (ReconcilePlanner.PlanSeed(_profiles.CoreParking.HasDefault(), storedDefaultParking, liveParking, _reconciliationEnabled)
+                == SeedAction.AdoptLive)
+        {
+            seedParking = liveParking;
+        }
+        _coreParkingSetting = new SyncableSetting<bool>(
+            "Core parking", _profiles.CoreParking,
+            isAvailable: () => CoreParkingEnforcer.IsAvailable(_powerSettings),
+            tryReadLive: (out bool v) => { v = CoreParkingEnforcer.IsDisabled(_powerSettings); return true; },
+            describe: v => v ? "Disabled" : "Allowed",
+            initialDefault: seedParking);
+        if (seedParking != storedDefaultParking) _profiles.CoreParking.WriteDefault(seedParking);
+        ApplyCoreParking(seedParking);
+
+        // Core parking is deliberately NOT in this list: it has its own trigger
+        // (power-setting notifications, see OnPowerSettingChange) and must not
+        // drag rate/HDR/G-SYNC reconciliation along mid display-settle. It is
+        // still reconciled from ReconcileAll too, via ReconcileCoreParking.
         _syncables = new List<ISyncableSetting> { _rateSetting, _hdrSetting, _gsyncSetting };
 
         // HardwareChange subscriber — see its own remarks. Adding a fourth
@@ -260,7 +287,8 @@ internal sealed class TrayApp : IDisposable
         _stickyLivenessTimer.Tick += StickyLivenessTick;
         _stickyLivenessTimer.Start();
 
-        _msgSink = new SystemMessageSink(OnDisplayChange);
+        _msgSink = new SystemMessageSink(OnDisplayChange, OnPowerSettingChange);
+        _msgSink.RegisterPowerSettings(CoreParkingEnforcer.NotificationSettings);
 
         (uint hkMods, uint hkVk) = _profiles.ReadHotkey()
             ?? (HotkeyService.MOD_WIN | HotkeyService.MOD_ALT | HotkeyService.MOD_SHIFT, 0x52 /* R */);
@@ -429,12 +457,14 @@ internal sealed class TrayApp : IDisposable
         {
             _displayBackoff.Reset();
             _gsyncBackoff.Reset();
+            _parkingBackoff.Reset();
         }
         _lastAppliedProfileApp = app;
 
         ApplyProfile(app);
         ApplyDsxProfileForApp(app);
         ApplyGsyncMode(app);
+        ApplyCoreParking(_coreParkingSetting.ResolveTarget(app));
     }
 
     private void ApplyProfile(string app, Action<bool>? onSettled = null)
@@ -516,7 +546,8 @@ internal sealed class TrayApp : IDisposable
         _rateSetting.HasProfile(app) ||
         _hdrSetting.HasProfile(app) ||
         _profiles.Dsx.HasProfile(app) ||
-        _gsyncSetting.HasProfile(app);
+        _gsyncSetting.HasProfile(app) ||
+        _coreParkingSetting.HasProfile(app);
 
     /// <summary>If the anticipated app never actually takes foreground focus
     /// within this window, the early push above was a wrong guess — re-resolve
@@ -688,6 +719,7 @@ internal sealed class TrayApp : IDisposable
         var failed = new List<string>();
         if (_displayBackoff.GaveUp) failed.Add("Refresh rate/HDR");
         if (_gsyncAvailable && _gsyncBackoff.GaveUp) failed.Add("G-SYNC");
+        if (_parkingBackoff.GaveUp) failed.Add("Core parking");
 
         overlay.SetApplyWarning(failed.Count > 0 ? string.Join(", ", failed) : null);
     }
@@ -715,6 +747,77 @@ internal sealed class TrayApp : IDisposable
     // time) — a future raiser with its own settling semantics would own its own
     // guard rather than share this one.
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Core parking
+    // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Core parking application: our INI is the source of truth, the active
+    // power plan's min-cores values are the push target, exactly like
+    // DisplayService/HdrService are for rate/HDR. CoreParkingEnforcer reads
+    // first and writes only what differs, so calling this on every foreground
+    // change (including sticky profiles resolving back to the same app) is a
+    // no-op when nothing needs to change.
+    // -------------------------------------------------------------------------
+    private bool ApplyCoreParking(bool disableParking)
+    {
+        CoreParkingResult result = CoreParkingEnforcer.Apply(_powerSettings, _profiles.ParkingRestore, disableParking);
+        switch (result)
+        {
+            case CoreParkingResult.Applied:
+                Logger.Log($"Core parking: {(disableParking ? "disabled" : "allowed again")}.");
+                break;
+            case CoreParkingResult.Failed:
+                Logger.Log($"Core parking: failed to {(disableParking ? "disable" : "re-allow")} it.");
+                break;
+        }
+        return result != CoreParkingResult.Failed;
+    }
+
+    /// <summary>The active plan or a min-cores value changed (another tool, a plan
+    /// switch, or our own write echoing back). Reconciles core parking ONLY: going
+    /// through HardwareChange/ReconcileAll would also re-reconcile rate, HDR and
+    /// G-SYNC, and our own parking write on a focus change lands in the middle of
+    /// that same focus change's display settle, where a transient clamped value
+    /// must not be mistaken for an external change (see _settling).</summary>
+    private void OnPowerSettingChange()
+    {
+        string app = ResolveStickyApp(_anticipatedApp.ResolveApp(_tracker.LastApp));
+        ReconcileCoreParking(app);
+        if (_overlay is { } overlay)
+            overlay.RefreshCoreParkingLiveState(_coreParkingSetting.ResolveTarget(overlay.ActiveApp));
+    }
+
+    /// <summary>The ReconcileAll logic for core parking, callable on its own: with
+    /// reconciliation on, absorb an external change into the INI; off, revert it to
+    /// the INI target, paced by _parkingBackoff like the other enforcement buckets.</summary>
+    private void ReconcileCoreParking(string app)
+    {
+        if (_reconciliationEnabled)
+        {
+            var result = _coreParkingSetting.Reconcile(app);
+            if (result is { Action: not ReconcileAction.None } r)
+            {
+                Logger.Log($"Reconcile: {_coreParkingSetting.Name} drifted to {r.Live} (target was {r.Target}) for app='{app}' -> {r.Action}.");
+                NotifyReconciled(_coreParkingSetting.Name, r.Live, app, r.Action);
+            }
+            return;
+        }
+
+        const string parkingLabel = "Core parking";
+        if (!_coreParkingSetting.IsDrifted(app))
+        {
+            HandleEnforcementRecovery(_parkingBackoff, parkingLabel);
+        }
+        else if (_parkingBackoff.ShouldAttempt(DateTime.UtcNow))
+        {
+            bool freshStreak = _parkingBackoff.ConsecutiveFailures == 0;
+            Logger.Log($"Reconcile (disabled): core parking changed externally for app='{app}' — reverting to INI target.");
+            if (freshStreak) NotifyReverted(parkingLabel);
+            bool ok = ApplyCoreParking(_coreParkingSetting.ResolveTarget(app));
+            HandleEnforcementResult(_parkingBackoff, parkingLabel, ok);
+        }
+    }
+
     private void OnDisplayChange()
     {
         if (_settling)
@@ -822,6 +925,8 @@ internal sealed class TrayApp : IDisposable
             }
         }
 
+        ReconcileCoreParking(app);
+
         // If the overlay is open, push it its OWN app's resolved target — not
         // gated on overlay.ActiveApp == app (the app that was foreground when
         // this reconcile ran). Reconciling can easily happen while a different
@@ -837,6 +942,7 @@ internal sealed class TrayApp : IDisposable
             (int overlayRate, bool overlayHdr) = ResolveTarget(overlay.ActiveApp);
             overlay.RefreshLiveState(overlayRate, overlayHdr);
             if (_gsyncAvailable) overlay.RefreshGsyncLiveState(_gsyncSetting.ResolveTarget(overlay.ActiveApp));
+            overlay.RefreshCoreParkingLiveState(_coreParkingSetting.ResolveTarget(overlay.ActiveApp));
         }
     }
 
@@ -1224,7 +1330,8 @@ internal sealed class TrayApp : IDisposable
             ? capFps
             : null;
 
-        bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile || hasGsyncModeProfile;
+        bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile || hasGsyncModeProfile
+            || _coreParkingSetting.HasProfile(app);
 
         // Opening the overlay never writes the INI — that's OnDisplayChange's job
         // now (see its remarks). What's actually stored (profile-or-default, same
@@ -1241,6 +1348,11 @@ internal sealed class TrayApp : IDisposable
         int  preselectRate = (hasProfile && _profiles.Rate.TryReadProfile(app, out int prRate)) ? prRate : _currentRate;
         bool preselectHdr  = (hasProfile && _hdrSupported && _profiles.Hdr.TryReadProfile(app, out bool prHdr)) ? prHdr : currHdr;
 
+        // Same stored-vs-preselect split as HDR: the dot's baseline is what's
+        // resolved for this app, and the control preselects that saved value.
+        bool storedCoreParking    = _coreParkingSetting.ResolveTarget(app);
+        bool preselectCoreParking = storedCoreParking;
+
         // Same fallback shape as rate/HDR above: this app's own VRR_MODE override
         // if it has one, otherwise the INI default. Null only when NVAPI isn't
         // available at all this session — hides the row.
@@ -1254,6 +1366,7 @@ internal sealed class TrayApp : IDisposable
         var failedSettings = new List<string>();
         if (_displayBackoff.GaveUp) failedSettings.Add("Refresh rate/HDR");
         if (_gsyncAvailable && _gsyncBackoff.GaveUp) failedSettings.Add("G-SYNC");
+        if (_parkingBackoff.GaveUp) failedSettings.Add("Core parking");
         string? applyWarning = failedSettings.Count > 0 ? string.Join(", ", failedSettings) : null;
 
         _overlay = new OverlayWindow(
@@ -1271,7 +1384,9 @@ internal sealed class TrayApp : IDisposable
             storedRate:     storedRate,
             storedHdr:      storedHdr,
             applyWarning:   applyWarning,
-            frameCapFps:    frameCapFps);
+            frameCapFps:    frameCapFps,
+            disableCoreParking: preselectCoreParking,
+            storedDisableCoreParking: storedCoreParking);
 
         _overlay.AppSwitchRequested += (_, newApp) => ShowOverlay(forcedApp: newApp);
 
@@ -1280,13 +1395,17 @@ internal sealed class TrayApp : IDisposable
             Logger.Log($"Overlay: profile deleted for app='{app}'.");
             _displayBackoff.Reset();
             _gsyncBackoff.Reset();
+            _parkingBackoff.Reset();
             _overlay!.SetApplyWarning(null);
             _profiles.Rate.DeleteProfile(app);
             if (_hdrSupported) _profiles.Hdr.DeleteProfile(app);
             _profiles.Dsx.DeleteProfile(app);
             if (_gsyncAvailable) _profiles.GsyncMode.DeleteProfile(app);
+            _profiles.CoreParking.DeleteProfile(app);
             ApplyDisplayState(_rateSetting.Default, _hdrSetting.Default);
             if (_gsyncAvailable) ApplyGsyncMode(app);
+            ApplyCoreParking(_coreParkingSetting.Default);
+            _overlay!.RefreshCoreParkingLiveState(_coreParkingSetting.Default);
         };
 
         _overlay.ApplyRequested += (_, _) =>
@@ -1296,6 +1415,7 @@ internal sealed class TrayApp : IDisposable
             // enforcement fight left behind. See EnforcementBackoffTracker.
             _displayBackoff.Reset();
             _gsyncBackoff.Reset();
+            _parkingBackoff.Reset();
             _overlay!.SetApplyWarning(null);
 
             int     selRate     = _overlay!.SelectedRate;
@@ -1322,7 +1442,12 @@ internal sealed class TrayApp : IDisposable
                 _overlay.ReflectDsxApplied(selDsx ?? "");
             }
 
+            bool parkingVal = _overlay.DisableCoreParking;
+            _coreParkingSetting.SaveOrClear(app, saveProfile, parkingVal);
+
             ApplyDisplayState(selRate, hdrVal);
+            ApplyCoreParking(parkingVal);
+            _overlay.RefreshCoreParkingLiveState(parkingVal);
             if (selDsx is not null) _ = ApplyDsxProfileToDevicesAsync(selDsx);
 
             // Every write below is immediately followed by telling the

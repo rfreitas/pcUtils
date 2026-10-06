@@ -187,3 +187,46 @@ Accepted gap: a third-party DRS editor (nvidiaProfileInspector, legacy NVCP)
 changing G-SYNC wouldn't be caught until the next startup or next
 NVIDIA-App-focus event — the common real case (the first-party NVIDIA App)
 is covered; broader coverage wasn't worth reintroducing a poll for.
+
+## Core parking is a default + per-app setting, like HDR
+
+"Disable core parking" pins "Processor performance core parking min cores"
+(both efficiency classes, AC and DC) to 100% on the *active* power plan via
+`powrprof.dll`. It uses the same shape as HDR: a `ProfileSetting<bool>`
+(`ProfileService.CoreParking`, true = parking disabled) wrapped in a
+`SyncableSetting<bool>` in `TrayApp`, a sync-dot row in the overlay
+(`OverlayWindow` CoreParkingRow), saved by Apply / "Save for <app>", resolved
+per app by `ApplyAllProfiles`, seeded via `ReconcilePlanner.PlanSeed`, and
+absorbed or reverted by `ReconcileAll` depending on `ReconciliationEnabled`.
+`Services/CoreParkingService.cs` is only the hardware half.
+
+- **No-op when nothing differs.** `CoreParkingEnforcer.Apply` fetches the active
+  plan once, reads first, writes only values that differ, and re-activates the
+  plan only if it wrote (also after a partial write failure, so written values
+  never sit unapplied). Re-activating fires the power-setting notifications that
+  make `TrayApp` re-check, so the pass that finds nothing to do ends that loop.
+- **"Allowed" is whatever the live read says.** `IsDisabled` is true only when
+  every readable value is 100. `Apply(allow)` therefore does nothing unless the
+  plan is fully pinned, so a mixed state (values at 100 from another tool or a
+  vendor plan) is never rewritten. An unreadable plan makes the setting
+  unavailable instead of reading as "allowed".
+- **"Off" needs a defined value, per plan.** Disabling remembers each value it
+  replaces, keyed by plan GUID + setting + AC/DC (`[CoreParkingRestore]` in the
+  INI), so a plan switch can never restore one plan's numbers into another.
+  Allowing parking again from a fully pinned plan puts those back, or falls
+  back to 0 (Windows decides) when nothing was remembered.
+- **Its own reconcile path.** Parking is deliberately not in `_syncables`.
+  Power-setting notifications (`SystemMessageSink`, on the active-plan GUID and
+  both min-cores GUIDs) call `TrayApp.OnPowerSettingChange`, which reconciles
+  parking only. Going through `HardwareChange`/`ReconcileAll` would re-reconcile
+  rate/HDR/G-SYNC in the middle of the same focus change's display settle, where
+  our own parking write lands, and mistake a transient clamped value for an
+  external change. `ReconcileAll` still calls `ReconcileCoreParking` too.
+- **ParkControl.** Its Dynamic Boost swaps in an Idle plan/profile after a
+  timeout. With reconciliation on, that is absorbed as an external change (the
+  stored default follows it); with reconciliation off it is reverted through
+  `_parkingBackoff`, which gives up after repeated reverts like the other
+  enforcement buckets and shows "Core parking" in the overlay warning.
+  Enforcement edits whichever plan is active and nothing restores it on exit.
+- Tests use fake `IProcessorPowerSettings` / `IParkingRestoreStore`; never read
+  or write real power plans from tests.

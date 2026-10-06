@@ -26,6 +26,7 @@ public partial class OverlayWindow : Window
     // — Rate/Hdr always exist; GsyncMode only when NVAPI made the row visible.
     private SyncedField<int>  _rateSync = null!;
     private SyncedField<bool> _hdrSync  = null!;
+    private SyncedField<bool> _coreParkingSync = null!;
     private SyncedField<GsyncGlobalMode>? _gsyncSync;
     private SyncedField<VrrAppState>? _appVrrSync;
     private SyncedField<uint>? _frameCapSync;
@@ -35,6 +36,7 @@ public partial class OverlayWindow : Window
     // production code never reads these, it goes through Refresh*LiveState.
     internal SyncedField<int>  RateSync => _rateSync;
     internal SyncedField<bool> HdrSync  => _hdrSync;
+    internal SyncedField<bool> CoreParkingSync => _coreParkingSync;
     internal SyncedField<GsyncGlobalMode>? GsyncSync => _gsyncSync;
     internal SyncedField<VrrAppState>? AppVrrSync => _appVrrSync;
     internal SyncedField<uint>? FrameCapSync => _frameCapSync;
@@ -47,6 +49,7 @@ public partial class OverlayWindow : Window
 
     public bool SaveProfile => SaveCheckBox.IsChecked == true;
     public bool HdrEnabled  => HdrCheckBox.IsChecked == true;
+    public bool DisableCoreParking => DisableCoreParkingCheckBox.IsChecked == true;
 
     /// <summary>Null means "— Not Managed —" (index 0): leave DSX alone. Only
     /// meaningful when DsxProfileEditable is true.</summary>
@@ -176,7 +179,9 @@ public partial class OverlayWindow : Window
         int        storedRate,
         bool       storedHdr,
         string?    applyWarning = null,
-        uint?      frameCapFps = null)
+        uint?      frameCapFps = null,
+        bool       disableCoreParking = false,
+        bool       storedDisableCoreParking = false)
     {
         InitializeComponent();
 
@@ -310,6 +315,14 @@ public partial class OverlayWindow : Window
             },
             isActive: () => HdrRow.Visibility == Visibility.Visible);
 
+        DisableCoreParkingCheckBox.IsChecked = disableCoreParking;
+        _coreParkingSync = BindSynced(CoreParkingSyncDot, DisableCoreParkingCheckBox, storedDisableCoreParking, () => DisableCoreParking,
+            changed =>
+            {
+                DisableCoreParkingCheckBox.Checked   += (_, _) => changed();
+                DisableCoreParkingCheckBox.Unchecked += (_, _) => changed();
+            });
+
         SaveCheckBox.Content   = new TextBlock { Text = $"Save for {activeApp}", TextWrapping = TextWrapping.Wrap };
         SaveCheckBox.IsChecked = hasProfile;
 
@@ -383,6 +396,19 @@ public partial class OverlayWindow : Window
                 HdrCheckBox.IsChecked = currHdr;
             }
             _hdrSync.UpdateStored(currHdr);
+        }
+        finally { _suppressTouchTracking = false; }
+    }
+
+    /// <summary>Same role as RefreshLiveState, for core parking: moves the
+    /// baseline, and the shown value too unless the user already edited it.</summary>
+    public void RefreshCoreParkingLiveState(bool disabled)
+    {
+        _suppressTouchTracking = true;
+        try
+        {
+            if (!_coreParkingSync.Touched) DisableCoreParkingCheckBox.IsChecked = disabled;
+            _coreParkingSync.UpdateStored(disabled);
         }
         finally { _suppressTouchTracking = false; }
     }

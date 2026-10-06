@@ -28,6 +28,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Text="Refresh Rate Overlay"
@@ -93,7 +94,22 @@
                           Foreground="White" FontSize="14" VerticalAlignment="Center"/>
             </Grid>
 
-            <Grid Grid.Row="7" x:Name="DsxProfileRow" Margin="0,8,0,0" Visibility="Collapsed">
+            <!-- Core parking: same default + per-app shape and sync dot as HDR. -->
+            <Grid Grid.Row="7" x:Name="CoreParkingRow" Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Ellipse Grid.Column="0" x:Name="CoreParkingSyncDot" Width="8" Height="8"
+                         Fill="LimeGreen" VerticalAlignment="Center"
+                         ToolTip="Green: matches the saved value. Red: hasn't been reconciled into storage yet — Apply will save what's shown."/>
+                <CheckBox Grid.Column="2" x:Name="DisableCoreParkingCheckBox" Content="Disable core parking"
+                          Foreground="White" FontSize="14" VerticalAlignment="Center"
+                          ToolTip="Pins the active power plan's minimum unparked cores to 100% while this app is focused."/>
+            </Grid>
+
+            <Grid Grid.Row="8" x:Name="DsxProfileRow" Margin="0,8,0,0" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="6"/>
@@ -108,7 +124,7 @@
                 <ComboBox Grid.Column="4" x:Name="DsxProfileDropDown" FontSize="14" Height="30"/>
             </Grid>
 
-            <Grid Grid.Row="8" x:Name="GsyncModeRow" Margin="0,8,0,0" Visibility="Collapsed">
+            <Grid Grid.Row="9" x:Name="GsyncModeRow" Margin="0,8,0,0" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="6"/>
@@ -129,7 +145,7 @@
                  back to, so it's only ever editable while "Save for <app>" is
                  ticked — grayed out otherwise, no sync dot (nothing reconciles
                  this in the background the way Rate/HDR/GsyncMode do). -->
-            <Grid Grid.Row="9" x:Name="AppVrrRow" Margin="0,8,0,0" Visibility="Collapsed">
+            <Grid Grid.Row="10" x:Name="AppVrrRow" Margin="0,8,0,0" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="6"/>
@@ -149,7 +165,7 @@
                  "Max Frame Rate"), only ever editable while "Save for <app>" is
                  ticked. Plain numeric entry (0-1000, or blank for Not Set) —
                  no dropdown/preset list. -->
-            <Grid Grid.Row="10" x:Name="FrameCapRow" Margin="0,8,0,0" Visibility="Collapsed">
+            <Grid Grid.Row="11" x:Name="FrameCapRow" Margin="0,8,0,0" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="6"/>
@@ -165,7 +181,7 @@
                          ToolTip="FPS, 0-1000. Blank for Not Set."/>
             </Grid>
 
-            <Grid Grid.Row="11" Margin="0,8,0,0">
+            <Grid Grid.Row="12" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -179,7 +195,7 @@
                 </Button>
             </Grid>
 
-            <Grid Grid.Row="12" Margin="0,8,0,0">
+            <Grid Grid.Row="13" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="8"/>

@@ -36,6 +36,14 @@ internal sealed class ProfileService
 
     public ProfileSetting<GsyncGlobalMode> GsyncMode { get; }
 
+    /// <summary>True = core parking disabled (min unparked cores pinned to 100%).
+    /// Same default+per-app shape as HDR; see CoreParkingEnforcer.</summary>
+    public ProfileSetting<bool> CoreParking { get; }
+
+    /// <summary>What each power value was before parking was disabled, so turning
+    /// the setting off can restore it. Not a profile setting: it is bookkeeping.</summary>
+    public IParkingRestoreStore ParkingRestore { get; }
+
     public ProfileService(IniStore ini)
     {
         _ini = ini;
@@ -57,6 +65,14 @@ internal sealed class ProfileService
             parse: (string s, out string v) => { v = s; return true; },
             format: v => v,
             fallback: "");
+
+        CoreParking = new ProfileSetting<bool>(
+            ini, SecSettings, "DefaultDisableCoreParking", "CoreParkingProfiles",
+            parse: (string s, out bool v) => { v = s == "1"; return true; },
+            format: v => v ? "1" : "0",
+            fallback: false);
+
+        ParkingRestore = new IniParkingRestoreStore(ini);
 
         GsyncMode = new ProfileSetting<GsyncGlobalMode>(
             ini, SecSettings, "DefaultGsyncMode", "GsyncModeProfiles",
