@@ -80,9 +80,10 @@ internal sealed class JsonOptimizerJournalStore : IOptimizerJournalStore
 ///   process (creation time; pid reuse is never touched).
 /// - A session is one app. A new app, a mode other than Live, exit, or startup
 ///   (crash recovery) restores everything.
-/// - A process throttled for high CPU stays throttled for the session even when
-///   its CPU drops; it is released early only if it becomes Game, launch chain
-///   or Protected.
+/// - A throttled process stays throttled for the session; it is released early
+///   only if it becomes Game, launch chain, VR pipeline or Protected.
+/// - A child of a throttled process inherits its priority; its journal entry
+///   records the parent's original so restore doesn't leave it throttled.
 /// </summary>
 internal sealed class GameOptimizerEnforcer
 {
@@ -94,6 +95,10 @@ internal sealed class GameOptimizerEnforcer
     private readonly Action<string> _log;
     private readonly Dictionary<int, OptimizerJournalEntry> _entries = new();
     private readonly Dictionary<int, string> _failures = new();
+    // child pid → its throttled parent's entry, from the latest snapshot. A child
+    // starts with the parent's Below normal/Idle priority (and may inherit more),
+    // so its true original is the parent's original, not what it reads now.
+    private readonly Dictionary<int, OptimizerJournalEntry> _throttledParent = new();
 
     public GameOptimizerEnforcer(IProcessControl control, IOptimizerJournalStore store, CpuTopology topology, Action<string>? log = null)
     {
@@ -124,11 +129,28 @@ internal sealed class GameOptimizerEnforcer
 
     /// <summary>Planner input with journaled processes shown at their ORIGINAL
     /// priority, so our own Below normal doesn't reclassify them as
-    /// "Priority already set" on the next pass.</summary>
-    public IEnumerable<ProcessSnapshot> WithOriginalPriorities(IEnumerable<ProcessSnapshot> snapshots) =>
-        snapshots.Select(s => _entries.TryGetValue(s.Pid, out var e) && e.AppliedPriority is not null && s.PriorityClass == e.AppliedPriority
-            ? s with { PriorityClass = e.OriginalPriority }
-            : s);
+    /// "Priority already set" on the next pass. A child of a throttled process
+    /// that carries the parent's applied priority is shown at the parent's
+    /// original, because that priority came from us, not from the user.</summary>
+    public List<ProcessSnapshot> WithOriginalPriorities(IEnumerable<ProcessSnapshot> snapshots)
+    {
+        _throttledParent.Clear();
+        var result = new List<ProcessSnapshot>();
+        foreach (var s in snapshots)
+        {
+            OptimizerJournalEntry? source = null;
+            if (_entries.TryGetValue(s.Pid, out var own)) source = own;
+            else if (s.ParentPid is { } pp && _entries.TryGetValue(pp, out var parent) && parent.Change == OptimizerChange.Throttle)
+            {
+                _throttledParent[s.Pid] = parent;
+                source = parent;
+            }
+            result.Add(source is { AppliedPriority: not null } e && s.PriorityClass == e.AppliedPriority
+                ? s with { PriorityClass = e.OriginalPriority }
+                : s);
+        }
+        return result;
+    }
 
     public void Enforce(OptimizerReport report)
     {
@@ -177,30 +199,45 @@ internal sealed class GameOptimizerEnforcer
         };
         int? io = change == OptimizerChange.Throttle ? IoVeryLow : null;
 
+        // Originals: what the process has now, except values it inherited from a
+        // throttled parent (equal to what we applied there), which go back to the
+        // parent's original on restore instead of staying throttled forever.
+        ProcessPriorityClass origPriority = state.Priority;
+        uint[] origSets = state.CpuSets;
+        int? origIo = state.IoPriority;
+        if (change == OptimizerChange.Throttle && _throttledParent.TryGetValue(d.Pid, out var parent))
+        {
+            if (parent.AppliedPriority is { } pp && state.Priority == pp) origPriority = parent.OriginalPriority;
+            if (parent.AppliedCpuSets is { } ps && SameSets(state.CpuSets, ps)) origSets = parent.OriginalCpuSets;
+            if (parent.AppliedIoPriority is { } pi && state.IoPriority == pi) origIo = parent.OriginalIoPriority;
+        }
+
         var entry = new OptimizerJournalEntry
         {
             Pid = d.Pid,
             CreationTime = state.CreationTime,
             Name = d.Name,
             Change = change,
-            OriginalPriority = state.Priority,
-            AppliedPriority = priority is null || state.Priority == priority ? null : priority,
-            OriginalCpuSets = state.CpuSets,
-            AppliedCpuSets = sets is not null && !SameSets(state.CpuSets, sets) ? sets : null,
-            OriginalIoPriority = state.IoPriority,
-            AppliedIoPriority = io is not null && state.IoPriority != io ? io : null,
+            OriginalPriority = origPriority,
+            AppliedPriority = priority is null || origPriority == priority ? null : priority,
+            OriginalCpuSets = origSets,
+            AppliedCpuSets = sets is not null && !SameSets(origSets, sets) ? sets : null,
+            OriginalIoPriority = origIo,
+            AppliedIoPriority = io is not null && origIo != io ? io : null,
         };
         if (entry.AppliedPriority is null && entry.AppliedCpuSets is null && entry.AppliedIoPriority is null) return;
 
         _entries[d.Pid] = entry;
         Persist(); // write-ahead: recorded before anything is changed
 
+        // An inherited value may already be the target; then there is nothing to
+        // write, but the entry still restores it.
         var failed = new List<string>();
-        if (entry.AppliedPriority is { } p && !_control.SetPriority(d.Pid, state.CreationTime, p))
+        if (entry.AppliedPriority is { } p && state.Priority != p && !_control.SetPriority(d.Pid, state.CreationTime, p))
         { failed.Add("priority"); entry = entry with { AppliedPriority = null }; }
-        if (entry.AppliedCpuSets is { } s && !_control.SetCpuSets(d.Pid, state.CreationTime, s))
+        if (entry.AppliedCpuSets is { } s && !SameSets(state.CpuSets, s) && !_control.SetCpuSets(d.Pid, state.CreationTime, s))
         { failed.Add("cores"); entry = entry with { AppliedCpuSets = null }; }
-        if (entry.AppliedIoPriority is { } i && !_control.SetIoPriority(d.Pid, state.CreationTime, i))
+        if (entry.AppliedIoPriority is { } i && state.IoPriority != i && !_control.SetIoPriority(d.Pid, state.CreationTime, i))
         { failed.Add("disk priority"); entry = entry with { AppliedIoPriority = null }; }
 
         if (entry.AppliedPriority is null && entry.AppliedCpuSets is null && entry.AppliedIoPriority is null)

@@ -82,6 +82,7 @@ internal sealed class TrayApp : IDisposable
         new Win32ProcessControl(), new JsonOptimizerJournalStore(JsonOptimizerJournalStore.DefaultPath), CpuTopology.Read(), Logger.Log);
     private string? _optimizerLiveApp;
     private System.Windows.Forms.Timer? _optimizerLiveTimer;
+    private bool _optimizerRerunLive;
 
     // Backoff state for reconciliation-off enforcement — one per push bucket
     // (Rate+HDR always pushed together, G-SYNC separate), since that's how
@@ -290,6 +291,12 @@ internal sealed class TrayApp : IDisposable
         // OnProcessStarted remarks.
         _processStartWatcher = new ProcessStartWatcher();
         _processStartWatcher.ProcessStarted += OnProcessStarted;
+        // Live optimizer: classify (and throttle) a new process at birth rather
+        // than at the next 2.5 s pass. Bursts coalesce via _optimizerRerunLive.
+        _processStartWatcher.ProcessStarted += (_, _) =>
+        {
+            if (_optimizerLiveApp is { } liveApp) _ = RunOptimizerAsync(liveApp, logSummary: false);
+        };
         _processStartWatcher.Start();
 
         // StickyProfileTracker's sole pop mechanism — see StickyLivenessTick
@@ -883,12 +890,17 @@ internal sealed class TrayApp : IDisposable
 
     private async Task RunOptimizerAsync(string app, bool logSummary)
     {
-        if (_optimizerSampleInFlight) return;
+        if (_optimizerSampleInFlight)
+        {
+            // A new-process trigger must not be lost to a scan already running.
+            if (string.Equals(app, _optimizerLiveApp, StringComparison.OrdinalIgnoreCase)) _optimizerRerunLive = true;
+            return;
+        }
         _optimizerSampleInFlight = true;
         try
         {
             var snapshots = await Task.Run(() => _processSnapshots.Take());
-            var roots = GameOptimizerPlanner.OpenXrRoots(ProcessSnapshotService.ReadActiveOpenXrRuntime());
+            var roots = GameOptimizerPlanner.RuntimeRoots(ProcessSnapshotService.ReadVrRuntimeFolders());
             var report = GameOptimizerPlanner.Plan(app, DateTime.Now, _optimizerEnforcer.WithOriginalPriorities(snapshots),
                 Environment.ProcessId, roots, actions: _optimizerEnforcer.Actions);
             _lastOptimizerReport = report;
@@ -912,6 +924,12 @@ internal sealed class TrayApp : IDisposable
         }
         catch (Exception ex) { Logger.LogException(ex); }
         finally { _optimizerSampleInFlight = false; }
+
+        if (_optimizerRerunLive && _optimizerLiveApp is { } liveApp)
+        {
+            _optimizerRerunLive = false;
+            _ = RunOptimizerAsync(liveApp, logSummary: false);
+        }
     }
 
     /// <summary>Opens (or re-anchors) the side panel for the overlay's app. The

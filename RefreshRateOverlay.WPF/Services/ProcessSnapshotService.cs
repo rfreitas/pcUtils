@@ -77,8 +77,27 @@ internal sealed class ProcessSnapshotService
         return map;
     }
 
+    /// <summary>Highest thread base priority of a process. Process.GetProcesses
+    /// already read every thread in its one system-information call, so this is
+    /// a walk over data in memory, not another query.</summary>
+    private static int? MaxThreadPriority(Process p)
+    {
+        try
+        {
+            int max = -1;
+            foreach (ProcessThread t in p.Threads)
+                using (t) max = Math.Max(max, t.BasePriority);
+            return max >= 0 ? max : null;
+        }
+        catch { return null; }
+    }
+
     private readonly object _lock = new();
     private Dictionary<(int Pid, long Created), long> _lastCpu = new();
+    // Highest thread priority ever seen per process instance. MMCSS raises a
+    // thread only while its task is active, so one sample can miss it; once seen,
+    // it counts for the life of the process.
+    private Dictionary<(int Pid, long Created), int> _maxThreadPriority = new();
     private long _lastSampleTicks;
 
     public List<ProcessSnapshot> Take()
@@ -91,6 +110,7 @@ internal sealed class ProcessSnapshotService
             var result = new List<ProcessSnapshot>();
             var created = new Dictionary<int, long>();
             var parents = ReadParentPids();
+            var nextMaxPri = new Dictionary<(int, long), int>();
 
             foreach (Process p in Process.GetProcesses())
             {
@@ -102,6 +122,7 @@ internal sealed class ProcessSnapshotService
                     string? path = null;
                     ProcessPriorityClass? priority = null;
                     double? cores = null;
+                    int? maxPri = MaxThreadPriority(p);
 
                     IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
                     if (h != IntPtr.Zero)
@@ -120,16 +141,20 @@ internal sealed class ProcessSnapshotService
                                 nextCpu[key] = cpu;
                                 if (elapsedSec > 0 && _lastCpu.TryGetValue(key, out long prev))
                                     cores = Math.Max(0, (cpu - prev) / 1e7 / elapsedSec);
+                                if (_maxThreadPriority.TryGetValue(key, out int seen))
+                                    maxPri = Math.Max(seen, maxPri ?? seen);
+                                if (maxPri is { } mp) nextMaxPri[key] = mp;
                             }
                         }
                         finally { CloseHandle(h); }
                     }
 
-                    result.Add(new ProcessSnapshot(name, pid, path, session, priority, cores));
+                    result.Add(new ProcessSnapshot(name, pid, path, session, priority, cores) { MaxThreadPriority = maxPri });
                 }
             }
 
             _lastCpu = nextCpu;
+            _maxThreadPriority = nextMaxPri;
             _lastSampleTicks = nowTicks;
 
             // A parent pid can be stale: the parent exited and its pid went to a
@@ -168,5 +193,74 @@ internal sealed class ProcessSnapshotService
             return key?.GetValue("ActiveRuntime") as string;
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Folders of every VR runtime and VR tool registered on this PC, active or
+    /// not: each OpenXR runtime manifest's folder (active + AvailableRuntimes),
+    /// each OpenXR API layer's folder (overlays and toolkits such as OpenXR
+    /// Toolkit or OpenKneeboard, machine and user, enabled or not), and the
+    /// OpenVR runtime and driver folders from openvrpaths.vrpath. Registrations
+    /// rather than names, so a runtime or tool installed later is covered
+    /// without a list.
+    /// </summary>
+    public static List<string> ReadVrRuntimeFolders()
+    {
+        var folders = new List<string>();
+        void AddManifest(string? manifest)
+        {
+            if (!string.IsNullOrWhiteSpace(manifest) && System.IO.Path.GetDirectoryName(manifest.Trim()) is { Length: > 0 } dir)
+                folders.Add(dir);
+        }
+
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Khronos\OpenXR\1");
+            AddManifest(key?.GetValue("ActiveRuntime") as string);
+            using var available = key?.OpenSubKey("AvailableRuntimes");
+            if (available is not null)
+                foreach (string manifest in available.GetValueNames()) AddManifest(manifest);
+        }
+        catch { }
+
+        foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
+            foreach (string kind in new[] { "Implicit", "Explicit" })
+            {
+                try
+                {
+                    using var layers = hive.OpenSubKey($@"SOFTWARE\Khronos\OpenXR\1\ApiLayers\{kind}");
+                    if (layers is not null)
+                        foreach (string manifest in layers.GetValueNames()) AddManifest(manifest);
+                }
+                catch { }
+            }
+
+        try
+        {
+            string vrpath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "openvr", "openvrpaths.vrpath");
+            if (System.IO.File.Exists(vrpath))
+                folders.AddRange(ParseOpenVrPaths(System.IO.File.ReadAllText(vrpath)));
+        }
+        catch { }
+
+        return folders;
+    }
+
+    /// <summary>"runtime" and "external_drivers" folders from openvrpaths.vrpath.</summary>
+    internal static List<string> ParseOpenVrPaths(string json)
+    {
+        var result = new List<string>();
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            foreach (string prop in new[] { "runtime", "external_drivers" })
+                if (doc.RootElement.TryGetProperty(prop, out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    foreach (var item in arr.EnumerateArray())
+                        if (item.ValueKind == System.Text.Json.JsonValueKind.String && item.GetString() is { Length: > 0 } s)
+                            result.Add(s);
+        }
+        catch (System.Text.Json.JsonException) { }
+        return result;
     }
 }

@@ -35,7 +35,8 @@ internal enum OptimizerRole
 /// when the process couldn't be opened (protected processes, anti-cheat).
 /// CpuCores is null on the first sample, before there is a delta to measure.
 /// ParentPid is null when unknown or when the pid was reused by a newer process
-/// (ProcessSnapshotService checks creation times).</summary>
+/// (ProcessSnapshotService checks creation times). MaxThreadPriority is the
+/// highest thread base priority seen for this process so far (0-31).</summary>
 internal sealed record ProcessSnapshot(
     string Name,
     int Pid,
@@ -43,7 +44,10 @@ internal sealed record ProcessSnapshot(
     int SessionId,
     System.Diagnostics.ProcessPriorityClass? PriorityClass,
     double? CpuCores,
-    int? ParentPid = null);
+    int? ParentPid = null)
+{
+    public int? MaxThreadPriority { get; init; }
+}
 
 /// <summary>ChainDepth is set for GameChain only: 1 = the game's direct parent.</summary>
 internal sealed record OptimizerDecision(string Name, int Pid, OptimizerRole Role, string Reason, string? Action, double? CpuCores,
@@ -67,9 +71,12 @@ internal sealed record OptimizerGroup(string Reason, IReadOnlyList<OptimizerRow>
 /// <summary>
 /// Pure classification of processes for the game optimizer. Decides, for the
 /// focused app, which process is the game, which ones would be throttled, which
-/// are protected and which are left alone. Changes nothing; TrayApp only shows
-/// the result (dry run). Rules are first-match-wins, in the order of
-/// <see cref="Classify"/>; see the plan file for why each exists.
+/// are protected and which are left alone. Changes nothing itself. Rules are
+/// first-match-wins, in the order of <see cref="Classify"/>; see the plan files
+/// for why each exists. Throttling is the default: every ordinary user process at
+/// Normal priority is throttled before it can spike, not after, and protection
+/// comes from general signals (registered VR runtimes, what they start, real-time
+/// threads) with the name lists only as a backstop.
 /// </summary>
 internal static class GameOptimizerPlanner
 {
@@ -77,6 +84,17 @@ internal static class GameOptimizerPlanner
     /// most VR streamer/runtime threads (Normal, base 8), which must keep up with it.</summary>
     public static readonly string GameAction = OptimizerActions.Default.GameDescription;
     private const string VrRuntimeReason = "VR runtime";
+    public const string VrFolderReason = "Installed VR runtime";
+    public const string VrChildReason = "Started by the VR runtime";
+    public const string RealtimeReason = "Real-time threads (audio / VR / streaming)";
+    public const string BusyReason = "Busy now";
+    public const string BuildToolReason = "Build tool";
+    public const string BackgroundReason = "Background";
+
+    /// <summary>Thread base priority 16+ only exists in the real-time range: MMCSS
+    /// (audio, VR compositors and streamers) or a Realtime class. Ordinary UI threads
+    /// top out at 15, so this marks latency-critical work without a name list.</summary>
+    public const int RealtimeThreadPriority = 16;
 
     public static readonly string ThrottleAction = OptimizerActions.Default.ThrottleDescription;
 
@@ -97,6 +115,8 @@ internal static class GameOptimizerPlanner
         {
             "dwm", "audiodg", "nvcontainer", "NVIDIA Overlay", "nvsphelper64", "NVDisplay.Container",
             "DSX", "RTSS", "RTSSHooksLoader64",
+            // Microsoft GameInput: the game's controller/keyboard input goes through it.
+            "GameInputSvc", "GameInputRedistService",
         }),
         // A process holding a global keyboard/mouse hook that gets starved of CPU
         // delays every keystroke and mouse move system-wide, not just its own.
@@ -143,27 +163,51 @@ internal static class GameOptimizerPlanner
     public static string BaseName(string app) =>
         app.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? app[..^4] : app;
 
-    /// <summary>
-    /// Folders whose processes belong to the active OpenXR runtime. The runtime
-    /// manifest's own folder, plus its parent only when that folder is named
-    /// "OpenXR": Virtual Desktop keeps its manifest in an OpenXR subfolder with the
-    /// exes one level up, while SteamVR's parent is steamapps\common, which would
-    /// protect every installed game.
-    /// </summary>
-    public static IReadOnlyList<string> OpenXrRoots(string? activeRuntimeManifest)
+    /// <summary>Folders that hold many unrelated installs. A runtime folder's parent
+    /// is never added when it is one of these: SteamVR's parent is steamapps\common,
+    /// which would protect every installed game.</summary>
+    private static readonly HashSet<string> ContainerFolders = new(StringComparer.OrdinalIgnoreCase)
     {
-        if (string.IsNullOrWhiteSpace(activeRuntimeManifest)) return Array.Empty<string>();
-        string? dir = System.IO.Path.GetDirectoryName(activeRuntimeManifest.Trim());
-        if (string.IsNullOrEmpty(dir)) return Array.Empty<string>();
+        "Program Files", "Program Files (x86)", "common", "steamapps", "SteamLibrary", "Games",
+        "Users", "AppData", "Local", "LocalLow", "Roaming", "Programs", "WindowsApps",
+    };
 
-        var roots = new List<string> { WithSlash(dir) };
-        if (string.Equals(System.IO.Path.GetFileName(dir), "OpenXR", StringComparison.OrdinalIgnoreCase)
-            && System.IO.Path.GetDirectoryName(dir) is { Length: > 3 } parent)
+    /// <summary>
+    /// Folders whose processes belong to a VR runtime: each registered runtime or
+    /// driver folder, plus its parent unless the parent is a container folder.
+    /// Runtimes keep their manifest or driver in a subfolder with the exes nearby
+    /// (Virtual Desktop: OpenXR\ and OpenVRDriver\ under the streamer folder;
+    /// Oculus: Support\oculus-runtime next to oculus-client and oculus-dash).
+    /// </summary>
+    public static IReadOnlyList<string> RuntimeRoots(IEnumerable<string?> folders)
+    {
+        var roots = new List<string>();
+        void Add(string dir)
         {
-            roots.Add(WithSlash(parent));
+            string d = WithSlash(dir);
+            if (!roots.Contains(d, StringComparer.OrdinalIgnoreCase)) roots.Add(d);
+        }
+
+        foreach (string? folder in folders)
+        {
+            if (string.IsNullOrWhiteSpace(folder)) continue;
+            string dir = folder.Trim().TrimEnd('\\');
+            if (dir.Length <= 3) continue; // a drive root is never a runtime folder
+            Add(dir);
+            if (System.IO.Path.GetDirectoryName(dir) is { Length: > 3 } parent
+                && !ContainerFolders.Contains(System.IO.Path.GetFileName(parent)))
+            {
+                Add(parent);
+            }
         }
         return roots;
     }
+
+    /// <summary>Roots for a single OpenXR runtime manifest (see RuntimeRoots).</summary>
+    public static IReadOnlyList<string> OpenXrRoots(string? runtimeManifest) =>
+        string.IsNullOrWhiteSpace(runtimeManifest)
+            ? Array.Empty<string>()
+            : RuntimeRoots(new[] { System.IO.Path.GetDirectoryName(runtimeManifest.Trim()) });
 
     private static string WithSlash(string dir) =>
         dir.EndsWith('\\') ? dir : dir + "\\";
@@ -178,7 +222,42 @@ internal static class GameOptimizerPlanner
         var decisions = list
             .Select(p => Classify(p, game, ownPid, runtimeRoots, cpuThresholdCores, ancestors, actions))
             .ToList();
+        MarkVrDescendants(list, decisions);
         return new OptimizerReport(app, at, decisions);
+    }
+
+    /// <summary>
+    /// Whatever a VR pipeline process starts (helpers, encoders, a driver host) is
+    /// part of the pipeline too, whatever its name or folder. The walk stops at the
+    /// game, so a game launched from a VR dashboard and its own helpers stay the game's.
+    /// </summary>
+    private static void MarkVrDescendants(IReadOnlyCollection<ProcessSnapshot> processes, List<OptimizerDecision> decisions)
+    {
+        var vr = decisions.Where(d => d.Role == OptimizerRole.VrPipeline).Select(d => d.Pid).ToHashSet();
+        if (vr.Count == 0) return;
+        var game = decisions.Where(d => d.Role == OptimizerRole.Game).Select(d => d.Pid).ToHashSet();
+        var parentOf = new Dictionary<int, int>();
+        foreach (var p in processes)
+            if (p.ParentPid is { } pp) parentOf.TryAdd(p.Pid, pp);
+
+        bool FromVr(int pid)
+        {
+            var seen = new HashSet<int> { pid };
+            for (int depth = 0; depth < 16 && parentOf.TryGetValue(pid, out int parent) && seen.Add(parent); depth++)
+            {
+                if (game.Contains(parent)) return false;
+                if (vr.Contains(parent)) return true;
+                pid = parent;
+            }
+            return false;
+        }
+
+        for (int i = 0; i < decisions.Count; i++)
+        {
+            var d = decisions[i];
+            if (d.Role is OptimizerRole.WouldThrottle or OptimizerRole.LeftAlone && FromVr(d.Pid))
+                decisions[i] = d with { Role = OptimizerRole.VrPipeline, Reason = VrChildReason, Action = null };
+        }
     }
 
     /// <summary>
@@ -241,27 +320,48 @@ internal static class GameOptimizerPlanner
 
         foreach (string root in runtimeRoots)
             if (p.Path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                return D(OptimizerRole.VrPipeline, "OpenXR runtime");
+                return D(OptimizerRole.VrPipeline, VrFolderReason);
 
         if (ProtectedReasonByName.TryGetValue(p.Name, out string? reason))
             return D(reason == VrRuntimeReason ? OptimizerRole.VrPipeline : OptimizerRole.Protected, reason);
 
-        if (p.PriorityClass != System.Diagnostics.ProcessPriorityClass.Normal)
-            return D(OptimizerRole.LeftAlone, $"Priority already {p.PriorityClass} (you, or a tool such as Process Lasso)");
+        if (p.MaxThreadPriority >= RealtimeThreadPriority)
+            return D(OptimizerRole.Protected, RealtimeReason);
 
+        if (p.PriorityClass != System.Diagnostics.ProcessPriorityClass.Normal)
+            return D(OptimizerRole.LeftAlone, AlreadyReason(p.PriorityClass.Value));
+
+        // Everything else is throttled up front, so a spike lands on throttled cores
+        // instead of waiting to be caught. The reason only says how busy it is now.
         if (DevTools.Contains(p.Name))
-            return D(OptimizerRole.WouldThrottle, "Build tool", throttleAction);
+            return D(OptimizerRole.WouldThrottle, BuildToolReason, throttleAction);
 
         if (p.CpuCores is { } cores && cores >= cpuThresholdCores)
-            return D(OptimizerRole.WouldThrottle, "High CPU", throttleAction);
+            return D(OptimizerRole.WouldThrottle, BusyReason, throttleAction);
 
-        return D(OptimizerRole.LeftAlone, p.CpuCores is null ? "CPU not measured yet" : "Low CPU");
+        return D(OptimizerRole.WouldThrottle, BackgroundReason, throttleAction);
     }
 
-    /// <summary>Protected reasons in rule order, so groups keep a stable position
+    /// <summary>Left alone reason for a priority someone else set: the user, the app
+    /// itself, or a tool such as Process Lasso.</summary>
+    public static string AlreadyReason(System.Diagnostics.ProcessPriorityClass priority) => priority switch
+    {
+        System.Diagnostics.ProcessPriorityClass.Idle => "Already Idle",
+        System.Diagnostics.ProcessPriorityClass.BelowNormal => "Already Below normal",
+        System.Diagnostics.ProcessPriorityClass.AboveNormal => "Already Above normal",
+        System.Diagnostics.ProcessPriorityClass.High => "Already High",
+        System.Diagnostics.ProcessPriorityClass.RealTime => "Already Realtime",
+        _ => $"Already {priority}",
+    };
+
+    /// <summary>Group reasons in rule order, so groups keep a stable position
     /// across refreshes instead of jumping around with CPU use.</summary>
     private static readonly string[] ReasonOrder =
     {
+        BusyReason,
+        BuildToolReason,
+        BackgroundReason,
+        RealtimeReason,
         "Input hook / hotkeys",
         "GPU / audio / input helper",
         "Anti-cheat",
@@ -270,6 +370,10 @@ internal static class GameOptimizerPlanner
         "Windows core",
         "Windows / service",
         "Overlay app",
+        "Already High",
+        "Already Above normal",
+        "Already Below normal",
+        "Already Idle",
     };
 
     /// <summary>Groups a section's rows by reason: known reasons in rule order,

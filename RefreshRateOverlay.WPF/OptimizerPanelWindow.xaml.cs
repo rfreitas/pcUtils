@@ -28,10 +28,6 @@ public partial class OptimizerPanelWindow : Window
         [OptimizerRole.LeftAlone]     = Color.FromRgb(0x88, 0x88, 0x88),
     };
 
-    // Left alone is usually hundreds of idle processes; only its busiest rows
-    // are worth showing, the rest is a count.
-    internal const int LeftAloneRowLimit = 8;
-
     // Pickers live outside the 2.5 s rebuild: built once, re-parented into their
     // section on each Update, so a selection or an open dropdown survives.
     private readonly ComboBox _gamePriority, _gameCores, _throttlePriority, _throttleCores;
@@ -147,30 +143,41 @@ public partial class OptimizerPanelWindow : Window
         SubtitleText.Text = $"For {report.App} · {report.At:HH:mm:ss} · {report.Decisions.Count} processes";
 
         SectionsPanel.Children.Clear();
+        GroupHeaders.Clear();
         foreach (var section in GameOptimizerPlanner.Summarize(report))
             SectionsPanel.Children.Add(BuildSection(section));
     }
 
-    // Protected groups the user has opened. Kept across Update calls: the panel
-    // rebuilds every 2.5 s and an open group must not snap shut.
-    private readonly HashSet<string> _expandedGroups = new(StringComparer.Ordinal);
+    // Groups the user opened or closed. Kept across Update calls: the panel
+    // rebuilds every 2.5 s and a group must not snap back.
+    private readonly Dictionary<string, bool> _groupOpen = new(StringComparer.Ordinal);
+
+    // The busy throttled processes are the interesting ones; the hundreds of idle
+    // Background ones and the protected groups start collapsed.
+    private static readonly HashSet<string> OpenByDefault = new(StringComparer.Ordinal)
+    {
+        GameOptimizerPlanner.BusyReason, GameOptimizerPlanner.BuildToolReason,
+    };
 
     /// <summary>Test-facing: the group headers currently built, by reason.</summary>
     internal Dictionary<string, Border> GroupHeaders { get; } = new(StringComparer.Ordinal);
 
-    internal bool IsGroupExpanded(string reason) => _expandedGroups.Contains(reason);
+    internal bool IsGroupExpanded(string reason) =>
+        _groupOpen.TryGetValue(reason, out bool open) ? open : OpenByDefault.Contains(reason);
+
+    private string SectionTitle(OptimizerSection section) =>
+        _mode == OptimizerMode.Live && section.Role == OptimizerRole.WouldThrottle ? "Throttled" : section.Title;
 
     private UIElement BuildSection(OptimizerSection section)
     {
-        if (section.Role == OptimizerRole.Protected && section.Rows.Count > 0)
+        if (section.Role is OptimizerRole.Protected or OptimizerRole.WouldThrottle or OptimizerRole.LeftAlone && section.Rows.Count > 0)
             return BuildGroupedSection(section);
 
         var color = RoleColors[section.Role];
         var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
-        string title = _mode == OptimizerMode.Live && section.Role == OptimizerRole.WouldThrottle ? "Throttled" : section.Title;
         panel.Children.Add(new TextBlock
         {
-            Text = $"{title} ({section.ProcessCount})",
+            Text = $"{SectionTitle(section)} ({section.ProcessCount})",
             Foreground = new SolidColorBrush(color),
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
@@ -179,18 +186,10 @@ public partial class OptimizerPanelWindow : Window
         if (section.Role == OptimizerRole.Game) Reparent(_gamePickers, panel);
         else if (section.Role == OptimizerRole.WouldThrottle) Reparent(_throttlePickers, panel);
 
-        IEnumerable<OptimizerRow> rows = section.Rows;
-        int hidden = 0;
-        if (section.Role == OptimizerRole.LeftAlone && section.Rows.Count > LeftAloneRowLimit)
-        {
-            hidden = section.Rows.Skip(LeftAloneRowLimit).Sum(r => r.Count);
-            rows = section.Rows.Take(LeftAloneRowLimit);
-        }
-
         if (section.Rows.Count == 0)
             panel.Children.Add(Muted("None"));
 
-        foreach (var row in rows)
+        foreach (var row in section.Rows)
             panel.Children.Add(_failedByName.TryGetValue(row.Name, out string? why)
                 ? BuildRow(row with { Reason = $"{row.Reason} · failed: {why}" })
                 : BuildRow(row));
@@ -225,33 +224,42 @@ public partial class OptimizerPanelWindow : Window
                 panel.Children.Add(BuildChainRow(row, marker: "• "));
         }
 
-        if (hidden > 0)
-            panel.Children.Add(Muted($"+ {hidden} more idle processes"));
-
         return panel;
     }
 
-    /// <summary>Protected: one collapsible group per rule. The header shows the
-    /// rule, process count and summed CPU; clicking it shows the processes.</summary>
+    /// <summary>Throttle, Protected and Left alone: one collapsible group per
+    /// reason. The header shows the reason, process count and summed CPU;
+    /// clicking it shows the processes.</summary>
     private UIElement BuildGroupedSection(OptimizerSection section)
     {
         var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
         panel.Children.Add(new TextBlock
         {
-            Text = $"{section.Title} ({section.ProcessCount})",
+            Text = $"{SectionTitle(section)} ({section.ProcessCount})",
             Foreground = new SolidColorBrush(RoleColors[section.Role]),
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 3),
         });
+        if (section.Role == OptimizerRole.WouldThrottle)
+        {
+            Reparent(_throttlePickers, panel);
+            if (section.Rows.FirstOrDefault()?.Action is { } action)
+                panel.Children.Add(Muted("→ " + action));
+        }
+        else if (section.Role == OptimizerRole.LeftAlone)
+        {
+            panel.Children.Add(Muted("Priority set by you, the app or another tool"));
+        }
 
-        GroupHeaders.Clear();
         foreach (var group in GameOptimizerPlanner.GroupByReason(section))
         {
-            bool expanded = _expandedGroups.Contains(group.Reason);
+            bool expanded = IsGroupExpanded(group.Reason);
             var rowsPanel = new StackPanel { Visibility = expanded ? Visibility.Visible : Visibility.Collapsed, Margin = new Thickness(10, 0, 0, 2) };
             foreach (var row in group.Rows)
-                rowsPanel.Children.Add(BuildRow(row, showReason: false));
+                rowsPanel.Children.Add(_failedByName.TryGetValue(row.Name, out string? why)
+                    ? BuildRow(row with { Reason = $"failed: {why}", Action = null })
+                    : BuildRow(row, showReason: false));
 
             var chevron = new TextBlock
             {
@@ -290,8 +298,8 @@ public partial class OptimizerPanelWindow : Window
             string reason = group.Reason;
             header.MouseLeftButtonUp += (_, _) =>
             {
-                bool open = !_expandedGroups.Remove(reason);
-                if (open) _expandedGroups.Add(reason);
+                bool open = !IsGroupExpanded(reason);
+                _groupOpen[reason] = open;
                 rowsPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
                 chevron.Text = open ? "" : "";
                 header.ToolTip = open ? "Hide processes" : "Show processes";

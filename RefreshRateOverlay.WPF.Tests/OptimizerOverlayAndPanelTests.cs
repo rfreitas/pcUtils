@@ -72,6 +72,8 @@ public class OptimizerOverlayAndPanelTests
         };
         for (int i = 0; i < 20; i++)
             procs.Add(new($"idle{i}", 100 + i, $@"C:\x\idle{i}.exe", 1, ProcessPriorityClass.Normal, 0.0));
+        procs.Add(new("lassoed", 200, @"C:\x\lassoed.exe", 1, ProcessPriorityClass.Idle, 0.0));
+        procs.Add(new("pinned", 201, @"C:\x\pinned.exe", 1, ProcessPriorityClass.High, 0.0));
         return GameOptimizerPlanner.Plan("eldenring.exe", new DateTime(2026, 10, 7, 21, 0, 0), procs, 999, roots);
     }
 
@@ -98,11 +100,13 @@ public class OptimizerOverlayAndPanelTests
         var text = AllText(panel.SectionsPanel).ToList();
         Assert.Contains("Nothing is changed", panel.ModeText.Text);
         Assert.Contains("Game (1)", text);
-        Assert.Contains("Would throttle (1)", text);
+        Assert.Contains("Would throttle (21)", text);
         Assert.Contains("Protected (2)", text);
-        Assert.Contains("Left alone (20)", text);
+        Assert.Contains("Left alone (2)", text);
         Assert.Contains("rustc", text);
-        Assert.Contains($"+ {20 - OptimizerPanelWindow.LeftAloneRowLimit} more idle processes", text);
+        Assert.Contains("Background (20)", text);
+        Assert.Contains("Already High (1)", text);
+        Assert.Contains("Already Idle (1)", text);
     });
 
     [Fact]
@@ -123,8 +127,11 @@ public class OptimizerOverlayAndPanelTests
         var panel = new OptimizerPanelWindow();
         panel.Update(SampleReport(), OptimizerMode.DryRun);
 
-        Assert.Equal(new[] { "GPU / audio / input helper", "Windows / service" }, panel.GroupHeaders.Keys);
+        Assert.Equal(new[] { "Build tool", "Background", "GPU / audio / input helper", "Windows / service", "Already High", "Already Idle" },
+            panel.GroupHeaders.Keys);
         Assert.False(panel.IsGroupExpanded("GPU / audio / input helper"));
+        Assert.True(panel.IsGroupExpanded("Build tool"));    // the busy ones are what matter
+        Assert.False(panel.IsGroupExpanded("Background"));   // hundreds of idle processes
         var text = AllText(panel.SectionsPanel).ToList();
         Assert.Contains("GPU / audio / input helper (1)", text);
         Assert.Contains("VR pipeline · not changed", text);

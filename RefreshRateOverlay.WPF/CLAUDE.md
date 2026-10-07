@@ -247,25 +247,48 @@ dev machine). Nothing ever writes to a process yet.
   `OptimizerPanelWindow` beside the overlay. It works in any mode (Off shows
   "Preview only"), refreshes every 2.5 s while open, closes with the overlay
   and follows it on an app switch.
-- **Protection is the point.** The active OpenXR runtime's folder is
-  protected from the registry (`HKLM\SOFTWARE\Khronos\OpenXR`), plus its
-  parent only when the manifest sits in an `OpenXR` subfolder (Virtual
-  Desktop); never SteamVR's parent, which is `steamapps\common`.
+- **Throttle by default, protect by general signals.** Every ordinary user
+  process at Normal priority is throttled up front (groups Busy now / Build
+  tool / Background), so a spike lands on E-cores at Below normal instead of
+  waiting up to a sample to be caught. New processes are classified at birth
+  via the existing `ProcessStartWatcher` (ETW process-start trace), not the
+  next 2.5 s pass. Because unknown processes get throttled, protection can't
+  depend on name lists; the lists are only a backstop. The general signals:
+  - **Registered VR runtimes and tools** (`ReadVrRuntimeFolders`): every
+    OpenXR runtime (active + `AvailableRuntimes`), every OpenXR API layer
+    (HKLM/HKCU, Implicit/Explicit, enabled or not), and the OpenVR runtime and
+    `external_drivers` from `%LOCALAPPDATA%\openvr\openvrpaths.vrpath`. Each
+    folder plus its parent, unless the parent is a container folder (Program
+    Files, `steamapps\common`, AppData\Local, ...): SteamVR's parent would
+    protect every game.
+  - **Started by the VR pipeline**: descendants of a VR pipeline process are
+    pipeline too, whatever their name; the walk stops at the game.
+  - **Real-time threads**: a thread base priority of 16+ only exists via MMCSS
+    (audio, VR compositors/streamers) or a Realtime class, so it marks
+    latency-critical work. 15 is common UI noise (Explorer, PowerToys) and does
+    not count. Sticky per process instance: MMCSS raises threads only while
+    active. Read from `Process.Threads`, which `GetProcesses` already loaded
+    (a Toolhelp thread snapshot tripled the scan time).
+- **Left alone** is only what someone else set a priority for (the user, the
+  app, Process Lasso), grouped as Already High / Above normal / Below normal /
+  Idle.
 - **The game's parent chain is never changed** (role `GameChain`, shown under the game in the panel as the launch chain, nearest parent first). A child starts at its parent's
   priority class when that is Idle or Below normal, and inherits its CPU
   affinity, so throttling a launcher (or Explorer, a terminal, the anti-cheat
   bootstrapper) just before it starts the game would start the game
   throttled. Parent pids come from a Toolhelp snapshot, dropped when the
   parent's creation time is after the child's (pid reuse).
-- **The VR pipeline sits with the game.** Processes under the active OpenXR
-  runtime folder and known VR runtime names get role `VrPipeline`: never
+- **The VR pipeline sits with the game.** Processes under a registered VR
+  runtime folder, started by one, or with a known VR runtime name get role
+  `VrPipeline`: never
   changed, shown under the game next to the launch chain, because in VR the
   game's frame still has to pass through them.
 - **Hook holders are protected.** A starved process with a global keyboard or
   mouse hook delays input system-wide: AutoHotkey, AggressiveScreensaver,
   LGTV_brightness.
 - **CPU threshold is in cores** (0.5), not % of total: one busy thread is
-  3.6% of 28 threads and is exactly what preempts a game thread.
+  3.6% of 28 threads and is exactly what preempts a game thread. It now only
+  decides which throttle group (Busy now vs Background) a process shows in.
 - **Live mode** (`Services/GameOptimizerEnforcer.cs`, plan
   `plans/2026-10-07-game-optimizer-live.md`): the game only gets the P-core
   CPU sets, never a higher priority. A High game outranks most threads of the
@@ -284,8 +307,13 @@ dev machine). Nothing ever writes to a process yet.
   everything. These attributes don't survive a reboot, so only an app crash
   with the PC still running needs the journal.
 - **Stable classification.** Journaled processes are fed to the planner at
-  their original priority, and a high-CPU throttle is sticky for the session,
-  so nothing flaps as CPU drops. Only the Live app is ever enforced; a panel
+  their original priority, and a throttle is sticky for the session, so
+  nothing flaps.
+- **Inherited throttling is undone too.** A child started by a throttled
+  process inherits Below normal/Idle. It is fed to the planner at the parent's
+  original priority, and its journal entry records the parent's original for
+  every attribute that equals the parent's applied value, so restore puts it
+  back to Normal instead of leaving it throttled after the session. Only the Live app is ever enforced; a panel
   preview of another app never changes anything.
 - **Panel choices** (`Services/OptimizerActions.cs`): the Game and Would
   throttle sections each have a Priority and a Cores picker, stored globally in
@@ -295,5 +323,6 @@ dev machine). Nothing ever writes to a process yet.
   P-cores, throttle Below normal + E-cores. A change restores everything, then
   re-applies from the true originals. The pickers are built once and
   re-parented on each 2.5 s rebuild; a rebuild is skipped while a dropdown is
-  open. Protected, Left alone, the launch chain and the VR pipeline have no
+  open. Throttle, Protected and Left alone are collapsible groups by reason;
+  Busy now and Build tool start open, the rest collapsed. Protected, Left alone, the launch chain and the VR pipeline have no
   pickers on purpose: they are never changed.

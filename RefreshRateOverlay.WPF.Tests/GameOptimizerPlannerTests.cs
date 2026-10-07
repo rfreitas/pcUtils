@@ -35,9 +35,50 @@ public class GameOptimizerPlannerTests
     }
 
     [Fact]
-    public void Roots_Oculus_IsTheManifestFolder() =>
-        Assert.Equal(new[] { @"C:\Program Files\Oculus\Support\oculus-runtime\" },
+    public void Roots_Oculus_IncludesTheSupportFolder_WithClientAndDash() =>
+        Assert.Equal(new[] { @"C:\Program Files\Oculus\Support\oculus-runtime\", @"C:\Program Files\Oculus\Support\" },
             GameOptimizerPlanner.OpenXrRoots(@"C:\Program Files\Oculus\Support\oculus-runtime\oculus_openxr_64.json"));
+
+    [Fact]
+    public void Roots_AllRegisteredRuntimesAndDrivers_DeduplicatedAndNeverAContainer()
+    {
+        var roots = GameOptimizerPlanner.RuntimeRoots(new[]
+        {
+            @"C:\Program Files\Virtual Desktop Streamer\OpenXR",
+            @"C:\Program Files\Virtual Desktop Streamer\OpenVRDriver",
+            @"C:\Program Files (x86)\Steam\steamapps\common\SteamVR",
+            @"C:\Program Files (x86)\Steam\steamapps\common\PlayStation VR2 App\SteamVR_Plug-In",
+            @"C:\Users\me\AppData\Local\SomeRuntime",
+            @"C:\Tool",
+            @"C:\",
+            null,
+        });
+
+        Assert.Equal(new[]
+        {
+            @"C:\Program Files\Virtual Desktop Streamer\OpenXR\",
+            @"C:\Program Files\Virtual Desktop Streamer\",
+            @"C:\Program Files\Virtual Desktop Streamer\OpenVRDriver\",
+            @"C:\Program Files (x86)\Steam\steamapps\common\SteamVR\",
+            @"C:\Program Files (x86)\Steam\steamapps\common\PlayStation VR2 App\SteamVR_Plug-In\",
+            @"C:\Program Files (x86)\Steam\steamapps\common\PlayStation VR2 App\",
+            @"C:\Users\me\AppData\Local\SomeRuntime\",
+            @"C:\Tool\",
+        }, roots);
+    }
+
+    [Fact]
+    public void OpenVrPaths_ReadsRuntimeAndExternalDrivers()
+    {
+        const string json = """
+            { "config": ["C:\\Steam\\config"],
+              "external_drivers": ["C:\\Program Files\\Virtual Desktop Streamer\\OpenVRDriver"],
+              "runtime": ["C:\\Steam\\steamapps\\common\\SteamVR"], "version": 1 }
+            """;
+        Assert.Equal(new[] { @"C:\Steam\steamapps\common\SteamVR", @"C:\Program Files\Virtual Desktop Streamer\OpenVRDriver" },
+            ProcessSnapshotService.ParseOpenVrPaths(json));
+        Assert.Empty(ProcessSnapshotService.ParseOpenVrPaths("not json"));
+    }
 
     [Theory]
     [InlineData(null)]
@@ -86,7 +127,7 @@ public class GameOptimizerPlannerTests
     {
         var d = One(P("VirtualDesktop.Streamer", path: @"C:\Program Files\Virtual Desktop Streamer\VirtualDesktop.Streamer.exe", cpu: 2.0));
         Assert.Equal(OptimizerRole.VrPipeline, d.Role);
-        Assert.Equal("OpenXR runtime", d.Reason);
+        Assert.Equal(GameOptimizerPlanner.VrFolderReason, d.Reason);
     }
 
     [Theory]
@@ -145,7 +186,7 @@ public class GameOptimizerPlannerTests
     {
         var d = One(P("rustc", priority: ProcessPriorityClass.BelowNormal, cpu: 4.0));
         Assert.Equal(OptimizerRole.LeftAlone, d.Role);
-        Assert.Contains("BelowNormal", d.Reason);
+        Assert.Equal("Already Below normal", d.Reason);
     }
 
     [Fact]
@@ -169,15 +210,61 @@ public class GameOptimizerPlannerTests
     }
 
     [Fact]
-    public void QuietProcess_IsLeftAlone() =>
-        Assert.Equal("Low CPU", One(P("notepad", cpu: 0.1)).Reason);
+    public void BusyProcess_IsGroupedAsBusyNow() =>
+        Assert.Equal(GameOptimizerPlanner.BusyReason, One(P("chrome", cpu: 2.0)).Reason);
 
     [Fact]
-    public void FirstSample_WithoutCpu_IsLeftAlone_NotThrottled()
+    public void QuietProcess_IsThrottledUpFront_AsBackground()
+    {
+        // Throttled before it spikes: a spike then lands on throttled cores at
+        // throttled priority instead of waiting up to a sample to be caught.
+        var d = One(P("notepad", cpu: 0.1));
+        Assert.Equal(OptimizerRole.WouldThrottle, d.Role);
+        Assert.Equal(GameOptimizerPlanner.BackgroundReason, d.Reason);
+    }
+
+    [Fact]
+    public void NewProcess_WithoutCpu_IsThrottledAtBirth()
     {
         var d = One(P("chrome", cpu: null));
-        Assert.Equal(OptimizerRole.LeftAlone, d.Role);
-        Assert.Equal("CPU not measured yet", d.Reason);
+        Assert.Equal(OptimizerRole.WouldThrottle, d.Role);
+        Assert.Equal(GameOptimizerPlanner.BackgroundReason, d.Reason);
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(31)]
+    public void RealtimeThreads_AreProtected_WithoutANameList(int threadPriority)
+    {
+        var d = One(P("SomeFutureStreamer", cpu: 0.2) with { MaxThreadPriority = threadPriority });
+        Assert.Equal(OptimizerRole.Protected, d.Role);
+        Assert.Equal(GameOptimizerPlanner.RealtimeReason, d.Reason);
+    }
+
+    [Fact]
+    public void TimeCriticalUiThread_15_IsNotRealtime() =>
+        Assert.Equal(OptimizerRole.WouldThrottle, One(P("explorer2", cpu: 0.0) with { MaxThreadPriority = 15 }).Role);
+
+    [Fact]
+    public void ProcessesStartedByTheVrPipeline_AreVrPipeline_UntilTheGame()
+    {
+        var r = GameOptimizerPlanner.Plan("eldenring.exe", DateTime.Now, new[]
+        {
+            P("OVRServer_x64", pid: 1),
+            P("OVRUnknownHelper2030", path: @"D:\Elsewhere\helper.exe", pid: 2) with { ParentPid = 1 },
+            P("encoder", path: @"D:\Elsewhere\encoder.exe", pid: 3) with { ParentPid = 2 },
+            P("eldenring", pid: 4) with { ParentPid = 1 },             // launched from the VR dashboard
+            P("crashpad", pid: 5) with { ParentPid = 4 },              // the game's own helper
+            P("notepad", pid: 6),
+        }, OwnPid, VdRoots);
+
+        OptimizerDecision D(int pid) => r.Decisions.Single(d => d.Pid == pid);
+        Assert.Equal(OptimizerRole.VrPipeline, D(2).Role);
+        Assert.Equal(GameOptimizerPlanner.VrChildReason, D(2).Reason);
+        Assert.Equal(OptimizerRole.VrPipeline, D(3).Role);
+        Assert.Equal(OptimizerRole.Game, D(4).Role);
+        Assert.Equal(OptimizerRole.WouldThrottle, D(5).Role);
+        Assert.Equal(OptimizerRole.WouldThrottle, D(6).Role);
     }
 
     [Fact]
@@ -196,6 +283,7 @@ public class GameOptimizerPlannerTests
             P("nvcontainer", cpu: 0.2, pid: 3),
             P("rustc", cpu: 1.5, pid: 4),
             P("rustc", cpu: 0.5, pid: 5),
+            P("lassoed", cpu: 0.0, pid: 6, priority: ProcessPriorityClass.Idle),
         }, OwnPid, VdRoots);
 
         var sections = GameOptimizerPlanner.Summarize(report);
@@ -208,7 +296,7 @@ public class GameOptimizerPlannerTests
         var rust = sections.Single(s => s.Role == OptimizerRole.WouldThrottle).Rows.Single();
         Assert.Equal(2, rust.Count);
         Assert.Equal(2.0, rust.CpuCores!.Value, 3);
-        Assert.Empty(sections.Single(s => s.Role == OptimizerRole.LeftAlone).Rows);
+        Assert.Equal("Already Idle", sections.Single(s => s.Role == OptimizerRole.LeftAlone).Rows.Single().Reason);
     }
 
     [Fact]

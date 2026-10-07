@@ -94,6 +94,32 @@ public class GameOptimizerEnforcerTests
     }
 
     [Fact]
+    public void ChildOfAThrottledProcess_RestoresToTheParentsOriginal_NotTheInheritedPriority()
+    {
+        var parent = Add(2, "chrome");
+        var e = NewEnforcer();
+        e.Enforce(Report("g.exe", (2, "chrome", OptimizerRole.WouldThrottle)));
+        Assert.Equal(ProcessPriorityClass.BelowNormal, parent.Priority);
+
+        // The throttled parent starts a child: Windows gives it Below normal.
+        var child = Add(3, "chrome", created: 2000);
+        child.Priority = ProcessPriorityClass.BelowNormal;
+        var snaps = e.WithOriginalPriorities(new[]
+        {
+            new ProcessSnapshot("chrome", 2, @"C:\c.exe", 1, ProcessPriorityClass.BelowNormal, 0.0),
+            new ProcessSnapshot("chrome", 3, @"C:\c.exe", 1, ProcessPriorityClass.BelowNormal, 0.0, ParentPid: 2),
+        });
+        Assert.All(snaps, s => Assert.Equal(ProcessPriorityClass.Normal, s.PriorityClass)); // not "Already Below normal"
+
+        e.Enforce(Report("g.exe", (2, "chrome", OptimizerRole.WouldThrottle), (3, "chrome", OptimizerRole.WouldThrottle)));
+        Assert.Equal(ProcessPriorityClass.Normal, e.Entries[3].OriginalPriority);
+
+        e.RestoreAll("test");
+        Assert.Equal(ProcessPriorityClass.Normal, parent.Priority);
+        Assert.Equal(ProcessPriorityClass.Normal, child.Priority); // not left Below normal forever
+    }
+
+    [Fact]
     public void ProtectedChainAndLeftAlone_AreNeverTouched()
     {
         Add(3, "steam"); Add(4, "VirtualDesktop.Streamer"); Add(5, "notepad");

@@ -60,3 +60,16 @@ only if it becomes Game, launch chain or Protected.
 
 Protection rules, thresholds and lists. No GPU priority or power-saving
 (EcoQoS) changes yet. Process Lasso is not touched.
+
+## Update 2026-10-07: throttle by default
+
+Reactive throttling (only processes over 0.5 core at a 2.5 s sample) misses
+short spikes. Now every ordinary user process at Normal priority is throttled
+up front, and new processes are classified at birth through the existing
+`ProcessStartWatcher`. The CPU threshold only picks the panel group (Busy now
+vs Background). Since unknown processes are throttled, protection moved to
+general signals: every registered OpenXR runtime and API layer, the OpenVR
+runtime and drivers, anything started by the VR pipeline, and real-time
+threads (base priority 16+). Children of throttled processes are journaled
+with the parent's original values so restore doesn't leave them throttled.
+Left alone is only processes with a priority someone else set.
