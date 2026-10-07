@@ -40,6 +40,10 @@ internal sealed class ProfileService
     /// Same default+per-app shape as HDR; see CoreParkingEnforcer.</summary>
     public ProfileSetting<bool> CoreParking { get; }
 
+    /// <summary>Game optimizer mode (Off / DryRun). No live readback, so it is a
+    /// plain ProfileSetting like DSX; see GameOptimizerPlanner.</summary>
+    public ProfileSetting<OptimizerMode> Optimizer { get; }
+
     /// <summary>What each power value was before parking was disabled, so turning
     /// the setting off can restore it. Not a profile setting: it is bookkeeping.</summary>
     public IParkingRestoreStore ParkingRestore { get; }
@@ -73,6 +77,12 @@ internal sealed class ProfileService
             fallback: false);
 
         ParkingRestore = new IniParkingRestoreStore(ini);
+
+        Optimizer = new ProfileSetting<OptimizerMode>(
+            ini, SecSettings, "DefaultOptimizerMode", "OptimizerProfiles",
+            parse: (string s, out OptimizerMode v) => Enum.TryParse(s, out v),
+            format: v => v.ToString(),
+            fallback: OptimizerMode.Off);
 
         GsyncMode = new ProfileSetting<GsyncGlobalMode>(
             ini, SecSettings, "DefaultGsyncMode", "GsyncModeProfiles",

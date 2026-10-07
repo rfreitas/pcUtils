@@ -230,3 +230,35 @@ absorbed or reverted by `ReconcileAll` depending on `ReconciliationEnabled`.
   Enforcement edits whichever plan is active and nothing restores it on exit.
 - Tests use fake `IProcessorPowerSettings` / `IParkingRestoreStore`; never read
   or write real power plans from tests.
+
+## Game optimizer: dry run only, so far
+
+`Services/GameOptimizerPlanner.cs` classifies every process for the focused
+app as Game, Would throttle, Protected or Left alone (first-match-wins rules,
+see the plan `plans/2026-10-07-game-optimizer-dry-run.md`).
+`Services/ProcessSnapshotService.cs` samples processes read-only
+(`PROCESS_QUERY_LIMITED_INFORMATION`, about 10 ms for ~350 processes on the
+dev machine). Nothing ever writes to a process yet.
+
+- **Setting.** `ProfileService.Optimizer` (Off / DryRun), default + per-app like
+  DSX: no live readback, so no SyncableSetting. A Live value is added only
+  with enforcement, together with a restore journal.
+- **Panel.** The overlay's optimizer row has a ▸ button that opens
+  `OptimizerPanelWindow` beside the overlay. It works in any mode (Off shows
+  "Preview only"), refreshes every 2.5 s while open, closes with the overlay
+  and follows it on an app switch.
+- **Protection is the point.** The active OpenXR runtime's folder is
+  protected from the registry (`HKLM\SOFTWARE\Khronos\OpenXR`), plus its
+  parent only when the manifest sits in an `OpenXR` subfolder (Virtual
+  Desktop); never SteamVR's parent, which is `steamapps\common`.
+- **The game's parent chain is never changed** (role `GameChain`, shown under the game in the panel as the launch chain, nearest parent first). A child starts at its parent's
+  priority class when that is Idle or Below normal, and inherits its CPU
+  affinity, so throttling a launcher (or Explorer, a terminal, the anti-cheat
+  bootstrapper) just before it starts the game would start the game
+  throttled. Parent pids come from a Toolhelp snapshot, dropped when the
+  parent's creation time is after the child's (pid reuse).
+- **Hook holders are protected.** A starved process with a global keyboard or
+  mouse hook delays input system-wide: AutoHotkey, AggressiveScreensaver,
+  LGTV_brightness.
+- **CPU threshold is in cores** (0.5), not % of total: one busy thread is
+  3.6% of 28 threads and is exactly what preempts a game thread.

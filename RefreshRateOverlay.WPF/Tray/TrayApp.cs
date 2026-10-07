@@ -69,6 +69,16 @@ internal sealed class TrayApp : IDisposable
     private readonly IProcessorPowerSettings _powerSettings = new PowrProfProcessorPowerSettings();
     private readonly SyncableSetting<bool> _coreParkingSetting;
 
+    // Game optimizer, dry run only: classifies processes for the focused app and
+    // shows the result in OptimizerPanelWindow; never changes a process. See
+    // plans/2026-10-07-game-optimizer-dry-run.md.
+    private readonly ProcessSnapshotService _processSnapshots = new();
+    private OptimizerReport? _lastOptimizerReport;
+    private OptimizerPanelWindow? _optimizerPanel;
+    private string _optimizerPanelApp = string.Empty;
+    private System.Windows.Forms.Timer? _optimizerPanelTimer;
+    private bool _optimizerSampleInFlight;
+
     // Backoff state for reconciliation-off enforcement — one per push bucket
     // (Rate+HDR always pushed together, G-SYNC separate), since that's how
     // ApplyProfile/ApplyGsyncMode already group things. See
@@ -465,6 +475,7 @@ internal sealed class TrayApp : IDisposable
         ApplyDsxProfileForApp(app);
         ApplyGsyncMode(app);
         ApplyCoreParking(_coreParkingSetting.ResolveTarget(app));
+        if (ResolveOptimizerMode(app) == OptimizerMode.DryRun) _ = RunOptimizerDryRunAsync(app, logSummary: true);
     }
 
     private void ApplyProfile(string app, Action<bool>? onSettled = null)
@@ -547,7 +558,8 @@ internal sealed class TrayApp : IDisposable
         _hdrSetting.HasProfile(app) ||
         _profiles.Dsx.HasProfile(app) ||
         _gsyncSetting.HasProfile(app) ||
-        _coreParkingSetting.HasProfile(app);
+        _coreParkingSetting.HasProfile(app) ||
+        _profiles.Optimizer.HasProfile(app);
 
     /// <summary>If the anticipated app never actually takes foreground focus
     /// within this window, the early push above was a wrong guess — re-resolve
@@ -816,6 +828,69 @@ internal sealed class TrayApp : IDisposable
             bool ok = ApplyCoreParking(_coreParkingSetting.ResolveTarget(app));
             HandleEnforcementResult(_parkingBackoff, parkingLabel, ok);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Game optimizer (dry run). Sampling runs on the thread pool; planning and
+    // everything UI-facing run back on the UI thread.
+    // -------------------------------------------------------------------------
+    private OptimizerMode ResolveOptimizerMode(string app) =>
+        _profiles.Optimizer.TryReadProfile(app, out OptimizerMode m) ? m : _profiles.Optimizer.ReadDefault();
+
+    private async Task RunOptimizerDryRunAsync(string app, bool logSummary)
+    {
+        if (_optimizerSampleInFlight) return;
+        _optimizerSampleInFlight = true;
+        try
+        {
+            var snapshots = await Task.Run(() => _processSnapshots.Take());
+            var roots = GameOptimizerPlanner.OpenXrRoots(ProcessSnapshotService.ReadActiveOpenXrRuntime());
+            var report = GameOptimizerPlanner.Plan(app, DateTime.Now, snapshots, Environment.ProcessId, roots);
+            _lastOptimizerReport = report;
+
+            if (logSummary)
+            {
+                var counts = report.Decisions.GroupBy(d => d.Role).ToDictionary(g => g.Key, g => g.Count());
+                Logger.Log($"Optimizer (dry run): app='{app}' game={counts.GetValueOrDefault(OptimizerRole.Game)} " +
+                           $"wouldThrottle={counts.GetValueOrDefault(OptimizerRole.WouldThrottle)} " +
+                           $"protected={counts.GetValueOrDefault(OptimizerRole.Protected)} " +
+                           $"leftAlone={counts.GetValueOrDefault(OptimizerRole.LeftAlone)}.");
+            }
+
+            if (_optimizerPanel is { } panel && string.Equals(_optimizerPanelApp, app, StringComparison.OrdinalIgnoreCase))
+                panel.Update(report, ResolveOptimizerMode(app));
+        }
+        catch (Exception ex) { Logger.LogException(ex); }
+        finally { _optimizerSampleInFlight = false; }
+    }
+
+    /// <summary>Opens (or re-anchors) the side panel for the overlay's app. The
+    /// first sample has no CPU deltas yet, so a second one follows shortly and
+    /// then the timer keeps it fresh while the panel is open.</summary>
+    private void ShowOptimizerPanel(OverlayWindow overlay)
+    {
+        _optimizerPanelApp = overlay.ActiveApp;
+        if (_optimizerPanel is null)
+        {
+            var panel = new OptimizerPanelWindow();
+            panel.Closed += (_, _) =>
+            {
+                _optimizerPanelTimer?.Stop();
+                _optimizerPanelTimer?.Dispose();
+                _optimizerPanelTimer = null;
+                _optimizerPanel = null;
+            };
+            _optimizerPanel = panel;
+            panel.Show();
+
+            _optimizerPanelTimer = new System.Windows.Forms.Timer { Interval = 2500 };
+            _optimizerPanelTimer.Tick += (_, _) => _ = RunOptimizerDryRunAsync(_optimizerPanelApp, logSummary: false);
+            _optimizerPanelTimer.Start();
+        }
+        _optimizerPanel.AnchorTo(overlay);
+        if (_lastOptimizerReport is { } last && string.Equals(last.App, _optimizerPanelApp, StringComparison.OrdinalIgnoreCase))
+            _optimizerPanel.Update(last, ResolveOptimizerMode(_optimizerPanelApp));
+        _ = RunOptimizerDryRunAsync(_optimizerPanelApp, logSummary: false);
     }
 
     private void OnDisplayChange()
@@ -1331,7 +1406,8 @@ internal sealed class TrayApp : IDisposable
             : null;
 
         bool hasProfile = _profiles.Rate.HasProfile(app) || hasDsxProfile || hasGsyncModeProfile
-            || _coreParkingSetting.HasProfile(app);
+            || _coreParkingSetting.HasProfile(app) || _profiles.Optimizer.HasProfile(app);
+        OptimizerMode optimizerMode = ResolveOptimizerMode(app);
 
         // Opening the overlay never writes the INI — that's OnDisplayChange's job
         // now (see its remarks). What's actually stored (profile-or-default, same
@@ -1386,9 +1462,12 @@ internal sealed class TrayApp : IDisposable
             applyWarning:   applyWarning,
             frameCapFps:    frameCapFps,
             disableCoreParking: preselectCoreParking,
-            storedDisableCoreParking: storedCoreParking);
+            storedDisableCoreParking: storedCoreParking,
+            optimizerMode: optimizerMode,
+            storedOptimizerMode: optimizerMode);
 
         _overlay.AppSwitchRequested += (_, newApp) => ShowOverlay(forcedApp: newApp);
+        _overlay.OptimizerPanelRequested += (sender, _) => ShowOptimizerPanel((OverlayWindow)sender!);
 
         _overlay.ProfileDeleteRequested += (_, _) =>
         {
@@ -1402,6 +1481,8 @@ internal sealed class TrayApp : IDisposable
             _profiles.Dsx.DeleteProfile(app);
             if (_gsyncAvailable) _profiles.GsyncMode.DeleteProfile(app);
             _profiles.CoreParking.DeleteProfile(app);
+            _profiles.Optimizer.DeleteProfile(app);
+            _overlay!.ReflectOptimizerApplied(_profiles.Optimizer.ReadDefault());
             ApplyDisplayState(_rateSetting.Default, _hdrSetting.Default);
             if (_gsyncAvailable) ApplyGsyncMode(app);
             ApplyCoreParking(_coreParkingSetting.Default);
@@ -1441,6 +1522,12 @@ internal sealed class TrayApp : IDisposable
                 else _profiles.Dsx.DeleteProfile(app);
                 _overlay.ReflectDsxApplied(selDsx ?? "");
             }
+
+            OptimizerMode optimizerVal = _overlay.SelectedOptimizerMode;
+            SaveOrClear(_profiles.Optimizer, app, saveProfile, optimizerVal, _profiles.Optimizer.ReadDefault());
+            _overlay.ReflectOptimizerApplied(optimizerVal);
+            if (_optimizerPanel is not null && string.Equals(_optimizerPanelApp, app, StringComparison.OrdinalIgnoreCase))
+                _ = RunOptimizerDryRunAsync(app, logSummary: false);
 
             bool parkingVal = _overlay.DisableCoreParking;
             _coreParkingSetting.SaveOrClear(app, saveProfile, parkingVal);
@@ -1499,8 +1586,19 @@ internal sealed class TrayApp : IDisposable
         _overlay.Closed += (_, _) =>
         {
             _overlay = null;
-            if (!_switchingOverlayApp) RestoreForeground(priorForeground);
+            if (!_switchingOverlayApp)
+            {
+                _optimizerPanel?.Close();
+                RestoreForeground(priorForeground);
+            }
         };
+
+        // An app switch reopens the overlay; an open optimizer panel follows it.
+        if (_optimizerPanel is not null)
+        {
+            var reopened = _overlay;
+            reopened.ContentRendered += (_, _) => { if (_optimizerPanel is not null) ShowOptimizerPanel(reopened); };
+        }
 
         _overlay.Show();
     }

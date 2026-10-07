@@ -27,6 +27,7 @@ public partial class OverlayWindow : Window
     private SyncedField<int>  _rateSync = null!;
     private SyncedField<bool> _hdrSync  = null!;
     private SyncedField<bool> _coreParkingSync = null!;
+    private SyncedField<OptimizerMode> _optimizerSync = null!;
     private SyncedField<GsyncGlobalMode>? _gsyncSync;
     private SyncedField<VrrAppState>? _appVrrSync;
     private SyncedField<uint>? _frameCapSync;
@@ -37,6 +38,7 @@ public partial class OverlayWindow : Window
     internal SyncedField<int>  RateSync => _rateSync;
     internal SyncedField<bool> HdrSync  => _hdrSync;
     internal SyncedField<bool> CoreParkingSync => _coreParkingSync;
+    internal SyncedField<OptimizerMode> OptimizerSync => _optimizerSync;
     internal SyncedField<GsyncGlobalMode>? GsyncSync => _gsyncSync;
     internal SyncedField<VrrAppState>? AppVrrSync => _appVrrSync;
     internal SyncedField<uint>? FrameCapSync => _frameCapSync;
@@ -50,6 +52,11 @@ public partial class OverlayWindow : Window
     public bool SaveProfile => SaveCheckBox.IsChecked == true;
     public bool HdrEnabled  => HdrCheckBox.IsChecked == true;
     public bool DisableCoreParking => DisableCoreParkingCheckBox.IsChecked == true;
+    public OptimizerMode SelectedOptimizerMode =>
+        OptimizerDropDown.SelectedIndex >= 0 ? (OptimizerMode)OptimizerDropDown.SelectedIndex : OptimizerMode.Off;
+
+    /// <summary>Raised when the ▸ button next to the optimizer row is clicked.</summary>
+    public event EventHandler? OptimizerPanelRequested;
 
     /// <summary>Null means "— Not Managed —" (index 0): leave DSX alone. Only
     /// meaningful when DsxProfileEditable is true.</summary>
@@ -181,7 +188,9 @@ public partial class OverlayWindow : Window
         string?    applyWarning = null,
         uint?      frameCapFps = null,
         bool       disableCoreParking = false,
-        bool       storedDisableCoreParking = false)
+        bool       storedDisableCoreParking = false,
+        OptimizerMode optimizerMode = OptimizerMode.Off,
+        OptimizerMode storedOptimizerMode = OptimizerMode.Off)
     {
         InitializeComponent();
 
@@ -323,6 +332,13 @@ public partial class OverlayWindow : Window
                 DisableCoreParkingCheckBox.Unchecked += (_, _) => changed();
             });
 
+        OptimizerDropDown.Items.Add("Off");
+        OptimizerDropDown.Items.Add("Dry run");
+        OptimizerDropDown.SelectedIndex = (int)optimizerMode;
+        _optimizerSync = BindSynced(OptimizerSyncDot, OptimizerDropDown, storedOptimizerMode, () => SelectedOptimizerMode,
+            changed => OptimizerDropDown.SelectionChanged += (_, _) => changed());
+        OptimizerPanelButton.Click += (_, _) => OptimizerPanelRequested?.Invoke(this, EventArgs.Empty);
+
         SaveCheckBox.Content   = new TextBlock { Text = $"Save for {activeApp}", TextWrapping = TextWrapping.Wrap };
         SaveCheckBox.IsChecked = hasProfile;
 
@@ -461,6 +477,9 @@ public partial class OverlayWindow : Window
     /// callers should pass that same "" for a cleared/not-managed
     /// selection.</summary>
     public void ReflectDsxApplied(string profile) => _dsxSync?.UpdateStored(profile);
+
+    /// <summary>Same role as ReflectDsxApplied, for the optimizer mode.</summary>
+    public void ReflectOptimizerApplied(OptimizerMode mode) => _optimizerSync.UpdateStored(mode);
 
     /// <summary>
     /// Runs automatically whenever the overlay opens for a real app — no button,
