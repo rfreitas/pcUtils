@@ -9,6 +9,9 @@ using Point = System.Windows.Point;
 using ComboBox = System.Windows.Controls.ComboBox;
 using Panel = System.Windows.Controls.Panel;
 using Orientation = System.Windows.Controls.Orientation;
+using CheckBox = System.Windows.Controls.CheckBox;
+using ContextMenu = System.Windows.Controls.ContextMenu;
+using MenuItem = System.Windows.Controls.MenuItem;
 
 namespace RefreshRateOverlay.WPF;
 
@@ -37,6 +40,18 @@ public partial class OptimizerPanelWindow : Window
     /// <summary>Raised when the user picks a new priority or core type.</summary>
     internal event EventHandler<OptimizerActions>? ActionsChanged;
 
+    /// <summary>Right-click choice on a process row: Protect = true (always
+    /// protect), false (always throttle), null (back to automatic).</summary>
+    internal event EventHandler<(string Path, string Name, bool? Protect)>? VerdictRequested;
+
+    /// <summary>The "Ask AI about unknown programs" box was toggled.</summary>
+    internal event EventHandler<bool>? AskAiChanged;
+
+    // Built once and re-parented like the pickers.
+    private readonly CheckBox _askAi;
+    private readonly TextBlock _aiStatus;
+    private readonly FrameworkElement _aiControls;
+
     internal OptimizerActions Actions { get; private set; } = OptimizerActions.Default;
 
     public OptimizerPanelWindow()
@@ -53,6 +68,42 @@ public partial class OptimizerPanelWindow : Window
         _throttlePickers = PickerRow(_throttlePriority, _throttleCores,
             "Priority for throttled processes. Idle only runs them when nothing else wants the CPU.");
         SetActions(OptimizerActions.Default);
+
+        _askAi = new CheckBox
+        {
+            Content = "Ask AI about unknown programs",
+            Foreground = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = "Programs no rule recognises are sent to the local Claude CLI once each (name, path, publisher, " +
+                      "description) to decide whether throttling them could hurt the game. It can only add protection.",
+        };
+        _askAi.Click += (_, _) => AskAiChanged?.Invoke(this, _askAi.IsChecked == true);
+        _aiStatus = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Color.FromRgb(0x88, 0x88, 0x88)),
+            FontSize = 11,
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var ai = new DockPanel { Margin = new Thickness(8, 0, 14, 4), LastChildFill = true };
+        DockPanel.SetDock(_askAi, Dock.Left);
+        ai.Children.Add(_askAi);
+        ai.Children.Add(_aiStatus);
+        _aiControls = ai;
+    }
+
+    internal CheckBox AskAiBox => _askAi;
+    internal string AiStatusText => _aiStatus.Text;
+
+    internal void SetAskAi(bool enabled) => _askAi.IsChecked = enabled;
+
+    /// <summary>Short AI state for the throttle section ("asking about 12…").</summary>
+    internal void SetAiStatus(string? status)
+    {
+        _aiStatus.Text = status ?? "";
+        _aiStatus.ToolTip = string.IsNullOrEmpty(status) ? null : status;
     }
 
     internal ComboBox GamePriorityPicker => _gamePriority;
@@ -106,7 +157,8 @@ public partial class OptimizerPanelWindow : Window
     }
 
     private bool PickerOpen =>
-        _gamePriority.IsDropDownOpen || _gameCores.IsDropDownOpen || _throttlePriority.IsDropDownOpen || _throttleCores.IsDropDownOpen;
+        _gamePriority.IsDropDownOpen || _gameCores.IsDropDownOpen || _throttlePriority.IsDropDownOpen || _throttleCores.IsDropDownOpen
+        || RowMenus.Values.Any(m => m.IsOpen); // a right-click menu must not vanish under the cursor
 
     private static void Reparent(FrameworkElement child, Panel into)
     {
@@ -144,6 +196,7 @@ public partial class OptimizerPanelWindow : Window
 
         SectionsPanel.Children.Clear();
         GroupHeaders.Clear();
+        RowMenus.Clear();
         foreach (var section in GameOptimizerPlanner.Summarize(report))
             SectionsPanel.Children.Add(BuildSection(section));
     }
@@ -184,15 +237,18 @@ public partial class OptimizerPanelWindow : Window
             Margin = new Thickness(0, 0, 0, 3),
         });
         if (section.Role == OptimizerRole.Game) Reparent(_gamePickers, panel);
-        else if (section.Role == OptimizerRole.WouldThrottle) Reparent(_throttlePickers, panel);
+        else if (section.Role == OptimizerRole.WouldThrottle) { Reparent(_throttlePickers, panel); Reparent(_aiControls, panel); }
 
         if (section.Rows.Count == 0)
             panel.Children.Add(Muted("None"));
 
         foreach (var row in section.Rows)
-            panel.Children.Add(_failedByName.TryGetValue(row.Name, out string? why)
+        {
+            var element = _failedByName.TryGetValue(row.Name, out string? why)
                 ? BuildRow(row with { Reason = $"{row.Reason} · failed: {why}" })
-                : BuildRow(row));
+                : BuildRow(row);
+            panel.Children.Add(section.Role == OptimizerRole.Game ? element : WithVerdictMenu(element, row));
+        }
 
         if (section.ChainRows is { Count: > 0 } chain)
         {
@@ -244,6 +300,7 @@ public partial class OptimizerPanelWindow : Window
         if (section.Role == OptimizerRole.WouldThrottle)
         {
             Reparent(_throttlePickers, panel);
+            Reparent(_aiControls, panel);
             if (section.Rows.FirstOrDefault()?.Action is { } action)
                 panel.Children.Add(Muted("→ " + action));
         }
@@ -257,9 +314,9 @@ public partial class OptimizerPanelWindow : Window
             bool expanded = IsGroupExpanded(group.Reason);
             var rowsPanel = new StackPanel { Visibility = expanded ? Visibility.Visible : Visibility.Collapsed, Margin = new Thickness(10, 0, 0, 2) };
             foreach (var row in group.Rows)
-                rowsPanel.Children.Add(_failedByName.TryGetValue(row.Name, out string? why)
+                rowsPanel.Children.Add(WithVerdictMenu(_failedByName.TryGetValue(row.Name, out string? why)
                     ? BuildRow(row with { Reason = $"failed: {why}", Action = null })
-                    : BuildRow(row, showReason: false));
+                    : BuildRow(row, showReason: false), row));
 
             var chevron = new TextBlock
             {
@@ -313,6 +370,37 @@ public partial class OptimizerPanelWindow : Window
     }
 
     private static UIElement BuildRow(OptimizerRow row) => BuildRow(row, showReason: true);
+
+    /// <summary>Test-facing: process name → its row's right-click menu.</summary>
+    internal Dictionary<string, ContextMenu> RowMenus { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Right-click on a process row: always protect, always throttle, or back to
+    /// the automatic rules. Stored per program (exe path), so it applies to every
+    /// run of it, in every game. The AI's reason, if any, is the tooltip.
+    /// </summary>
+    private UIElement WithVerdictMenu(UIElement element, OptimizerRow row)
+    {
+        if (element is not FrameworkElement fe) return element;
+        if (row.Note is { } note) fe.ToolTip = note;
+        if (row.Path is not { Length: > 0 } path) return element;
+
+        bool userSet = row.Reason is GameOptimizerPlanner.UserProtectReason or GameOptimizerPlanner.UserThrottleReason;
+        var menu = new ContextMenu();
+        MenuItem Item(string header, bool? protect, bool enabled = true)
+        {
+            var item = new MenuItem { Header = header, IsEnabled = enabled };
+            item.Click += (_, _) => VerdictRequested?.Invoke(this, (path, row.Name, protect));
+            menu.Items.Add(item);
+            return item;
+        }
+        Item($"Always protect {row.Name}", true, row.Reason != GameOptimizerPlanner.UserProtectReason);
+        Item($"Always throttle {row.Name}", false, row.Reason != GameOptimizerPlanner.UserThrottleReason);
+        Item("Use the automatic rules", null, userSet);
+        fe.ContextMenu = menu;
+        RowMenus[row.Name] = menu;
+        return element;
+    }
 
     private static UIElement BuildChainRow(OptimizerRow row, string marker = "↳ ")
     {

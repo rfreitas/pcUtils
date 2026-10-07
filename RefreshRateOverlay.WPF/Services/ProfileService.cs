@@ -143,6 +143,12 @@ internal sealed class ProfileService
             Get("OptimizerThrottlePriority", d.ThrottlePriority), Get("OptimizerThrottleCores", d.ThrottleCores)).Normalized();
     }
 
+    /// <summary>Whether the optimizer asks the local Claude CLI about programs no
+    /// rule recognises. Global, on by default.</summary>
+    public bool ReadOptimizerAskAi() => _ini.ReadBool(SecSettings, "OptimizerAskAi", true);
+
+    public void WriteOptimizerAskAi(bool value) => _ini.WriteBool(SecSettings, "OptimizerAskAi", value);
+
     public void WriteOptimizerActions(OptimizerActions a)
     {
         _ini.WriteString(SecSettings, "OptimizerGamePriority", a.GamePriority.ToString());

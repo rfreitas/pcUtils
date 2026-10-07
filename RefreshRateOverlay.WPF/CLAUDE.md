@@ -313,8 +313,9 @@ dev machine). Nothing ever writes to a process yet.
   process inherits Below normal/Idle. It is fed to the planner at the parent's
   original priority, and its journal entry records the parent's original for
   every attribute that equals the parent's applied value, so restore puts it
-  back to Normal instead of leaving it throttled after the session. Only the Live app is ever enforced; a panel
-  preview of another app never changes anything.
+  back to Normal instead of leaving it throttled after the session.
+- **Only the Live app is ever enforced**; a panel preview of another app never
+  changes anything.
 - **Panel choices** (`Services/OptimizerActions.cs`): the Game and Would
   throttle sections each have a Priority and a Cores picker, stored globally in
   `[Settings]` (`OptimizerGame*`, `OptimizerThrottle*`). The game can only be
@@ -326,3 +327,28 @@ dev machine). Nothing ever writes to a process yet.
   open. Throttle, Protected and Left alone are collapsible groups by reason;
   Busy now and Build tool start open, the rest collapsed. Protected, Left alone, the launch chain and the VR pipeline have no
   pickers on purpose: they are never changed.
+- **Per-program verdicts** (`Services/ProcessVerdicts.cs`,
+  `%LOCALAPPDATA%\RefreshRateOverlay.WPF\process-verdicts.json`, keyed by exe
+  path). Right-click a process row: Always protect / Always throttle / Use the
+  automatic rules. The user's choice comes right after the game, launch chain
+  and service rules, so it beats name lists, VR folders, real-time threads and
+  the AI, but never makes the game or a service throttled.
+- **AI for what rules can't know** (`Services/AiProcessClassifier.cs`): programs
+  that would be throttled as plain Background / Busy now and have no verdict
+  are sent, 40 per batch in the background, to the local `claude` CLI with
+  name, path, version-info publisher/description, the parent's name and the
+  matching entry in Windows' installed-programs list (Uninstall keys). Nothing
+  else leaves the PC. Its "protect" answers become `Protected by AI` (placed
+  after the general signals); "throttle" answers only add a tooltip, so the AI
+  can never take protection away. Until it answers, the rules apply.
+  - CLI flags matter for cost: `--strict-mcp-config --disable-slash-commands
+    --setting-sources "" --system-prompt ...` cut a call from ~35k tokens
+    (Claude Code's own prompt plus MCP tool definitions; $0.14) to ~1.5k ($0.01).
+    `--bare` would be leaner still but only works with an API key, not OAuth.
+  - Two passes: the model flags `confident: false` when guessing from a name;
+    only those go to a second call with WebSearch as the only tool. Measured on
+    the dev machine: 40 programs in 22 s, 1 needed the web.
+  - A failed batch isn't retried until restart; the panel shows the status.
+    Toggle: "Ask AI about unknown programs" in the throttle section,
+    `[Settings] OptimizerAskAi` (default on). Tests use a fake backend; never
+    call the real CLI from tests.

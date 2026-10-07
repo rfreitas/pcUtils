@@ -82,6 +82,10 @@ internal sealed class TrayApp : IDisposable
         new Win32ProcessControl(), new JsonOptimizerJournalStore(JsonOptimizerJournalStore.DefaultPath), CpuTopology.Read(), Logger.Log);
     private string? _optimizerLiveApp;
     private System.Windows.Forms.Timer? _optimizerLiveTimer;
+    // Per-program verdicts: the user's right-click choices and the AI's answers.
+    private readonly ProcessVerdictCache _verdicts = new(new JsonProcessVerdictStore(JsonProcessVerdictStore.DefaultPath));
+    private AiProcessClassifier? _aiClassifier;
+    private bool _aiUnavailable;
     private bool _optimizerRerunLive;
 
     // Backoff state for reconciliation-off enforcement — one per push bucket
@@ -902,8 +906,9 @@ internal sealed class TrayApp : IDisposable
             var snapshots = await Task.Run(() => _processSnapshots.Take());
             var roots = GameOptimizerPlanner.RuntimeRoots(ProcessSnapshotService.ReadVrRuntimeFolders());
             var report = GameOptimizerPlanner.Plan(app, DateTime.Now, _optimizerEnforcer.WithOriginalPriorities(snapshots),
-                Environment.ProcessId, roots, actions: _optimizerEnforcer.Actions);
+                Environment.ProcessId, roots, actions: _optimizerEnforcer.Actions, verdicts: _verdicts.All);
             _lastOptimizerReport = report;
+            _ = ClassifyUnknownWithAiAsync(app, report, snapshots);
 
             // Only the app the Live session belongs to is ever enforced; a panel
             // preview of another app (overlay app picker) never changes anything.
@@ -932,6 +937,49 @@ internal sealed class TrayApp : IDisposable
         }
     }
 
+    /// <summary>
+    /// Sends programs no rule recognises to the local Claude CLI (in the background,
+    /// one batch at a time) and re-plans when answers arrive. Never blocks a pass:
+    /// until the AI answers, the rules apply. Off when the panel's "Ask AI" box is
+    /// unticked or the CLI isn't installed.
+    /// </summary>
+    private async Task ClassifyUnknownWithAiAsync(string app, OptimizerReport report, IReadOnlyList<ProcessSnapshot> snapshots)
+    {
+        if (!_profiles.ReadOptimizerAskAi()) { _optimizerPanel?.SetAiStatus(null); return; }
+        if (_aiClassifier is null && !_aiUnavailable)
+        {
+            if (ClaudeCliClassifierBackend.FindClaude() is { } exe)
+                _aiClassifier = new AiProcessClassifier(new ClaudeCliClassifierBackend(exe), _verdicts, Logger.Log);
+            else
+            {
+                _aiUnavailable = true;
+                Logger.Log("Optimizer AI: Claude CLI (claude.exe) not found; unknown programs keep the default rules.");
+            }
+        }
+        if (_aiClassifier is not { } ai) { _optimizerPanel?.SetAiStatus("Claude CLI not found"); return; }
+        if (ai.Busy) return;
+
+        var nameByPid = snapshots.GroupBy(s => s.Pid).ToDictionary(g => g.Key, g => g.First().Name);
+        var parentNames = snapshots
+            .Where(s => s.ParentPid is { } pp && nameByPid.ContainsKey(pp))
+            .GroupBy(s => s.Pid)
+            .ToDictionary(g => g.Key, g => nameByPid[g.First().ParentPid!.Value]);
+        var installed = new Lazy<List<(string Folder, string Label)>>(InstalledPrograms.Read);
+
+        int unknown = ai.Unknown(report).Count;
+        if (unknown > 0) _optimizerPanel?.SetAiStatus($"asking AI about {Math.Min(unknown, AiProcessClassifier.BatchSize)} program(s)…");
+        bool changed = await ai.ClassifyAsync(report, parentNames, path => AiProcessClassifier.DescribeExe(path, installed.Value));
+
+        int aiProtected = _verdicts.All.Values.Count(v => v.UserProtect is null && v.Ai is { Protect: true });
+        _optimizerPanel?.SetAiStatus(ai.LastError is { } err ? $"AI failed: {err}" : $"AI knows {_verdicts.All.Count(v => v.Value.Ai is not null)} program(s), protects {aiProtected}");
+        if (changed)
+        {
+            _ = RunOptimizerAsync(app, logSummary: false);
+            if (_optimizerLiveApp is { } liveApp && !string.Equals(liveApp, app, StringComparison.OrdinalIgnoreCase))
+                _ = RunOptimizerAsync(liveApp, logSummary: false);
+        }
+    }
+
     /// <summary>Opens (or re-anchors) the side panel for the overlay's app. The
     /// first sample has no CPU deltas yet, so a second one follows shortly and
     /// then the timer keeps it fresh while the panel is open.</summary>
@@ -942,6 +990,21 @@ internal sealed class TrayApp : IDisposable
         {
             var panel = new OptimizerPanelWindow();
             panel.SetActions(_optimizerEnforcer.Actions);
+            panel.SetAskAi(_profiles.ReadOptimizerAskAi());
+            panel.AskAiChanged += (_, enabled) =>
+            {
+                Logger.Log($"Optimizer: ask AI about unknown programs -> {enabled}.");
+                _profiles.WriteOptimizerAskAi(enabled);
+                _ = RunOptimizerAsync(_optimizerPanelApp, logSummary: false);
+            };
+            panel.VerdictRequested += (_, v) =>
+            {
+                Logger.Log($"Optimizer: '{v.Name}' -> {(v.Protect is null ? "automatic" : v.Protect.Value ? "always protect" : "always throttle")} ({v.Path}).");
+                _verdicts.SetUser(v.Path, v.Name, v.Protect);
+                _ = RunOptimizerAsync(_optimizerPanelApp, logSummary: false);
+                if (_optimizerLiveApp is { } liveApp && !string.Equals(liveApp, _optimizerPanelApp, StringComparison.OrdinalIgnoreCase))
+                    _ = RunOptimizerAsync(liveApp, logSummary: false);
+            };
             panel.ActionsChanged += (_, actions) =>
             {
                 Logger.Log($"Optimizer: settings changed -> game {actions.GameDescription}; throttle {actions.ThrottleDescription}.");

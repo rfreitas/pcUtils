@@ -49,15 +49,25 @@ internal sealed record ProcessSnapshot(
     public int? MaxThreadPriority { get; init; }
 }
 
-/// <summary>ChainDepth is set for GameChain only: 1 = the game's direct parent.</summary>
+/// <summary>ChainDepth is set for GameChain only: 1 = the game's direct parent.
+/// Path is the exe (null when unreadable), the key for per-program verdicts.
+/// Note is extra detail for the panel (the AI's reason).</summary>
 internal sealed record OptimizerDecision(string Name, int Pid, OptimizerRole Role, string Reason, string? Action, double? CpuCores,
-    int? ChainDepth = null);
+    int? ChainDepth = null)
+{
+    public string? Path { get; init; }
+    public string? Note { get; init; }
+}
 
 internal sealed record OptimizerReport(string App, DateTime At, IReadOnlyList<OptimizerDecision> Decisions);
 
 /// <summary>One panel row: same-name processes with the same role and reason
 /// collapse into one row with a count and summed CPU.</summary>
-internal sealed record OptimizerRow(string Name, int Count, string Reason, string? Action, double? CpuCores, int? ChainDepth = null);
+internal sealed record OptimizerRow(string Name, int Count, string Reason, string? Action, double? CpuCores, int? ChainDepth = null)
+{
+    public string? Path { get; init; }
+    public string? Note { get; init; }
+}
 
 /// <summary>ChainRows and PipelineRows are only set on the Game section: the launch
 /// chain (nearest parent first) and the VR runtime/streamer processes.</summary>
@@ -90,6 +100,9 @@ internal static class GameOptimizerPlanner
     public const string BusyReason = "Busy now";
     public const string BuildToolReason = "Build tool";
     public const string BackgroundReason = "Background";
+    public const string UserProtectReason = "Protected by you";
+    public const string UserThrottleReason = "Throttled by you";
+    public const string AiProtectReason = "Protected by AI";
 
     /// <summary>Thread base priority 16+ only exists in the real-time range: MMCSS
     /// (audio, VR compositors and streamers) or a Realtime class. Ordinary UI threads
@@ -214,13 +227,14 @@ internal static class GameOptimizerPlanner
 
     public static OptimizerReport Plan(
         string app, DateTime at, IEnumerable<ProcessSnapshot> processes, int ownPid,
-        IReadOnlyList<string> runtimeRoots, double cpuThresholdCores = DefaultCpuThresholdCores, OptimizerActions? actions = null)
+        IReadOnlyList<string> runtimeRoots, double cpuThresholdCores = DefaultCpuThresholdCores, OptimizerActions? actions = null,
+        IReadOnlyDictionary<string, ProcessVerdict>? verdicts = null)
     {
         string game = BaseName(app);
         var list = processes as IReadOnlyCollection<ProcessSnapshot> ?? processes.ToList();
         var ancestors = GameAncestors(list, game);
         var decisions = list
-            .Select(p => Classify(p, game, ownPid, runtimeRoots, cpuThresholdCores, ancestors, actions))
+            .Select(p => Classify(p, game, ownPid, runtimeRoots, cpuThresholdCores, ancestors, actions, verdicts))
             .ToList();
         MarkVrDescendants(list, decisions);
         return new OptimizerReport(app, at, decisions);
@@ -255,7 +269,7 @@ internal static class GameOptimizerPlanner
         for (int i = 0; i < decisions.Count; i++)
         {
             var d = decisions[i];
-            if (d.Role is OptimizerRole.WouldThrottle or OptimizerRole.LeftAlone && FromVr(d.Pid))
+            if (d.Role is OptimizerRole.WouldThrottle or OptimizerRole.LeftAlone && d.Reason != UserThrottleReason && FromVr(d.Pid))
                 decisions[i] = d with { Role = OptimizerRole.VrPipeline, Reason = VrChildReason, Action = null };
         }
     }
@@ -295,12 +309,15 @@ internal static class GameOptimizerPlanner
 
     public static OptimizerDecision Classify(
         ProcessSnapshot p, string gameBaseName, int ownPid, IReadOnlyList<string> runtimeRoots, double cpuThresholdCores,
-        IReadOnlyDictionary<int, int>? gameAncestors = null, OptimizerActions? actions = null)
+        IReadOnlyDictionary<int, int>? gameAncestors = null, OptimizerActions? actions = null,
+        IReadOnlyDictionary<string, ProcessVerdict>? verdicts = null)
     {
         string gameAction = (actions ?? OptimizerActions.Default).GameDescription;
         string throttleAction = (actions ?? OptimizerActions.Default).ThrottleDescription;
+        ProcessVerdict? verdict = p.Path is not null && verdicts is not null && verdicts.TryGetValue(p.Path, out var v) ? v : null;
+        string? note = verdict?.Ai is { } ai ? $"AI ({ai.Category}): {ai.Reason}" : null;
         OptimizerDecision D(OptimizerRole role, string reason, string? action = null) =>
-            new(p.Name, p.Pid, role, reason, action, p.CpuCores);
+            new(p.Name, p.Pid, role, reason, action, p.CpuCores) { Path = p.Path, Note = note };
 
         if (p.Pid == ownPid)
             return D(OptimizerRole.Protected, "Overlay app");
@@ -318,6 +335,13 @@ internal static class GameOptimizerPlanner
         if (p.SessionId == 0 || p.Path is null || p.PriorityClass is null)
             return D(OptimizerRole.Protected, "Windows / service");
 
+        // The user's own choice from the panel beats every rule below, but never
+        // the game, its launch chain or Windows services above.
+        if (verdict?.UserProtect is { } userProtect)
+            return userProtect
+                ? D(OptimizerRole.Protected, UserProtectReason)
+                : D(OptimizerRole.WouldThrottle, UserThrottleReason, throttleAction);
+
         foreach (string root in runtimeRoots)
             if (p.Path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                 return D(OptimizerRole.VrPipeline, VrFolderReason);
@@ -327,6 +351,10 @@ internal static class GameOptimizerPlanner
 
         if (p.MaxThreadPriority >= RealtimeThreadPriority)
             return D(OptimizerRole.Protected, RealtimeReason);
+
+        // The AI can only add protection; its "throttle" answers fall through to the rules.
+        if (verdict?.Ai is { Protect: true })
+            return D(OptimizerRole.Protected, AiProtectReason);
 
         if (p.PriorityClass != System.Diagnostics.ProcessPriorityClass.Normal)
             return D(OptimizerRole.LeftAlone, AlreadyReason(p.PriorityClass.Value));
@@ -360,7 +388,10 @@ internal static class GameOptimizerPlanner
     {
         BusyReason,
         BuildToolReason,
+        UserThrottleReason,
         BackgroundReason,
+        UserProtectReason,
+        AiProtectReason,
         RealtimeReason,
         "Input hook / hotkeys",
         "GPU / audio / input helper",
@@ -438,7 +469,9 @@ internal static class GameOptimizerPlanner
             {
                 double? cpu = g.Any(d => d.CpuCores is not null) ? g.Sum(d => d.CpuCores ?? 0) : null;
                 int? depth = g.Any(d => d.ChainDepth is not null) ? g.Min(d => d.ChainDepth ?? int.MaxValue) : null;
-                return new OptimizerRow(g.First().Name, g.Count(), g.Key.Reason, g.Key.Action, cpu, depth);
+                var first = g.First();
+                return new OptimizerRow(first.Name, g.Count(), g.Key.Reason, g.Key.Action, cpu, depth)
+                    { Path = first.Path, Note = first.Note };
             })
             .OrderByDescending(r => r.CpuCores ?? -1)
             .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)

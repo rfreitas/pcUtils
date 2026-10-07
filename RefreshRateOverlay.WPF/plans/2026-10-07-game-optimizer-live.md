@@ -73,3 +73,14 @@ runtime and drivers, anything started by the VR pipeline, and real-time
 threads (base priority 16+). Children of throttled processes are journaled
 with the parent's original values so restore doesn't leave them throttled.
 Left alone is only processes with a priority someone else set.
+
+## Update 2026-10-07: per-program verdicts and AI classification
+
+Rules can't know every companion app (head tracking, telemetry, input
+remappers). A per-program cache (exe path) holds the user's right-click
+choice and the local Claude CLI's answer; the user's choice wins, the AI can
+only add protection. The AI is asked once per unknown program, in batches,
+with a web-search second pass for programs it was guessing about. No public
+database answers "does this process matter to a game" (NSRL and VirusTotal
+identify files, not roles), so the installed-programs list is used to name
+the program and the AI judges the role.
