@@ -75,10 +75,10 @@ internal static class GameOptimizerPlanner
 {
     /// <summary>The game keeps its own priority: raising it to High would put it above
     /// most VR streamer/runtime threads (Normal, base 8), which must keep up with it.</summary>
-    public const string GameAction = "P-cores preferred, priority unchanged";
+    public static readonly string GameAction = OptimizerActions.Default.GameDescription;
     private const string VrRuntimeReason = "VR runtime";
 
-    public const string ThrottleAction = "Below normal, E-cores, low I/O";
+    public static readonly string ThrottleAction = OptimizerActions.Default.ThrottleDescription;
 
     /// <summary>Busy enough to throttle: average cores over the sample. In cores,
     /// not % of total: on 28 threads one busy thread is only 3.6%, and one busy
@@ -170,13 +170,13 @@ internal static class GameOptimizerPlanner
 
     public static OptimizerReport Plan(
         string app, DateTime at, IEnumerable<ProcessSnapshot> processes, int ownPid,
-        IReadOnlyList<string> runtimeRoots, double cpuThresholdCores = DefaultCpuThresholdCores)
+        IReadOnlyList<string> runtimeRoots, double cpuThresholdCores = DefaultCpuThresholdCores, OptimizerActions? actions = null)
     {
         string game = BaseName(app);
         var list = processes as IReadOnlyCollection<ProcessSnapshot> ?? processes.ToList();
         var ancestors = GameAncestors(list, game);
         var decisions = list
-            .Select(p => Classify(p, game, ownPid, runtimeRoots, cpuThresholdCores, ancestors))
+            .Select(p => Classify(p, game, ownPid, runtimeRoots, cpuThresholdCores, ancestors, actions))
             .ToList();
         return new OptimizerReport(app, at, decisions);
     }
@@ -216,8 +216,10 @@ internal static class GameOptimizerPlanner
 
     public static OptimizerDecision Classify(
         ProcessSnapshot p, string gameBaseName, int ownPid, IReadOnlyList<string> runtimeRoots, double cpuThresholdCores,
-        IReadOnlyDictionary<int, int>? gameAncestors = null)
+        IReadOnlyDictionary<int, int>? gameAncestors = null, OptimizerActions? actions = null)
     {
+        string gameAction = (actions ?? OptimizerActions.Default).GameDescription;
+        string throttleAction = (actions ?? OptimizerActions.Default).ThrottleDescription;
         OptimizerDecision D(OptimizerRole role, string reason, string? action = null) =>
             new(p.Name, p.Pid, role, reason, action, p.CpuCores);
 
@@ -227,8 +229,8 @@ internal static class GameOptimizerPlanner
         if (gameBaseName.Length > 0 && string.Equals(p.Name, gameBaseName, StringComparison.OrdinalIgnoreCase))
         {
             return p.Path is null || p.PriorityClass is null
-                ? D(OptimizerRole.Game, "Focused app — no access: a live boost would fail (anti-cheat?)", GameAction)
-                : D(OptimizerRole.Game, "Focused app", GameAction);
+                ? D(OptimizerRole.Game, "Focused app — no access: a live boost would fail (anti-cheat?)", gameAction)
+                : D(OptimizerRole.Game, "Focused app", gameAction);
         }
 
         if (gameAncestors is not null && gameAncestors.TryGetValue(p.Pid, out int depth))
@@ -248,10 +250,10 @@ internal static class GameOptimizerPlanner
             return D(OptimizerRole.LeftAlone, $"Priority already {p.PriorityClass} (you, or a tool such as Process Lasso)");
 
         if (DevTools.Contains(p.Name))
-            return D(OptimizerRole.WouldThrottle, "Build tool", ThrottleAction);
+            return D(OptimizerRole.WouldThrottle, "Build tool", throttleAction);
 
         if (p.CpuCores is { } cores && cores >= cpuThresholdCores)
-            return D(OptimizerRole.WouldThrottle, "High CPU", ThrottleAction);
+            return D(OptimizerRole.WouldThrottle, "High CPU", throttleAction);
 
         return D(OptimizerRole.LeftAlone, p.CpuCores is null ? "CPU not measured yet" : "Low CPU");
     }

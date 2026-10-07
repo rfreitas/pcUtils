@@ -287,3 +287,13 @@ dev machine). Nothing ever writes to a process yet.
   their original priority, and a high-CPU throttle is sticky for the session,
   so nothing flaps as CPU drops. Only the Live app is ever enforced; a panel
   preview of another app never changes anything.
+- **Panel choices** (`Services/OptimizerActions.cs`): the Game and Would
+  throttle sections each have a Priority and a Cores picker, stored globally in
+  `[Settings]` (`OptimizerGame*`, `OptimizerThrottle*`). The game can only be
+  raised (Unchanged / Above normal / High), a throttled process only lowered
+  (Unchanged / Below normal / Idle); never Realtime. Defaults: game Unchanged +
+  P-cores, throttle Below normal + E-cores. A change restores everything, then
+  re-applies from the true originals. The pickers are built once and
+  re-parented on each 2.5 s rebuild; a rebuild is skipped while a dropdown is
+  open. Protected, Left alone, the launch chain and the VR pipeline have no
+  pickers on purpose: they are never changed.

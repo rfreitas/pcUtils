@@ -306,6 +306,7 @@ internal sealed class TrayApp : IDisposable
 
         // Crash recovery: anything a previous run changed and didn't undo.
         _optimizerEnforcer.RestoreAll("startup recovery");
+        _optimizerEnforcer.SetActions(_profiles.ReadOptimizerActions());
 
         (uint hkMods, uint hkVk) = _profiles.ReadHotkey()
             ?? (HotkeyService.MOD_WIN | HotkeyService.MOD_ALT | HotkeyService.MOD_SHIFT, 0x52 /* R */);
@@ -889,7 +890,7 @@ internal sealed class TrayApp : IDisposable
             var snapshots = await Task.Run(() => _processSnapshots.Take());
             var roots = GameOptimizerPlanner.OpenXrRoots(ProcessSnapshotService.ReadActiveOpenXrRuntime());
             var report = GameOptimizerPlanner.Plan(app, DateTime.Now, _optimizerEnforcer.WithOriginalPriorities(snapshots),
-                Environment.ProcessId, roots);
+                Environment.ProcessId, roots, actions: _optimizerEnforcer.Actions);
             _lastOptimizerReport = report;
 
             // Only the app the Live session belongs to is ever enforced; a panel
@@ -922,6 +923,16 @@ internal sealed class TrayApp : IDisposable
         if (_optimizerPanel is null)
         {
             var panel = new OptimizerPanelWindow();
+            panel.SetActions(_optimizerEnforcer.Actions);
+            panel.ActionsChanged += (_, actions) =>
+            {
+                Logger.Log($"Optimizer: settings changed -> game {actions.GameDescription}; throttle {actions.ThrottleDescription}.");
+                _profiles.WriteOptimizerActions(actions);
+                _optimizerEnforcer.SetActions(actions); // restores; the next pass re-applies with the new choices
+                _ = RunOptimizerAsync(_optimizerPanelApp, logSummary: false);
+                if (_optimizerLiveApp is { } liveApp && !string.Equals(liveApp, _optimizerPanelApp, StringComparison.OrdinalIgnoreCase))
+                    _ = RunOptimizerAsync(liveApp, logSummary: false);
+            };
             panel.Closed += (_, _) =>
             {
                 _optimizerPanelTimer?.Stop();

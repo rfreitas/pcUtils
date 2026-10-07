@@ -6,6 +6,9 @@ using RefreshRateOverlay.WPF.Services;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
 using Point = System.Windows.Point;
+using ComboBox = System.Windows.Controls.ComboBox;
+using Panel = System.Windows.Controls.Panel;
+using Orientation = System.Windows.Controls.Orientation;
 
 namespace RefreshRateOverlay.WPF;
 
@@ -29,10 +32,90 @@ public partial class OptimizerPanelWindow : Window
     // are worth showing, the rest is a count.
     internal const int LeftAloneRowLimit = 8;
 
+    // Pickers live outside the 2.5 s rebuild: built once, re-parented into their
+    // section on each Update, so a selection or an open dropdown survives.
+    private readonly ComboBox _gamePriority, _gameCores, _throttlePriority, _throttleCores;
+    private readonly FrameworkElement _gamePickers, _throttlePickers;
+    private bool _suppressPickerEvents;
+
+    /// <summary>Raised when the user picks a new priority or core type.</summary>
+    internal event EventHandler<OptimizerActions>? ActionsChanged;
+
+    internal OptimizerActions Actions { get; private set; } = OptimizerActions.Default;
+
     public OptimizerPanelWindow()
     {
         InitializeComponent();
         CloseButton.Click += (_, _) => Close();
+
+        _gamePriority = Picker(OptimizerActions.GamePriorities.Select(OptimizerActions.Label));
+        _gameCores = Picker(OptimizerActions.Cores.Select(OptimizerActions.Label));
+        _throttlePriority = Picker(OptimizerActions.ThrottlePriorities.Select(OptimizerActions.Label));
+        _throttleCores = Picker(OptimizerActions.Cores.Select(OptimizerActions.Label));
+        _gamePickers = PickerRow(_gamePriority, _gameCores,
+            "Priority for the focused game. Unchanged is safest in VR: a High game outranks the streamer.");
+        _throttlePickers = PickerRow(_throttlePriority, _throttleCores,
+            "Priority for throttled processes. Idle only runs them when nothing else wants the CPU.");
+        SetActions(OptimizerActions.Default);
+    }
+
+    internal ComboBox GamePriorityPicker => _gamePriority;
+    internal ComboBox GameCoresPicker => _gameCores;
+    internal ComboBox ThrottlePriorityPicker => _throttlePriority;
+    internal ComboBox ThrottleCoresPicker => _throttleCores;
+
+    /// <summary>Shows the stored choices without raising ActionsChanged.</summary>
+    internal void SetActions(OptimizerActions actions)
+    {
+        Actions = actions.Normalized();
+        _suppressPickerEvents = true;
+        _gamePriority.SelectedIndex = Array.IndexOf(OptimizerActions.GamePriorities, Actions.GamePriority);
+        _gameCores.SelectedIndex = Array.IndexOf(OptimizerActions.Cores, Actions.GameCores);
+        _throttlePriority.SelectedIndex = Array.IndexOf(OptimizerActions.ThrottlePriorities, Actions.ThrottlePriority);
+        _throttleCores.SelectedIndex = Array.IndexOf(OptimizerActions.Cores, Actions.ThrottleCores);
+        _suppressPickerEvents = false;
+    }
+
+    private ComboBox Picker(IEnumerable<string> labels)
+    {
+        var box = new ComboBox { FontSize = 11, Height = 22, MinWidth = 96, Margin = new Thickness(4, 0, 10, 0) };
+        foreach (string l in labels) box.Items.Add(l);
+        box.SelectionChanged += (_, _) => OnPickerChanged();
+        return box;
+    }
+
+    private static FrameworkElement PickerRow(ComboBox priority, ComboBox cores, string tip)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 0, 0, 4), ToolTip = tip };
+        row.Children.Add(PickerLabel("Priority"));
+        row.Children.Add(priority);
+        row.Children.Add(PickerLabel("Cores"));
+        row.Children.Add(cores);
+        return row;
+    }
+
+    private static TextBlock PickerLabel(string text) =>
+        new() { Text = text, Foreground = new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xAA)), FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
+
+    private void OnPickerChanged()
+    {
+        if (_suppressPickerEvents) return;
+        if (_gamePriority.SelectedIndex < 0 || _gameCores.SelectedIndex < 0 || _throttlePriority.SelectedIndex < 0 || _throttleCores.SelectedIndex < 0) return;
+        Actions = new OptimizerActions(
+            OptimizerActions.GamePriorities[_gamePriority.SelectedIndex],
+            OptimizerActions.Cores[_gameCores.SelectedIndex],
+            OptimizerActions.ThrottlePriorities[_throttlePriority.SelectedIndex],
+            OptimizerActions.Cores[_throttleCores.SelectedIndex]);
+        ActionsChanged?.Invoke(this, Actions);
+    }
+
+    private bool PickerOpen =>
+        _gamePriority.IsDropDownOpen || _gameCores.IsDropDownOpen || _throttlePriority.IsDropDownOpen || _throttleCores.IsDropDownOpen;
+
+    private static void Reparent(FrameworkElement child, Panel into)
+    {
+        if (child.Parent is Panel old) old.Children.Remove(child);
+        into.Children.Add(child);
     }
 
     /// <summary>Last report shown — test-facing.</summary>
@@ -46,6 +129,7 @@ public partial class OptimizerPanelWindow : Window
     internal void Update(OptimizerReport report, OptimizerMode mode, bool live = false,
         IReadOnlyDictionary<int, string>? failures = null)
     {
+        if (PickerOpen) return; // don't rebuild under an open dropdown; the next refresh catches up
         Report = report;
         _mode = live ? OptimizerMode.Live : mode;
         _failedByName = new(StringComparer.OrdinalIgnoreCase);
@@ -92,6 +176,8 @@ public partial class OptimizerPanelWindow : Window
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 3),
         });
+        if (section.Role == OptimizerRole.Game) Reparent(_gamePickers, panel);
+        else if (section.Role == OptimizerRole.WouldThrottle) Reparent(_throttlePickers, panel);
 
         IEnumerable<OptimizerRow> rows = section.Rows;
         int hidden = 0;

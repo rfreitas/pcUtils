@@ -132,6 +132,25 @@ internal sealed class ProfileService
     // of truth: TrayApp reasserts it onto hardware instead of learning from
     // whatever changed the setting externally.
 
+    // ---- optimizer actions (global, chosen in the side panel) -------------------
+    public OptimizerActions ReadOptimizerActions()
+    {
+        var d = OptimizerActions.Default;
+        T Get<T>(string key, T fallback) where T : struct, Enum =>
+            Enum.TryParse(_ini.ReadString(SecSettings, key), out T v) ? v : fallback;
+        return new OptimizerActions(
+            Get("OptimizerGamePriority", d.GamePriority), Get("OptimizerGameCores", d.GameCores),
+            Get("OptimizerThrottlePriority", d.ThrottlePriority), Get("OptimizerThrottleCores", d.ThrottleCores)).Normalized();
+    }
+
+    public void WriteOptimizerActions(OptimizerActions a)
+    {
+        _ini.WriteString(SecSettings, "OptimizerGamePriority", a.GamePriority.ToString());
+        _ini.WriteString(SecSettings, "OptimizerGameCores", a.GameCores.ToString());
+        _ini.WriteString(SecSettings, "OptimizerThrottlePriority", a.ThrottlePriority.ToString());
+        _ini.WriteString(SecSettings, "OptimizerThrottleCores", a.ThrottleCores.ToString());
+    }
+
     public bool ReadReconciliationEnabled() => _ini.ReadBool(SecSettings, KeyReconciliation, defaultValue: true);
 
     public void WriteReconciliationEnabled(bool value) => _ini.WriteBool(SecSettings, KeyReconciliation, value);

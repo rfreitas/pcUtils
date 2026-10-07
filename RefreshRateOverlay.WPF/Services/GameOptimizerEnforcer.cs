@@ -105,6 +105,18 @@ internal sealed class GameOptimizerEnforcer
     }
 
     public string? SessionApp { get; private set; }
+
+    public OptimizerActions Actions { get; private set; } = OptimizerActions.Default;
+
+    /// <summary>New panel choices. Everything applied under the old choices is
+    /// restored first; the next Enforce applies the new ones from the true originals.</summary>
+    public void SetActions(OptimizerActions actions)
+    {
+        actions = actions.Normalized();
+        if (actions == Actions) return;
+        RestoreAll("optimizer settings changed");
+        Actions = actions;
+    }
     public IReadOnlyDictionary<int, OptimizerJournalEntry> Entries => _entries;
 
     /// <summary>pid → why a change could not be applied (this session).</summary>
@@ -152,13 +164,17 @@ internal sealed class GameOptimizerEnforcer
         var state = _control.Read(d.Pid);
         if (state is null) { Fail(d, "no access"); return; }
 
-        // Boost never changes priority: a High game outranks the Normal-priority
-        // threads of the VR streamer/runtime that must keep up with it (measured:
-        // 25 of Virtual Desktop Streamer's 27 threads at base 8). Throttling the
-        // background is what removes contention; the game only prefers P-cores.
-        ProcessPriorityClass? priority = change == OptimizerChange.Throttle ? ProcessPriorityClass.BelowNormal : null;
-        uint[]? sets = !_topology.IsHybrid ? null
-            : (change == OptimizerChange.Boost ? _topology.PerformanceSetIds : _topology.EfficiencySetIds).ToArray();
+        // Values come from the panel's choices (Actions). The default leaves the
+        // game's priority alone: a High game outranks the Normal-priority threads
+        // of the VR streamer/runtime that must keep up with it (see CLAUDE.md).
+        bool boost = change == OptimizerChange.Boost;
+        ProcessPriorityClass? priority = OptimizerActions.ToPriorityClass(boost ? Actions.GamePriority : Actions.ThrottlePriority);
+        uint[]? sets = !_topology.IsHybrid ? null : (boost ? Actions.GameCores : Actions.ThrottleCores) switch
+        {
+            CoreChoice.PCores => _topology.PerformanceSetIds.ToArray(),
+            CoreChoice.ECores => _topology.EfficiencySetIds.ToArray(),
+            _ => null,
+        };
         int? io = change == OptimizerChange.Throttle ? IoVeryLow : null;
 
         var entry = new OptimizerJournalEntry
