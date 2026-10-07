@@ -231,7 +231,7 @@ absorbed or reverted by `ReconcileAll` depending on `ReconciliationEnabled`.
 - Tests use fake `IProcessorPowerSettings` / `IParkingRestoreStore`; never read
   or write real power plans from tests.
 
-## Game optimizer: dry run only, so far
+## Game optimizer
 
 `Services/GameOptimizerPlanner.cs` classifies every process for the focused
 app as Game, Would throttle, Protected or Left alone (first-match-wins rules,
@@ -262,3 +262,20 @@ dev machine). Nothing ever writes to a process yet.
   LGTV_brightness.
 - **CPU threshold is in cores** (0.5), not % of total: one busy thread is
   3.6% of 28 threads and is exactly what preempts a game thread.
+- **Live mode** (`Services/GameOptimizerEnforcer.cs`, plan
+  `plans/2026-10-07-game-optimizer-live.md`): game gets High priority and the
+  P-core CPU sets; throttled processes get Below normal, the E-core CPU sets
+  and Very low I/O. Never Realtime, Idle, kill or suspend. CPU sets come from
+  `CpuTopology` (highest EfficiencyClass = P); a non-hybrid CPU gets priority
+  changes only. All writes go through `IProcessControl`, which re-checks the
+  creation time on the opened handle (pid reuse is never touched).
+- **Undo is the core of it.** Write-ahead JSON journal in `%LOCALAPPDATA%`;
+  restore per attribute only when it still holds our value (a later change by
+  the user or Process Lasso wins). A session is one resolved app: switching
+  app, a mode other than Live, exit, and startup (crash recovery) restore
+  everything. These attributes don't survive a reboot, so only an app crash
+  with the PC still running needs the journal.
+- **Stable classification.** Journaled processes are fed to the planner at
+  their original priority, and a high-CPU throttle is sticky for the session,
+  so nothing flaps as CPU drops. Only the Live app is ever enforced; a panel
+  preview of another app never changes anything.

@@ -37,12 +37,28 @@ public partial class OptimizerPanelWindow : Window
     /// <summary>Last report shown — test-facing.</summary>
     internal OptimizerReport? Report { get; private set; }
 
-    internal void Update(OptimizerReport report, OptimizerMode mode)
+    private OptimizerMode _mode;
+    private Dictionary<string, string> _failedByName = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>live: true only when this report is the app the Live session is
+    /// actually applying to; failures are the enforcer's per-pid problems.</summary>
+    internal void Update(OptimizerReport report, OptimizerMode mode, bool live = false,
+        IReadOnlyDictionary<int, string>? failures = null)
     {
         Report = report;
-        ModeText.Text = mode == OptimizerMode.DryRun
-            ? "Dry run: shows what it would do. Nothing is changed."
-            : "Preview only: the optimizer is Off for this app. Nothing is changed.";
+        _mode = live ? OptimizerMode.Live : mode;
+        _failedByName = new(StringComparer.OrdinalIgnoreCase);
+        if (failures is not null)
+            foreach (var d in report.Decisions)
+                if (failures.TryGetValue(d.Pid, out string? why)) _failedByName[d.Name] = why;
+
+        ModeText.Text = _mode switch
+        {
+            OptimizerMode.Live => "Live: these changes are applied now and undone when you leave this app.",
+            OptimizerMode.DryRun => "Dry run: shows what it would do. Nothing is changed.",
+            _ when mode == OptimizerMode.Live => "Live for this app, but not applied: it isn't the focused app.",
+            _ => "Preview only: the optimizer is Off for this app. Nothing is changed.",
+        };
         SubtitleText.Text = $"For {report.App} · {report.At:HH:mm:ss} · {report.Decisions.Count} processes";
 
         SectionsPanel.Children.Clear();
@@ -66,9 +82,10 @@ public partial class OptimizerPanelWindow : Window
 
         var color = RoleColors[section.Role];
         var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+        string title = _mode == OptimizerMode.Live && section.Role == OptimizerRole.WouldThrottle ? "Throttled" : section.Title;
         panel.Children.Add(new TextBlock
         {
-            Text = $"{section.Title} ({section.ProcessCount})",
+            Text = $"{title} ({section.ProcessCount})",
             Foreground = new SolidColorBrush(color),
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
@@ -87,7 +104,9 @@ public partial class OptimizerPanelWindow : Window
             panel.Children.Add(Muted("None"));
 
         foreach (var row in rows)
-            panel.Children.Add(BuildRow(row));
+            panel.Children.Add(_failedByName.TryGetValue(row.Name, out string? why)
+                ? BuildRow(row with { Reason = $"{row.Reason} · failed: {why}" })
+                : BuildRow(row));
 
         if (section.ChainRows is { Count: > 0 } chain)
         {

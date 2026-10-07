@@ -127,7 +127,7 @@
                          ToolTip="Green: matches the saved value. Red: not saved yet — Apply will save what's shown."/>
                 <TextBlock Grid.Column="2" Text="Optimizer:" Foreground="White" FontSize="14" VerticalAlignment="Center"/>
                 <ComboBox Grid.Column="4" x:Name="OptimizerDropDown" FontSize="14" Height="30"
-                          ToolTip="Dry run shows which processes it would boost, throttle or protect, without changing any."/>
+                          ToolTip="Dry run shows which processes it would boost, throttle or protect, without changing any. Live applies it while this app is focused and undoes it afterwards."/>
                 <Button Grid.Column="5" x:Name="OptimizerPanelButton" Style="{StaticResource IconButton}"
                         Foreground="#CCCCCC" Margin="6,0,0,0" VerticalAlignment="Center"
                         ToolTip="Show what the optimizer would do">

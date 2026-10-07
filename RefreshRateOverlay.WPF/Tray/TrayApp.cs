@@ -69,15 +69,19 @@ internal sealed class TrayApp : IDisposable
     private readonly IProcessorPowerSettings _powerSettings = new PowrProfProcessorPowerSettings();
     private readonly SyncableSetting<bool> _coreParkingSetting;
 
-    // Game optimizer, dry run only: classifies processes for the focused app and
-    // shows the result in OptimizerPanelWindow; never changes a process. See
-    // plans/2026-10-07-game-optimizer-dry-run.md.
+    // Game optimizer: classifies processes for the focused app (dry run and
+    // panel preview) and, in Live mode, applies it through _optimizerEnforcer.
+    // See plans/2026-10-07-game-optimizer-dry-run.md and -live.md.
     private readonly ProcessSnapshotService _processSnapshots = new();
     private OptimizerReport? _lastOptimizerReport;
     private OptimizerPanelWindow? _optimizerPanel;
     private string _optimizerPanelApp = string.Empty;
     private System.Windows.Forms.Timer? _optimizerPanelTimer;
     private bool _optimizerSampleInFlight;
+    private readonly GameOptimizerEnforcer _optimizerEnforcer = new(
+        new Win32ProcessControl(), new JsonOptimizerJournalStore(JsonOptimizerJournalStore.DefaultPath), CpuTopology.Read(), Logger.Log);
+    private string? _optimizerLiveApp;
+    private System.Windows.Forms.Timer? _optimizerLiveTimer;
 
     // Backoff state for reconciliation-off enforcement — one per push bucket
     // (Rate+HDR always pushed together, G-SYNC separate), since that's how
@@ -300,6 +304,9 @@ internal sealed class TrayApp : IDisposable
         _msgSink = new SystemMessageSink(OnDisplayChange, OnPowerSettingChange);
         _msgSink.RegisterPowerSettings(CoreParkingEnforcer.NotificationSettings);
 
+        // Crash recovery: anything a previous run changed and didn't undo.
+        _optimizerEnforcer.RestoreAll("startup recovery");
+
         (uint hkMods, uint hkVk) = _profiles.ReadHotkey()
             ?? (HotkeyService.MOD_WIN | HotkeyService.MOD_ALT | HotkeyService.MOD_SHIFT, 0x52 /* R */);
         _hotkey = new HotkeyService(() => ShowOverlay(), hkMods, hkVk, Logger.Log);
@@ -475,7 +482,7 @@ internal sealed class TrayApp : IDisposable
         ApplyDsxProfileForApp(app);
         ApplyGsyncMode(app);
         ApplyCoreParking(_coreParkingSetting.ResolveTarget(app));
-        if (ResolveOptimizerMode(app) == OptimizerMode.DryRun) _ = RunOptimizerDryRunAsync(app, logSummary: true);
+        UpdateOptimizerSession(app);
     }
 
     private void ApplyProfile(string app, Action<bool>? onSettled = null)
@@ -837,7 +844,43 @@ internal sealed class TrayApp : IDisposable
     private OptimizerMode ResolveOptimizerMode(string app) =>
         _profiles.Optimizer.TryReadProfile(app, out OptimizerMode m) ? m : _profiles.Optimizer.ReadDefault();
 
-    private async Task RunOptimizerDryRunAsync(string app, bool logSummary)
+    /// <summary>Starts, keeps or ends the Live session for the resolved app:
+    /// Live → apply now and every 2.5 s; anything else → undo everything. Dry run
+    /// just samples once for the log.</summary>
+    private void UpdateOptimizerSession(string app)
+    {
+        OptimizerMode mode = ResolveOptimizerMode(app);
+        if (mode == OptimizerMode.Live)
+        {
+            if (!string.Equals(_optimizerLiveApp, app, StringComparison.OrdinalIgnoreCase))
+            {
+                _optimizerLiveApp = app;
+                Logger.Log($"Optimizer: Live session for '{app}'.");
+            }
+            if (_optimizerLiveTimer is null)
+            {
+                _optimizerLiveTimer = new System.Windows.Forms.Timer { Interval = 2500 };
+                _optimizerLiveTimer.Tick += (_, _) => { if (_optimizerLiveApp is { } a) _ = RunOptimizerAsync(a, logSummary: false); };
+                _optimizerLiveTimer.Start();
+            }
+            _ = RunOptimizerAsync(app, logSummary: true);
+            return;
+        }
+
+        StopOptimizerLive($"'{app}' is {mode}");
+        if (mode == OptimizerMode.DryRun) _ = RunOptimizerAsync(app, logSummary: true);
+    }
+
+    private void StopOptimizerLive(string why)
+    {
+        _optimizerLiveTimer?.Stop();
+        _optimizerLiveTimer?.Dispose();
+        _optimizerLiveTimer = null;
+        _optimizerLiveApp = null;
+        _optimizerEnforcer.RestoreAll(why);
+    }
+
+    private async Task RunOptimizerAsync(string app, bool logSummary)
     {
         if (_optimizerSampleInFlight) return;
         _optimizerSampleInFlight = true;
@@ -845,20 +888,26 @@ internal sealed class TrayApp : IDisposable
         {
             var snapshots = await Task.Run(() => _processSnapshots.Take());
             var roots = GameOptimizerPlanner.OpenXrRoots(ProcessSnapshotService.ReadActiveOpenXrRuntime());
-            var report = GameOptimizerPlanner.Plan(app, DateTime.Now, snapshots, Environment.ProcessId, roots);
+            var report = GameOptimizerPlanner.Plan(app, DateTime.Now, _optimizerEnforcer.WithOriginalPriorities(snapshots),
+                Environment.ProcessId, roots);
             _lastOptimizerReport = report;
+
+            // Only the app the Live session belongs to is ever enforced; a panel
+            // preview of another app (overlay app picker) never changes anything.
+            bool live = _optimizerLiveApp is not null && string.Equals(_optimizerLiveApp, app, StringComparison.OrdinalIgnoreCase);
+            if (live) _optimizerEnforcer.Enforce(report);
 
             if (logSummary)
             {
                 var counts = report.Decisions.GroupBy(d => d.Role).ToDictionary(g => g.Key, g => g.Count());
-                Logger.Log($"Optimizer (dry run): app='{app}' game={counts.GetValueOrDefault(OptimizerRole.Game)} " +
+                Logger.Log($"Optimizer ({(live ? "live" : "dry run")}): app='{app}' game={counts.GetValueOrDefault(OptimizerRole.Game)} " +
                            $"wouldThrottle={counts.GetValueOrDefault(OptimizerRole.WouldThrottle)} " +
                            $"protected={counts.GetValueOrDefault(OptimizerRole.Protected)} " +
                            $"leftAlone={counts.GetValueOrDefault(OptimizerRole.LeftAlone)}.");
             }
 
             if (_optimizerPanel is { } panel && string.Equals(_optimizerPanelApp, app, StringComparison.OrdinalIgnoreCase))
-                panel.Update(report, ResolveOptimizerMode(app));
+                panel.Update(report, ResolveOptimizerMode(app), live, live ? _optimizerEnforcer.Failures : null);
         }
         catch (Exception ex) { Logger.LogException(ex); }
         finally { _optimizerSampleInFlight = false; }
@@ -884,13 +933,13 @@ internal sealed class TrayApp : IDisposable
             panel.Show();
 
             _optimizerPanelTimer = new System.Windows.Forms.Timer { Interval = 2500 };
-            _optimizerPanelTimer.Tick += (_, _) => _ = RunOptimizerDryRunAsync(_optimizerPanelApp, logSummary: false);
+            _optimizerPanelTimer.Tick += (_, _) => _ = RunOptimizerAsync(_optimizerPanelApp, logSummary: false);
             _optimizerPanelTimer.Start();
         }
         _optimizerPanel.AnchorTo(overlay);
         if (_lastOptimizerReport is { } last && string.Equals(last.App, _optimizerPanelApp, StringComparison.OrdinalIgnoreCase))
             _optimizerPanel.Update(last, ResolveOptimizerMode(_optimizerPanelApp));
-        _ = RunOptimizerDryRunAsync(_optimizerPanelApp, logSummary: false);
+        _ = RunOptimizerAsync(_optimizerPanelApp, logSummary: false);
     }
 
     private void OnDisplayChange()
@@ -1483,6 +1532,7 @@ internal sealed class TrayApp : IDisposable
             _profiles.CoreParking.DeleteProfile(app);
             _profiles.Optimizer.DeleteProfile(app);
             _overlay!.ReflectOptimizerApplied(_profiles.Optimizer.ReadDefault());
+            UpdateOptimizerSession(ResolveStickyApp(_anticipatedApp.ResolveApp(_tracker.LastApp)));
             ApplyDisplayState(_rateSetting.Default, _hdrSetting.Default);
             if (_gsyncAvailable) ApplyGsyncMode(app);
             ApplyCoreParking(_coreParkingSetting.Default);
@@ -1526,8 +1576,11 @@ internal sealed class TrayApp : IDisposable
             OptimizerMode optimizerVal = _overlay.SelectedOptimizerMode;
             SaveOrClear(_profiles.Optimizer, app, saveProfile, optimizerVal, _profiles.Optimizer.ReadDefault());
             _overlay.ReflectOptimizerApplied(optimizerVal);
+            // The saved mode may start or end a Live session for whatever is focused
+            // underneath the overlay; a panel preview of this app refreshes too.
+            UpdateOptimizerSession(ResolveStickyApp(_anticipatedApp.ResolveApp(_tracker.LastApp)));
             if (_optimizerPanel is not null && string.Equals(_optimizerPanelApp, app, StringComparison.OrdinalIgnoreCase))
-                _ = RunOptimizerDryRunAsync(app, logSummary: false);
+                _ = RunOptimizerAsync(app, logSummary: false);
 
             bool parkingVal = _overlay.DisableCoreParking;
             _coreParkingSetting.SaveOrClear(app, saveProfile, parkingVal);
@@ -1672,6 +1725,7 @@ internal sealed class TrayApp : IDisposable
         if (_disposed) return;
         _disposed = true;
         _settleCts?.Cancel();
+        try { StopOptimizerLive("exit"); } catch (Exception ex) { Logger.LogException(ex); }
         _stickyLivenessTimer.Stop();
         _stickyLivenessTimer.Dispose();
         _tracker.Dispose();

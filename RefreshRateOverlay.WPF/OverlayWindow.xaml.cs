@@ -334,6 +334,7 @@ public partial class OverlayWindow : Window
 
         OptimizerDropDown.Items.Add("Off");
         OptimizerDropDown.Items.Add("Dry run");
+        OptimizerDropDown.Items.Add("Live");
         OptimizerDropDown.SelectedIndex = (int)optimizerMode;
         _optimizerSync = BindSynced(OptimizerSyncDot, OptimizerDropDown, storedOptimizerMode, () => SelectedOptimizerMode,
             changed => OptimizerDropDown.SelectionChanged += (_, _) => changed());

@@ -34,7 +34,7 @@ public class OptimizerOverlayAndPanelTests
     {
         var w = CreateWindow(OptimizerMode.DryRun, OptimizerMode.DryRun);
         Assert.Equal(OptimizerMode.DryRun, w.SelectedOptimizerMode);
-        Assert.Equal(new[] { "Off", "Dry run" }, w.OptimizerDropDown.Items.Cast<string>());
+        Assert.Equal(new[] { "Off", "Dry run", "Live" }, w.OptimizerDropDown.Items.Cast<string>());
         Assert.Equal(Brushes.LimeGreen.Color, Dot(w));
     });
 

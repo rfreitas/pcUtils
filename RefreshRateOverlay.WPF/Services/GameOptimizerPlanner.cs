@@ -5,12 +5,14 @@ using System.Linq;
 
 namespace RefreshRateOverlay.WPF.Services;
 
-/// <summary>Per-app optimizer setting. Only Off and DryRun exist: a Live value
-/// is added when enforcement is built (plans/2026-10-07-game-optimizer-dry-run.md).</summary>
+/// <summary>Per-app optimizer setting. DryRun only shows decisions; Live applies
+/// them through GameOptimizerEnforcer (plans/2026-10-07-game-optimizer-live.md).
+/// Values are persisted by name and used as combo indexes: append only.</summary>
 public enum OptimizerMode
 {
     Off,
     DryRun,
+    Live,
 }
 
 internal enum OptimizerRole
