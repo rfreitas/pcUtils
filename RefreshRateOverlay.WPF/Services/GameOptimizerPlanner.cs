@@ -22,6 +22,10 @@ internal enum OptimizerRole
     /// bootstrapper, Explorer, a terminal). Never changed, like Protected, but
     /// shown under the game in the panel because it is part of the game's launch.</summary>
     GameChain,
+    /// <summary>The VR runtime and streamer (active OpenXR runtime folder, or a known
+    /// VR runtime name). Never changed; shown under the game because in VR the
+    /// game's frame still has to pass through them.</summary>
+    VrPipeline,
     WouldThrottle,
     Protected,
     LeftAlone,
@@ -51,9 +55,10 @@ internal sealed record OptimizerReport(string App, DateTime At, IReadOnlyList<Op
 /// collapse into one row with a count and summed CPU.</summary>
 internal sealed record OptimizerRow(string Name, int Count, string Reason, string? Action, double? CpuCores, int? ChainDepth = null);
 
-/// <summary>ChainRows is only set on the Game section: the launch chain, nearest parent first.</summary>
+/// <summary>ChainRows and PipelineRows are only set on the Game section: the launch
+/// chain (nearest parent first) and the VR runtime/streamer processes.</summary>
 internal sealed record OptimizerSection(OptimizerRole Role, string Title, IReadOnlyList<OptimizerRow> Rows, int ProcessCount,
-    IReadOnlyList<OptimizerRow>? ChainRows = null);
+    IReadOnlyList<OptimizerRow>? ChainRows = null, IReadOnlyList<OptimizerRow>? PipelineRows = null);
 
 /// <summary>Rows of one section that share a reason (the rule that matched),
 /// for the panel's collapsible Protected groups.</summary>
@@ -68,7 +73,11 @@ internal sealed record OptimizerGroup(string Reason, IReadOnlyList<OptimizerRow>
 /// </summary>
 internal static class GameOptimizerPlanner
 {
-    public const string GameAction = "High priority, P-cores";
+    /// <summary>The game keeps its own priority: raising it to High would put it above
+    /// most VR streamer/runtime threads (Normal, base 8), which must keep up with it.</summary>
+    public const string GameAction = "P-cores preferred, priority unchanged";
+    private const string VrRuntimeReason = "VR runtime";
+
     public const string ThrottleAction = "Below normal, E-cores, low I/O";
 
     /// <summary>Busy enough to throttle: average cores over the sample. In cores,
@@ -78,7 +87,7 @@ internal static class GameOptimizerPlanner
 
     private static readonly (string Reason, string[] Names)[] ProtectedNames =
     {
-        ("VR runtime", new[]
+        (VrRuntimeReason, new[]
         {
             "vrserver", "vrcompositor", "vrmonitor", "vrdashboard", "vrwebhelper", "vrstartup", "vrserverhelper",
             "OVRServer_x64", "OVRRedir", "OVRServiceLauncher", "OculusClient", "OculusDash",
@@ -230,10 +239,10 @@ internal static class GameOptimizerPlanner
 
         foreach (string root in runtimeRoots)
             if (p.Path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                return D(OptimizerRole.Protected, "OpenXR runtime");
+                return D(OptimizerRole.VrPipeline, "OpenXR runtime");
 
         if (ProtectedReasonByName.TryGetValue(p.Name, out string? reason))
-            return D(OptimizerRole.Protected, reason);
+            return D(reason == VrRuntimeReason ? OptimizerRole.VrPipeline : OptimizerRole.Protected, reason);
 
         if (p.PriorityClass != System.Diagnostics.ProcessPriorityClass.Normal)
             return D(OptimizerRole.LeftAlone, $"Priority already {p.PriorityClass} (you, or a tool such as Process Lasso)");
@@ -251,8 +260,6 @@ internal static class GameOptimizerPlanner
     /// across refreshes instead of jumping around with CPU use.</summary>
     private static readonly string[] ReasonOrder =
     {
-        "OpenXR runtime",
-        "VR runtime",
         "Input hook / hotkeys",
         "GPU / audio / input helper",
         "Anti-cheat",
@@ -304,15 +311,16 @@ internal static class GameOptimizerPlanner
         {
             var inRole = report.Decisions.Where(d => d.Role == role).ToList();
             var rows = Rows(inRole);
-            IReadOnlyList<OptimizerRow>? chain = null;
+            IReadOnlyList<OptimizerRow>? chain = null, pipeline = null;
             if (role == OptimizerRole.Game)
             {
                 chain = Rows(report.Decisions.Where(d => d.Role == OptimizerRole.GameChain))
                     .OrderBy(r => r.ChainDepth ?? int.MaxValue)
                     .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
                     .ToList();
+                pipeline = Rows(report.Decisions.Where(d => d.Role == OptimizerRole.VrPipeline));
             }
-            sections.Add(new OptimizerSection(role, title, rows, inRole.Count, chain));
+            sections.Add(new OptimizerSection(role, title, rows, inRole.Count, chain, pipeline));
         }
         return sections;
     }

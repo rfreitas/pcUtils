@@ -257,14 +257,22 @@ dev machine). Nothing ever writes to a process yet.
   bootstrapper) just before it starts the game would start the game
   throttled. Parent pids come from a Toolhelp snapshot, dropped when the
   parent's creation time is after the child's (pid reuse).
+- **The VR pipeline sits with the game.** Processes under the active OpenXR
+  runtime folder and known VR runtime names get role `VrPipeline`: never
+  changed, shown under the game next to the launch chain, because in VR the
+  game's frame still has to pass through them.
 - **Hook holders are protected.** A starved process with a global keyboard or
   mouse hook delays input system-wide: AutoHotkey, AggressiveScreensaver,
   LGTV_brightness.
 - **CPU threshold is in cores** (0.5), not % of total: one busy thread is
   3.6% of 28 threads and is exactly what preempts a game thread.
 - **Live mode** (`Services/GameOptimizerEnforcer.cs`, plan
-  `plans/2026-10-07-game-optimizer-live.md`): game gets High priority and the
-  P-core CPU sets; throttled processes get Below normal, the E-core CPU sets
+  `plans/2026-10-07-game-optimizer-live.md`): the game only gets the P-core
+  CPU sets, never a higher priority. A High game outranks most threads of the
+  VR streamer/runtime, which run Normal (measured: 25 of Virtual Desktop
+  Streamer's 27 threads and 93 of OVRServer's 101 at base 8; its critical ones
+  are realtime-range), and in VR the frame still has to be encoded and sent.
+  Throttling the background is what removes contention; throttled processes get Below normal, the E-core CPU sets
   and Very low I/O. Never Realtime, Idle, kill or suspend. CPU sets come from
   `CpuTopology` (highest EfficiencyClass = P); a non-hybrid CPU gets priority
   changes only. All writes go through `IProcessControl`, which re-checks the

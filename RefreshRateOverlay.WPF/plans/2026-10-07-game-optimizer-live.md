@@ -26,7 +26,9 @@ processes throttled.
 
 ## Design
 
-**Actions.** Game: priority High, default CPU sets = P-cores. Throttled:
+**Actions.** Game: default CPU sets = P-cores, priority unchanged (changed
+after implementation: High would outrank the Normal-priority VR streamer and
+runtime threads; see CLAUDE.md). Throttled:
 priority Below normal, default CPU sets = E-cores, I/O priority Very low.
 Never Realtime, never Idle, never kill or suspend. CPU sets (soft) rather than
 affinity (hard): an explicit affinity, e.g. from Process Lasso, still wins.

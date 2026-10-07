@@ -19,6 +19,7 @@ public partial class OptimizerPanelWindow : Window
     {
         [OptimizerRole.Game]          = Color.FromRgb(0x4C, 0xC2, 0xFF),
         [OptimizerRole.GameChain]     = Color.FromRgb(0x4C, 0xC2, 0xFF),
+        [OptimizerRole.VrPipeline]    = Color.FromRgb(0x4C, 0xC2, 0xFF),
         [OptimizerRole.WouldThrottle] = Color.FromRgb(0xFF, 0xB8, 0x4D),
         [OptimizerRole.Protected]     = Color.FromRgb(0x6C, 0xCB, 0x5F),
         [OptimizerRole.LeftAlone]     = Color.FromRgb(0x88, 0x88, 0x88),
@@ -123,6 +124,21 @@ public partial class OptimizerPanelWindow : Window
                 panel.Children.Add(BuildChainRow(row));
         }
 
+        if (section.PipelineRows is { Count: > 0 } pipeline)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "VR pipeline · not changed",
+                Foreground = new SolidColorBrush(Color.FromRgb(0x88, 0x88, 0x88)),
+                FontSize = 11,
+                Margin = new Thickness(18, 4, 0, 1),
+                ToolTip = "The VR runtime and streamer: the game's frame still has to pass through them, " +
+                          "so they are never throttled and the game is never raised above them.",
+            });
+            foreach (var row in pipeline)
+                panel.Children.Add(BuildChainRow(row, marker: "• "));
+        }
+
         if (hidden > 0)
             panel.Children.Add(Muted($"+ {hidden} more idle processes"));
 
@@ -204,14 +220,14 @@ public partial class OptimizerPanelWindow : Window
 
     private static UIElement BuildRow(OptimizerRow row) => BuildRow(row, showReason: true);
 
-    private static UIElement BuildChainRow(OptimizerRow row)
+    private static UIElement BuildChainRow(OptimizerRow row, string marker = "↳ ")
     {
         var g = new Grid { Margin = new Thickness(18, 0, 14, 0) };
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var n = new TextBlock
         {
-            Text = "↳ " + (row.Count > 1 ? $"{row.Name} ×{row.Count}" : row.Name),
+            Text = marker + (row.Count > 1 ? $"{row.Name} ×{row.Count}" : row.Name),
             Foreground = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
             FontSize = 12,
             TextTrimming = TextTrimming.CharacterEllipsis,

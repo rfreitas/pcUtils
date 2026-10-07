@@ -68,6 +68,7 @@ public class OptimizerOverlayAndPanelTests
             new("rustc", 2, @"C:\rust\rustc.exe", 1, ProcessPriorityClass.Normal, 1.4),
             new("VirtualDesktop.Streamer", 3, @"C:\Program Files\Virtual Desktop Streamer\VirtualDesktop.Streamer.exe", 1, ProcessPriorityClass.Normal, 0.8),
             new("MsMpEng", 4, null, 0, null, null),
+            new("nvcontainer", 5, @"C:\Program Files\NVIDIA Corporation\NvContainer\nvcontainer.exe", 1, ProcessPriorityClass.Normal, 0.1),
         };
         for (int i = 0; i < 20; i++)
             procs.Add(new($"idle{i}", 100 + i, $@"C:\x\idle{i}.exe", 1, ProcessPriorityClass.Normal, 0.0));
@@ -122,10 +123,12 @@ public class OptimizerOverlayAndPanelTests
         var panel = new OptimizerPanelWindow();
         panel.Update(SampleReport(), OptimizerMode.DryRun);
 
-        Assert.Equal(new[] { "OpenXR runtime", "Windows / service" }, panel.GroupHeaders.Keys);
-        Assert.False(panel.IsGroupExpanded("OpenXR runtime"));
+        Assert.Equal(new[] { "GPU / audio / input helper", "Windows / service" }, panel.GroupHeaders.Keys);
+        Assert.False(panel.IsGroupExpanded("GPU / audio / input helper"));
         var text = AllText(panel.SectionsPanel).ToList();
-        Assert.Contains("OpenXR runtime (1)", text);
+        Assert.Contains("GPU / audio / input helper (1)", text);
+        Assert.Contains("VR pipeline · not changed", text);
+        Assert.Contains("• VirtualDesktop.Streamer", text);
     });
 
     [Fact]
@@ -134,14 +137,14 @@ public class OptimizerOverlayAndPanelTests
         var panel = new OptimizerPanelWindow();
         panel.Update(SampleReport(), OptimizerMode.DryRun);
 
-        Click(panel.GroupHeaders["OpenXR runtime"]);
-        Assert.True(panel.IsGroupExpanded("OpenXR runtime"));
+        Click(panel.GroupHeaders["GPU / audio / input helper"]);
+        Assert.True(panel.IsGroupExpanded("GPU / audio / input helper"));
 
         panel.Update(SampleReport(), OptimizerMode.DryRun); // periodic refresh rebuilds everything
-        Assert.True(panel.IsGroupExpanded("OpenXR runtime"));
+        Assert.True(panel.IsGroupExpanded("GPU / audio / input helper"));
 
-        Click(panel.GroupHeaders["OpenXR runtime"]);
-        Assert.False(panel.IsGroupExpanded("OpenXR runtime"));
+        Click(panel.GroupHeaders["GPU / audio / input helper"]);
+        Assert.False(panel.IsGroupExpanded("GPU / audio / input helper"));
     });
 
     [Fact]

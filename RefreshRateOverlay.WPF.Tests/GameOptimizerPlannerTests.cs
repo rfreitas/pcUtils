@@ -82,16 +82,44 @@ public class GameOptimizerPlannerTests
         Assert.Equal(OptimizerRole.Protected, One(P("SomethingSecure", priority: null) with { Path = null }).Role);
 
     [Fact]
-    public void ProcessUnderOpenXrRuntime_IsProtected_EvenWithHighCpu()
+    public void ProcessUnderOpenXrRuntime_IsVrPipeline_EvenWithHighCpu()
     {
         var d = One(P("VirtualDesktop.Streamer", path: @"C:\Program Files\Virtual Desktop Streamer\VirtualDesktop.Streamer.exe", cpu: 2.0));
-        Assert.Equal(OptimizerRole.Protected, d.Role);
+        Assert.Equal(OptimizerRole.VrPipeline, d.Role);
         Assert.Equal("OpenXR runtime", d.Reason);
     }
 
     [Theory]
-    [InlineData("vrcompositor", "VR runtime")]
-    [InlineData("OVRServer_x64", "VR runtime")]
+    [InlineData("vrcompositor")]
+    [InlineData("vrserver")]
+    [InlineData("OVRServer_x64")]
+    public void KnownVrRuntimeNames_AreVrPipeline(string name)
+    {
+        var d = One(P(name, cpu: 3.0));
+        Assert.Equal(OptimizerRole.VrPipeline, d.Role);
+        Assert.Equal("VR runtime", d.Reason);
+    }
+
+    [Fact]
+    public void Summary_PutsTheVrPipelineUnderTheGame_NotInProtected()
+    {
+        var r = GameOptimizerPlanner.Plan("eldenring.exe", DateTime.Now, new[]
+        {
+            P("eldenring", pid: 1, cpu: 5.0),
+            P("VirtualDesktop.Streamer", path: @"C:\Program Files\Virtual Desktop Streamer\VirtualDesktop.Streamer.exe", pid: 2, cpu: 0.8),
+            P("OVRServer_x64", pid: 3, cpu: 0.1),
+            P("audiodg", pid: 4),
+        }, OwnPid, VdRoots);
+
+        var sections = GameOptimizerPlanner.Summarize(r);
+        var game = sections.Single(s => s.Role == OptimizerRole.Game);
+        Assert.Equal(new[] { "VirtualDesktop.Streamer", "OVRServer_x64" }, game.PipelineRows!.Select(x => x.Name));
+        var prot = sections.Single(s => s.Role == OptimizerRole.Protected);
+        Assert.Equal(1, prot.ProcessCount);
+        Assert.DoesNotContain(GameOptimizerPlanner.GroupByReason(prot), g => g.Reason.Contains("runtime"));
+    }
+
+    [Theory]
     [InlineData("audiodg", "GPU / audio / input helper")]
     [InlineData("nvcontainer", "GPU / audio / input helper")]
     [InlineData("DSX", "GPU / audio / input helper")]
@@ -281,7 +309,7 @@ public class GameOptimizerPlannerTests
 
         Assert.Equal(new[]
         {
-            "OpenXR runtime", "GPU / audio / input helper", "Windows / service",
+            "GPU / audio / input helper", "Windows / service",
         }, groups.Select(g => g.Reason));
         var gpu = groups.Single(g => g.Reason == "GPU / audio / input helper");
         Assert.Equal(3, gpu.ProcessCount);

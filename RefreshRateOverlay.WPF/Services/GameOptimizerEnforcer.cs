@@ -152,7 +152,11 @@ internal sealed class GameOptimizerEnforcer
         var state = _control.Read(d.Pid);
         if (state is null) { Fail(d, "no access"); return; }
 
-        var priority = change == OptimizerChange.Boost ? ProcessPriorityClass.High : ProcessPriorityClass.BelowNormal;
+        // Boost never changes priority: a High game outranks the Normal-priority
+        // threads of the VR streamer/runtime that must keep up with it (measured:
+        // 25 of Virtual Desktop Streamer's 27 threads at base 8). Throttling the
+        // background is what removes contention; the game only prefers P-cores.
+        ProcessPriorityClass? priority = change == OptimizerChange.Throttle ? ProcessPriorityClass.BelowNormal : null;
         uint[]? sets = !_topology.IsHybrid ? null
             : (change == OptimizerChange.Boost ? _topology.PerformanceSetIds : _topology.EfficiencySetIds).ToArray();
         int? io = change == OptimizerChange.Throttle ? IoVeryLow : null;
@@ -164,7 +168,7 @@ internal sealed class GameOptimizerEnforcer
             Name = d.Name,
             Change = change,
             OriginalPriority = state.Priority,
-            AppliedPriority = state.Priority == priority ? null : priority,
+            AppliedPriority = priority is null || state.Priority == priority ? null : priority,
             OriginalCpuSets = state.CpuSets,
             AppliedCpuSets = sets is not null && !SameSets(state.CpuSets, sets) ? sets : null,
             OriginalIoPriority = state.IoPriority,

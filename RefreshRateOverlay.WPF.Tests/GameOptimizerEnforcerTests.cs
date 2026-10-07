@@ -77,7 +77,7 @@ public class GameOptimizerEnforcerTests
         new(app, DateTime.Now, ds.Select(d => new OptimizerDecision(d.Name, d.Pid, d.Role, "r", null, 0)).ToList());
 
     [Fact]
-    public void Game_IsBoostedToHighOnPCores_ThrottledGoesBelowNormalOnECoresWithLowIo()
+    public void Game_GetsPCoresOnly_ThrottledGoesBelowNormalOnECoresWithLowIo()
     {
         var game = Add(1, "eldenring");
         var build = Add(2, "rustc");
@@ -85,7 +85,7 @@ public class GameOptimizerEnforcerTests
 
         e.Enforce(Report("eldenring.exe", (1, "eldenring", OptimizerRole.Game), (2, "rustc", OptimizerRole.WouldThrottle)));
 
-        Assert.Equal(ProcessPriorityClass.High, game.Priority);
+        Assert.Equal(ProcessPriorityClass.Normal, game.Priority); // never raised (VR pipeline must keep up)
         Assert.Equal(new uint[] { 256, 257 }, game.CpuSets);
         Assert.Equal(2, game.Io); // the game's disk priority is not raised
         Assert.Equal(ProcessPriorityClass.BelowNormal, build.Priority);
@@ -202,13 +202,14 @@ public class GameOptimizerEnforcerTests
         var a = Add(1, "gameA");
         var e = NewEnforcer();
         e.Enforce(Report("gameA.exe", (1, "gameA", OptimizerRole.Game)));
-        Assert.Equal(ProcessPriorityClass.High, a.Priority);
+        Assert.Equal(new uint[] { 256, 257 }, a.CpuSets);
 
         e.Enforce(Report("gameB.exe", (1, "gameA", OptimizerRole.WouldThrottle)));
 
         // Restored first, then throttled fresh in the new session from the true original.
         Assert.Equal(ProcessPriorityClass.BelowNormal, a.Priority);
-        Assert.Equal(ProcessPriorityClass.Normal, e.Entries[1].OriginalPriority);
+        Assert.Equal(new uint[] { 300, 301, 302 }, a.CpuSets);
+        Assert.Empty(e.Entries[1].OriginalCpuSets); // the true original, not the P-cores of session A
     }
 
     [Fact]
@@ -255,23 +256,37 @@ public class GameOptimizerEnforcerTests
     }
 
     [Fact]
-    public void NonHybridCpu_ChangesPriorityButNeverCpuSets()
+    public void NonHybridCpu_ThrottlesByPriorityButNeverCpuSets_AndLeavesTheGameAlone()
     {
         var game = Add(1, "g");
+        var build = Add(2, "rustc");
         var e = NewEnforcer(CpuTopology.Unknown);
+
+        e.Enforce(Report("g.exe", (1, "g", OptimizerRole.Game), (2, "rustc", OptimizerRole.WouldThrottle)));
+
+        Assert.Equal(ProcessPriorityClass.Normal, game.Priority);
+        Assert.Equal(ProcessPriorityClass.BelowNormal, build.Priority);
+        Assert.DoesNotContain(_ctl.Writes, w => w.Contains("sets"));
+        Assert.False(e.Entries.ContainsKey(1)); // nothing to change on the game, nothing journaled
+    }
+
+    [Fact]
+    public void Game_AtHighAlready_IsNotLowered_OrChanged()
+    {
+        var game = Add(1, "g"); game.Priority = ProcessPriorityClass.High; // set by the user or another tool
+        var e = NewEnforcer();
 
         e.Enforce(Report("g.exe", (1, "g", OptimizerRole.Game)));
 
         Assert.Equal(ProcessPriorityClass.High, game.Priority);
-        Assert.Empty(game.CpuSets);
-        Assert.DoesNotContain(_ctl.Writes, w => w.Contains("sets"));
+        Assert.Null(e.Entries[1].AppliedPriority);
     }
 
     [Fact]
     public void AlreadyAtTarget_IsNotJournaled()
     {
-        var game = Add(1, "g"); game.Priority = ProcessPriorityClass.High;
-        var e = NewEnforcer(CpuTopology.Unknown);
+        var game = Add(1, "g"); game.CpuSets = new uint[] { 256, 257 };
+        var e = NewEnforcer();
 
         e.Enforce(Report("g.exe", (1, "g", OptimizerRole.Game)));
 
