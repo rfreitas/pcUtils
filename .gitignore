@@ -48,3 +48,10 @@ SteamDxvk.NET/obj/
 SteamDxvk.NET.Tests/bin/
 SteamDxvk.NET.Tests/obj/
 SteamDxvk.NET.Tests/TestResults/
+
+# ClaudeFleet.NET build artifacts
+ClaudeFleet.NET/bin/
+ClaudeFleet.NET/obj/
+ClaudeFleet.NET.Tests/bin/
+ClaudeFleet.NET.Tests/obj/
+ClaudeFleet.NET.Tests/TestResults/

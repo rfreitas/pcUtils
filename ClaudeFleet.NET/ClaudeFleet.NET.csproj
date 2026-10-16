@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>ClaudeFleet</AssemblyName>
+    <RootNamespace>ClaudeFleet</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="plans\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared.NET\StartupTaskService.cs" Link="Services\StartupTaskService.cs" />
+    <Compile Include="..\Shared.NET\DarkMenuRenderer.cs" Link="Tray\DarkMenuRenderer.cs" />
+    <Compile Include="..\Shared.NET\TrayMenu.cs" Link="Tray\TrayMenu.cs" />
+    <Compile Include="..\Shared.NET\SingleInstanceGuard.cs" Link="Services\SingleInstanceGuard.cs" />
+    <Compile Include="..\Shared.NET\TrayFlyoutWindow.cs" Link="Forms\TrayFlyoutWindow.cs" />
+    <Compile Include="..\Shared.NET\TrayPopupPlacement.cs" Link="Services\TrayPopupPlacement.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>ClaudeFleet.NET.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

@@ -24,6 +24,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamDxvk.NET", "SteamDxvk.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamDxvk.NET.Tests", "SteamDxvk.NET.Tests\SteamDxvk.NET.Tests.csproj", "{D266493F-2CAC-4538-AC6B-03ADFF520B16}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClaudeFleet.NET", "ClaudeFleet.NET\ClaudeFleet.NET.csproj", "{D5A15132-5082-4643-81FD-C1F26551B869}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClaudeFleet.NET.Tests", "ClaudeFleet.NET.Tests\ClaudeFleet.NET.Tests.csproj", "{1E90EC32-EFFC-4E4C-9D64-E94CEFC11F43}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -70,6 +74,14 @@ Global
 		{D266493F-2CAC-4538-AC6B-03ADFF520B16}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D266493F-2CAC-4538-AC6B-03ADFF520B16}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D266493F-2CAC-4538-AC6B-03ADFF520B16}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D5A15132-5082-4643-81FD-C1F26551B869}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D5A15132-5082-4643-81FD-C1F26551B869}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D5A15132-5082-4643-81FD-C1F26551B869}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D5A15132-5082-4643-81FD-C1F26551B869}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1E90EC32-EFFC-4E4C-9D64-E94CEFC11F43}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1E90EC32-EFFC-4E4C-9D64-E94CEFC11F43}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1E90EC32-EFFC-4E4C-9D64-E94CEFC11F43}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1E90EC32-EFFC-4E4C-9D64-E94CEFC11F43}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
