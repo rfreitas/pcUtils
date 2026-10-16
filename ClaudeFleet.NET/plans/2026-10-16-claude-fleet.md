@@ -1,6 +1,6 @@
 # ClaudeFleet.NET — tray view of running Claude Code sessions, agents and processes
 
-- **Status:** approved, mock UI in progress (real data not yet implemented)
+- **Status:** implemented (steps 1–5). Not done: process-to-subagent attribution (processes are listed under their session), rows lingering 2 s after they disappear.
 - **Date:** 2026-10-16
 - **Touches:** new `ClaudeFleet.NET/` + `ClaudeFleet.NET.Tests/`, `AutoHotkey.sln`, `.gitignore`.
   Links `Shared.NET` (SingleInstanceGuard, TrayMenu, DarkMenuRenderer, StartupTaskService,
@@ -52,6 +52,16 @@ One file per running session process, rewritten on status change:
 - Every session has an MCP child (`cmd /d /c whiteboard mcp` → `Whiteboard.exe`); some add more (`bevy_brp_mcp.exe`).
 - In-process subagents (Agent tool) have **no process of their own**; their commands are children of
   the session PID, indistinguishable by tree alone.
+
+### Addendum while implementing steps 2–5 (same day)
+
+| Finding | Consequence |
+| --- | --- |
+| Headless runs register with `"entrypoint":"sdk-cli"`; their `kind` is still `"interactive"` | `Headless` = entrypoint starts with `sdk` |
+| `status` has a third value `"shell"` (waiting on a shell command) | treated as busy |
+| Newer `agent-*.meta.json` carry `"finished":true` once the agent ends | primary done-signal; the transcript-freshness rule is only the fallback for older versions |
+| Shell wrappers: `cmd /c chcp 65001 … & pwsh -Command "$__claudeCodeScript…"`, `bash -c "source …shell-snapshots… eval '<cmd>' < /dev/null && pwd -P …"`, `rustup.exe` in front of `cargo.exe` | hidden by `ProcessTree`; bash's real command is recovered from the `eval '…'` text |
+| Two idle sessions (`claude.exe` 2.1.294, up 8 days) each used ~1.1 cores continuously over a 10 s window; the other idle sessions used ~0 | a real thing the meter surfaces; not caused by this app |
 
 ## Design
 

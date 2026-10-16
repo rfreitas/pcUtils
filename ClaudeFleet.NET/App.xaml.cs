@@ -37,6 +37,24 @@ public partial class App : System.Windows.Application
             });
             return;
         }
+        if (e.Args.Length >= 2 && e.Args[0] == "--render-live")
+        {
+            // Real sessions and processes, rendered with the same code as the flyout. Samples twice so CPU is not all zero.
+            RunHeadless(() =>
+            {
+                var collector = new FleetCollector();
+                collector.Collect(detail: true);
+                System.Threading.Thread.Sleep(1500);
+                var snap = collector.Collect(detail: true);
+                var popup = new FleetPopup { ShowMcp = e.Args.Length >= 3 && e.Args[2] == "mcp" };
+                popup.SetFleet(snap);
+                popup.RenderToPng(e.Args[1]);
+                Logger.Log($"render-live: {FleetFormat.Tooltip(snap)}");
+                foreach (var s in snap.All())
+                    Logger.Log($"  {s.Name,-22} {s.Status,-5} tree {s.TreeCpu,5:0.0}%  own {s.OwnCpuPercent,4:0.0}%  procs {s.Processes.Count}  mem {FleetFormat.Memory(s.TreeMemory)}");
+            });
+            return;
+        }
         if (e.Args.Length >= 2 && e.Args[0] == "--render-icon")
         {
             RunHeadless(() => TrayIconRenderer.RenderPreview(e.Args[1]));
@@ -108,7 +126,7 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        _trayApp = new TrayApp();
+        _trayApp = new TrayApp(mock: e.Args.Contains("--mock"));
     }
 
     /// <summary>Runs one action in the real app context (real manifest/DPI), exiting 0 or 1.</summary>

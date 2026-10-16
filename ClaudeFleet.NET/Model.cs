@@ -39,6 +39,23 @@ internal sealed record FleetSnapshot(IReadOnlyList<SessionView> Sessions, bool I
     public int Count => All().Count();
     public int RunningAgents => Sessions.Sum(s => s.RunningAgents);
 
+    /// <summary>
+    /// Identity of everything the flyout draws as a row (sessions, agents, processes, with their state). Equal signatures
+    /// mean only CPU changed, so the open flyout recolours its meters instead of being rebuilt.
+    /// </summary>
+    public string Signature()
+    {
+        var sb = new System.Text.StringBuilder();
+        void Proc(ProcView p) { sb.Append('p').Append(p.Pid).Append(p.IsMcp ? 'm' : ' ').Append(p.Label).Append(';'); foreach (var c in p.Children) Proc(c); }
+        foreach (var s in All())
+        {
+            sb.Append('s').Append(s.Pid).Append(s.Status == SessionStatus.Busy ? 'b' : 'i').Append(s.Name).Append(s.Model).Append(';');
+            foreach (var a in s.Agents) sb.Append('a').Append(a.AgentId).Append(a.State == AgentState.Running ? 'r' : 'd').Append(';');
+            foreach (var p in s.Processes) Proc(p);
+        }
+        return sb.ToString();
+    }
+
     /// <summary>Every session, headless children included.</summary>
     public IEnumerable<SessionView> All() => Sessions.SelectMany(Flatten);
 

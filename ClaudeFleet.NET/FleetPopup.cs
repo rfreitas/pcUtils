@@ -52,6 +52,7 @@ internal sealed class FleetPopup : TrayFlyoutWindow
     private readonly List<TextBlock> _texts = new();
     private readonly HashSet<int> _toggled = new();   // sessions whose default expansion the user flipped
     private SegmentBar? _totalBar;
+    private readonly ScrollViewer _scroll;
 
     public FleetPopup()
     {
@@ -68,7 +69,7 @@ internal sealed class FleetPopup : TrayFlyoutWindow
         var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var scroll = new ScrollViewer
+        var scroll = _scroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Padding = new Thickness(6, 6, 6, 4),
@@ -90,6 +91,7 @@ internal sealed class FleetPopup : TrayFlyoutWindow
     /// <summary>Rebuilds every row (on open, or when sessions/agents/processes appear or go).</summary>
     public void SetFleet(FleetSnapshot fleet)
     {
+        double offset = _scroll.VerticalOffset;   // a rebuild while open must not jump back to the top
         _rows.Children.Clear();
         _meters.Clear();
         _texts.Clear();
@@ -107,6 +109,7 @@ internal sealed class FleetPopup : TrayFlyoutWindow
 
         FillFooter(fleet.IsMock);
         UpdateCpu(fleet);
+        if (offset > 0) { _scroll.UpdateLayout(); _scroll.ScrollToVerticalOffset(offset); }
     }
 
     private FrameworkElement SessionBlock(SessionView s, int depth)
@@ -119,7 +122,7 @@ internal sealed class FleetPopup : TrayFlyoutWindow
         string chevron = !hasChildren ? " " : expanded ? "▾" : "▸";
         var (glyph, glyphBrush) = s.Headless ? ("◆", Head)
                                 : s.Status == SessionStatus.Busy ? ("●", Warn) : ("○", Dim);
-        string detail = s.Headless ? $"headless · {s.Model}" : FleetFormat.ShortCwd(s.Cwd, ReposRoot);
+        string detail = s.Headless ? (s.Model is null ? "headless" : $"headless · {s.Model}") : FleetFormat.ShortCwd(s.Cwd, ReposRoot);
 
         var row = Line(depth, glyph, glyphBrush, s.Name, detail, FleetFormat.Age(s.Age), Fg, bold: true, chevron: chevron);
         var bar = new SegmentBar();
